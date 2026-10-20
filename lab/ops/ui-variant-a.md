@@ -35,6 +35,7 @@ bash lab/ops/ui-grant-read.sh --apply
 ```
 
 - **What it grants:** read (`rX`, with default ACLs so new files inherit) on exactly the trees the unit binds: the deploy worktree, the server's Python, `paper-run/lab/paper` (the risk files), and `lab/{analytics,store,journal,recorder,ui-cache,backtests,wallets/cases-v1,token_meta}`.
+- **What it may write (B0, the interactive UI):** `rwX` only on `lab/control/{requests,audit,pairing}`, where the web app files a request, appends its own audit lines and consumes a pairing hash. Default ACLs give the owner's user (the executor) the same, so it reads and moves those files. The rest of `lab/control` is read-only (results, notes, the NAS queue and status).
 - **What it never grants:**
   - a write;
   - a traverse (`x`) on the way down (`/home/chupa`, `.local`, …). systemd mounts the trees as root into the unit's empty home, so `lab-ui` needs no path through `/home/chupa`. An `x` there would open every world-readable file below it to `lab-ui` outside the sandbox.

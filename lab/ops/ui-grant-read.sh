@@ -23,13 +23,27 @@ run() { if [[ $APPLY == --apply ]]; then "$@"; else echo "would: $*"; fi; }
 # Read (rX) on the trees the app reads, with a default ACL so new files inherit it.
 for d in "$P/worktrees/lab-ui-deploy" "$P/worktrees/paper-run/lab/paper" \
          "$H/.local/share/solana-quant/toolchains/columnar-query-313-duckdb155" "$H/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu" \
-         "$L/analytics" "$L/store" "$L/journal" "$L/recorder" "$L/ui-cache" "$L/backtests" "$L/wallets/cases-v1" "$L/token_meta"; do
+         "$L/analytics" "$L/store" "$L/journal" "$L/recorder" "$L/ui-cache" "$L/backtests" "$L/wallets/cases-v1" "$L/token_meta" \
+         "$L/nas-results/ui" "$L/control"; do
   if [[ -d $d ]]; then
     run setfacl -R -m "u:$U:rX" "$d"
     run find "$d" -type d -exec setfacl -m "d:u:$U:rX" {} +
   else
     echo "skip (missing): $d"
   fi
+done
+
+# Read (r) on single bound files.
+for f in "$L/research/paper-expectations-2026-10-20.json"; do
+  [[ -f $f ]] && run setfacl -m "u:$U:r" "$f" || echo "skip (missing): $f"
+done
+
+# Write (rwX) only where the web app files a request, appends its audit lines and consumes a pairing hash; the
+# default ACLs let the owner's user (the executor) read and move what lab-ui creates there.
+for d in "$L/control/requests" "$L/control/audit" "$L/control/pairing"; do
+  run mkdir -p "$d"
+  run setfacl -R -m "u:$U:rwX" "$d"
+  run setfacl -d -m "u:$U:rwX" -m "u:chupa:rwX" "$d"
 done
 
 # Never: a traverse ACL on the way down, or anything on the owner's secrets. A check, not a change.

@@ -342,24 +342,29 @@ class SystemUnit(unittest.TestCase):
         for line in ("User=lab-ui", "ProtectHome=tmpfs", "ProtectSystem=strict", "InaccessiblePaths=/run/user",
                      "NoNewPrivileges=yes", "CapabilityBoundingSet=", "PrivateTmp=yes", "IPAddressDeny=any", "MemoryMax=1G"):
             self.assertRegex(self.text, rf"(?m)^{re.escape(line)}$")
-        self.assertNotRegex(self.text, r"(?m)^ReadWritePaths=")  # read-only until B0 adds the requests directory
+        self.assertNotRegex(self.text, r"(?m)^ReadWritePaths=")  # under ProtectHome=tmpfs a writable path is a BindPaths
         binds = re.findall(r"(?m)^BindReadOnlyPaths=-?(\S+)$", self.text)
         self.assertTrue(binds and all(b.startswith("/home/chupa/") for b in binds))
         self.assertFalse(any(".config" in b or b.rstrip("/") in ("/home/chupa", "/home/chupa/Solana-project") for b in binds))
-        self.assertNotRegex(self.text, r"(?m)^BindPaths=")
+        # Writable: only the three control directories of B0 (requests, its own audit lines, pairing hashes).
+        rw = re.findall(r"(?m)^BindPaths=-?(\S+)$", self.text)
+        self.assertEqual(sorted(rw), sorted(f"/home/chupa/Solana-project/data-old-faithful-one/lab/control/{d}" for d in ("requests", "audit", "pairing")))
+        self.assertRegex(self.text, r"(?m)^Environment=LAB_UI_STATE=/var/lib/lab-ui$")
 
     def test_grant_script_reads_only_the_bound_trees(self):
         """Read (rX) on exactly the trees the unit binds; no traverse ACL on the way down (LAB review on #438: an
         x on /home/chupa would open every world-readable file below it to lab-ui outside the sandbox)."""
         with open(os.path.join(self.OPS, "ui-grant-read.sh")) as f:
             sh = f.read()
-        acls = re.findall(r'setfacl[^\n]*"(d?:?u:\$U:[^"]*)"', sh)
+        acls = re.findall(r'setfacl[^\n]*?"(d?:?u:\$U:[^"]*)"', sh)
         self.assertTrue(acls)
-        self.assertTrue(all(a.split(":")[-1] == "rX" for a in acls), acls)
-        loop = sh[sh.index("# Read (rX)"):sh.index("# Never:")]
+        write = sh[sh.index("# Write (rwX)"):sh.index("# Never:")]
+        self.assertTrue(all(a.split(":")[-1] in ("rX", "r") for a in re.findall(r'setfacl[^\n]*?"(d?:?u:\$U:[^"]*)"', sh[:sh.index("# Write (rwX)")])))
+        self.assertEqual(set(re.findall(r'"(\$L/control/\w+)"', write)), {"$L/control/requests", "$L/control/audit", "$L/control/pairing"})
+        loop = sh[sh.index("# Read (rX)"):sh.index("# Read (r) on single")]
         paths = {p.replace("$H", "/home/chupa").replace("$P", "/home/chupa/Solana-project")
                  .replace("$L", "/home/chupa/Solana-project/data-old-faithful-one/lab") for p in re.findall(r'"(\$[HPL][^"]*)"', loop)}
-        binds = set(re.findall(r"(?m)^BindReadOnlyPaths=-?(\S+)$", self.text))
+        binds = set(re.findall(r"(?m)^BindReadOnlyPaths=-?(\S+)$", self.text)) - {"/home/chupa/Solana-project/data-old-faithful-one/lab/research/paper-expectations-2026-10-20.json"}
         self.assertEqual(paths, binds)
         code = [ln for ln in sh.split("# Never:")[0].splitlines() if not ln.lstrip().startswith("#")]
         self.assertFalse([ln for ln in code if ".config" in ln])
