@@ -168,3 +168,21 @@ def test_detect(tmp_path, monkeypatch):
     assert all(tr == 7 and farm == "organic" and seg == "pool_reversed" and day == first_day for _, _, _, tr, farm, seg, day in sig)
     assert info["signals"] == 8 and info["cells"] == 18 and info["per_cell"]["S1_D10_T5"]["traders_at_t_ge_T"] == 1
     assert info["per_cell"]["S1_D10_T10"]["traders_at_t_ge_T"] == 0  # 7 traders up to the D leg, 12 in the hour
+    assert info["signals_without_mint"] == 0 and info["mayhem_excluded"] is True
+    # the report without a markout: frequency, sleeping pools, liquidity (depth 100 SOL: pool share 0.5 % at 0.5 SOL, average
+    # fill 0.5 %, 1 % at 1.01 SOL), the point-in-time share, and the legend's selection note
+    md = revival.report(str(out / "revival.md"), str(out / "signals.parquet"), None, str(out / "run-detect.json"))
+    assert f"| S1_D10_T5 | 1 |" in md.replace("| S1_D10_T5 | 1 | 1 |", "| S1_D10_T5 | 1 |") and "sleeping pools (S1" in md
+    liq = [l for l in md.splitlines() if l.startswith("| S1_D10_T5 | 1 | 100.0")]
+    assert len(liq) == 1 and "| 0% | 0.5% / 2.0% / 4.8% | 0.5% / 2.0% / 5.0% | 1.01 SOL | 100% | 100% | 0% |" in liq[0]
+    assert "traders at the D leg >= T" in md and "mayhem pools excluded" in md and "dev 1033-1046" in md
+    assert (out / "revival.json").exists()
+    # require_mint drops a pool without a mint in the store
+    st = duckdb.connect(str(tmp_path / "mini.duckdb"))
+    st.execute("UPDATE pools SET mint = NULL WHERE pool = 'A'")
+    st.close()
+    info2 = revival.detect(str(agg), str(tmp_path / "det2"), first_day=first_day, store=str(tmp_path / "mini.duckdb"), require_mint=True)
+    assert info2["signals_without_mint"] == 8 and info2["pools_without_mint"] == 1
+    assert con.execute(f"SELECT count(*) FROM read_parquet('{tmp_path}/det2/signals.parquet')").fetchone()[0] == 0
+    info3 = revival.detect(str(agg), str(tmp_path / "det3"), first_day=first_day, store=str(tmp_path / "mini.duckdb"))
+    assert con.execute(f"SELECT count(*), sum(mint_known::INT) FROM read_parquet('{tmp_path}/det3/signals.parquet')").fetchone() == (8, 0)
