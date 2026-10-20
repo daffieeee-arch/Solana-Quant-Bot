@@ -1,0 +1,11 @@
+# Every 2 minutes: send a queued UI job, follow the one on its way (lab-nas-dispatch.service).
+[Unit]
+Description=Solana lab: the UI's NAS job dispatcher (every 2 minutes)
+
+[Timer]
+OnBootSec=2min
+OnUnitInactiveSec=2min
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
