@@ -44,7 +44,9 @@
 //! - The start (spec §2.1): the snapshot as known before the first live slot, every SOL market's mint interned; an empty
 //!   clock (REF_MS until an epoch is measured); LiveFeed's dev bounds (0, 2^63 - 1); no curve seed; the live farm-window
 //!   rule. Refused before the first event: a group whose segments are unset or hold curve (the live curve entry is
-//!   M3-11b), a segment in the hold-out or the clean period.
+//!   M3-11b), a segment in the hold-out or the clean period, and a snapshot that would know the store past the first
+//!   live slot (`follow::check_snapshot_before`: --snapshot-before after the first segment's first slot, or none with a
+//!   store that reaches past it).
 //! - The follow source's items (spec §2.2): tokens, SOL markets, epochs' ms per slot and dropped tokens into the engine
 //!   at once; backfills and flag fixes at the next slot end; each event pushed with its arrival; the farmer seed's
 //!   complete_from for farm_complete. The learned and usage rows wait for the engine's next dated minute (`_live_minute`):
@@ -471,6 +473,7 @@ fn run_follow(a: &PaperArgs, fo: &FollowOpts) -> Result<Value> {
     let segs = follow::locked_out(&fo.root)?;
     let meta: Value = serde_json::from_slice(&fs::read(a.snapshot.join("meta.json")).with_context(|| format!("read {}/meta.json", a.snapshot.display()))?)?;
     let snap = follow::snapshot_known(&a.snapshot, fo.snapshot_before)?;
+    follow::check_snapshot_before(&snap, fo.snapshot_before, &segs)?;
     let (n_tokens, n_classed) = (snap.tokens.len(), snap.pool_class.len());
     // spec §2.1: LiveFeed's meta_bounds (0, 2^63 - 1) on an empty clock; every SOL market's mint interned (v0.3)
     let clock = Clock::default();
@@ -966,6 +969,37 @@ mod tests {
         assert_eq!((&f["rows_written"], &f["waiting_at_end"]), (&json!({"learned": 3, "usage": 2}), &json!({"learned": 1, "usage": 0})));
         assert_eq!((j.get_state("farm_flag_fixes").unwrap(), &v["journal"]["learned"]), (None, &json!(3))); // no fix: never written
         fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_cli_route_refuses_a_snapshot_past_the_first_live_slot() {
+        // Codex finding 3 (on 383a24d), through main.rs parse_paper_args, then run: the store [1000, 3000) and one segment
+        // with a buy of P1. From 2600: without --snapshot-before (a newer store) or with 2700 (too late), refused before any
+        // journal; with 2600 (equal) or 2590 (paper.shadow's lo nuance) it runs. From 3100 (an older store) it runs without.
+        use crate::follow::tests::{put_trades, seg};
+        for (first, before, ok) in [(2600, None, false), (2600, Some(2700), false), (2600, Some(2600), true), (2600, Some(2590), true),
+                                    (3100, None, true)] {
+            let root = tmp(&format!("paper-follow-bound-{first}-{}", before.unwrap_or(0)));
+            fs::create_dir_all(root.join("snap")).unwrap();
+            crate::legs_read::tests::export(&root.join("snap"));
+            let d0 = seg(&root, 0, first, first + 99, json!({}));
+            put_trades(&d0, &[(first + 20, false, 50)]);
+            let _ = follow_args(&root, "jb"); // the groups, the cost scenario and the snapshot's store
+            let mut argv = format!("--follow {} --snapshot {} --h24 500 --groups {} --variants 0.04:600 --cost-scenario {} --journal {}",
+                                   root.display(), root.join("snap").display(), root.join("live-groups.json").display(),
+                                   root.join("scn.json").display(), root.join("jb").display());
+            if let Some(b) = before {
+                argv.push_str(&format!(" --snapshot-before {b}"));
+            }
+            let argv: Vec<String> = argv.split(' ').map(str::to_owned).collect();
+            let r = run(&crate::parse_paper_args(&argv).unwrap());
+            assert_eq!(r.is_ok(), ok, "{first} {before:?}: {r:?}");
+            if !ok {
+                assert!(format!("{:#}", r.unwrap_err()).contains("--snapshot-before"));
+                assert!(!root.join("jb").exists(), "refused before the journal");
+            }
+            fs::remove_dir_all(&root).unwrap();
+        }
     }
 
     #[test]
