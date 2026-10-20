@@ -4,7 +4,7 @@
 # live catch-ups on link copies of a recorder directory, no stream, no keys.
 #
 #   1. the code: DEPLOY_REPO is BASE_REPO but for lab/paper/engine.py and lab/paper/tests/test_watchlist_live.py, and
-#      their changed lines are exactly #489/#491's (sorted +/- lines, sha256 pinned below);
+#      their changed lines are exactly #489/#491's (+/- lines sorted in the C locale, sha256 pinned below);
 #   2. the deploy commit's tests: test_watchlist_live.py (with dev2's batch measurement: no skip), test_engine.py and
 #      test_restart.py;
 #   3. link copies of REC from FROM_SEQ on (one copy, then cp -a, so every run reads the same segments) and a part copy
@@ -31,13 +31,14 @@
 # checked. Overrides for a dry run (never for the evidence): REC, STORE, FROM_SEQ, CUT_SEQ.
 # Writes to $DATA/backtests/deploy-m1cut-3a9e982/ (job.log, pytest-*.log, rec-*/, j-*/, the run logs, check.log).
 set -euo pipefail
+export LC_ALL=C  # sort order and every tool's output the same on the VPS and in the NAS container (99zzzzi)
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 DATA=${LAB_DATA_ROOT:-/home/chupa/Solana-project/data-old-faithful-one/lab}
 BASE_SHA=c1e36a03318bd4474f25003492e72d12253b9e7b
 DEPLOY_SHA=3a9e9824659e548584421b2726ddd46968ea5399
-ENGINE_LINES=be67359444dcd3b223a93bc9185f5a1bdf4d1248471ab44196888ec4f771dad1   # #489/#491's lines of engine.py
-TEST_LINES=a0038fc407ce932264a43d9757c37a13d843f89eaf9e178ed7ad28f0eca336ff     # ... of test_watchlist_live.py
+ENGINE_LINES=94227d7fa909dcf52d651722c5fd81913810b1d43e885e3eae63d5dd10ee4f0a   # #489/#491's lines of engine.py (C sort)
+TEST_LINES=156fada27cb1253708cb59c1a13577fe6f62f7d3b9153713d64e123fc7586a8c     # ... of test_watchlist_live.py
 : "${BASE_REPO:?BASE_REPO=an export of c1e36a0}"
 : "${DEPLOY_REPO:?DEPLOY_REPO=an export of deploy-m1cut-2026-10-22}"
 OUT=$DATA/backtests/deploy-m1cut-${DEPLOY_SHA:0:7}
@@ -74,7 +75,7 @@ changed=$(diff -rq --exclude=__pycache__ --exclude=target --exclude=.git "$BASE_
 want_changed=$(printf '%s\n' "Files lab/paper/engine.py and lab/paper/engine.py differ" \
   "Files lab/paper/tests/test_watchlist_live.py and lab/paper/tests/test_watchlist_live.py differ")
 [ "$changed" = "$want_changed" ] || { log "RED: the deploy commit changes more than engine.py and the test:"; echo "$changed" | tee -a "$OUT/job.log"; exit 1; }
-lines() { diff -U0 "$BASE_REPO/lab/$1" "$DEPLOY_REPO/lab/$1" | grep -E '^[+-][^+-]|^[+-]$' | sort | sha256sum | cut -c1-64; }
+lines() { diff -U0 "$BASE_REPO/lab/$1" "$DEPLOY_REPO/lab/$1" | grep -E '^[+-][^+-]|^[+-]$' | LC_ALL=C sort | sha256sum | cut -c1-64; }
 [ "$(lines paper/engine.py)" = "$ENGINE_LINES" ] || { log "RED: engine.py's changed lines are not #489/#491's"; exit 1; }
 [ "$(lines paper/tests/test_watchlist_live.py)" = "$TEST_LINES" ] || { log "RED: the test's changed lines are not #489/#491's"; exit 1; }
 log "code: c1e36a0 + #489/#491's lines only (engine.py, test_watchlist_live.py)"
