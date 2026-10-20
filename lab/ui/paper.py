@@ -912,7 +912,7 @@ def wallet_view(now):
         day = today if today in days or not days else days[-1]
         t_day = [x for x in traded if x["day"] == day]
         failed = [x for x in t_day if not x["tokens"]]
-        risk = risk_limits(next((g["risk"] for g in settings.values() if g.get("primary")), None)) or {}
+        risk = risk_limits(next((g.get("risk") for g in settings.values() if g.get("primary")), None)) or {}
         exit_of = {(x["family"], x["variant"], x["key"], x["t"]): x for x in traded}
         order_of = {(o["family"], o["variant"], o["key"], o["t"]): o for o in orders if own(o)}
         txs = []
