@@ -13,7 +13,7 @@
 #   3. the comparison with $REF: row counts, the old columns set-equal both ways (EXCEPT ALL), the new columns present,
 #      depth_entry vs the reconstruction 0.5 / ((1 + impact)(1 - fee) - 1) within 1e-6 on >= 99.9 % of the F7 pool_reversed entries;
 #   4. depthband_report --d 2 → $OUT/depthband-dev.md + json; RED unless the band row is 2,113 pools / 5,770 triggers / +8.28 ± 0.05.
-# Tunables (env): MEMORY (DuckDB limit, default 12GB), BUCKETS (32, as v4), THREADS (6), WORKERS (4), BOOT (10000), REF, PARTS, STORE,
+# Tunables (env): MEMORY (DuckDB limit, default 12GB), BUCKETS (32, as v4), THREADS (6), WORKERS (6), BOOT (10000, report only), REF, PARTS, STORE,
 # DEV_ENGINE, OUT (default $DATA/wallets/depthband-proof-<commit7>).
 set -euo pipefail
 
@@ -27,9 +27,11 @@ PARTS=${PARTS:-$DATA/backtests/f7rev-1033-1046/parts}
 STORE=${STORE:-$DATA/store/dev2.duckdb}
 REF=${REF:-$DATA/wallets/markout-v1-txdelay-v4/markout-f7rev-txdelay.parquet}
 DEV_ENGINE=${DEV_ENGINE:-$DATA/backtests/f7rev-1033-1046/engine}
-export PYTHONPATH=$REPO/lab PYTHONDONTWRITEBYTECODE=1 LAB_WALLETS_OUT=$DATA/wallets LAB_WALLETS_MEMORY=${MEMORY:-12GB} \
-  LAB_WALLETS_THREADS=${THREADS:-6} LAB_MARKOUT_BUCKETS=${BUCKETS:-32} LAB_REPORT_WORKERS=${WORKERS:-4} \
-  LAB_SPILL_DIR=${LAB_SPILL_DIR:-/lab/tmp/nas-depthband-proof} LAB_SPILL_MAX=${LAB_SPILL_MAX:-100GB} LAB_STORE=$STORE LAB_ENGINE=$DEV_ENGINE
+# the settings of NAS job 99zx-ma4-full-21711ea (nas_markout.sh, MARKOUT_ARGS="--tx-delays", no --families): BUCKETS 32, MEMORY 12GB,
+# WORKERS 6, LAB_SPILL_MAX 150GB, OPENBLAS_NUM_THREADS 1; BOOT only reaches the report (markout.py has no bootstrap: the rows do not depend on it)
+export PYTHONPATH=$REPO/lab PYTHONDONTWRITEBYTECODE=1 OPENBLAS_NUM_THREADS=${OPENBLAS_NUM_THREADS:-1} LAB_WALLETS_OUT=$DATA/wallets LAB_WALLETS_MEMORY=${MEMORY:-12GB} \
+  LAB_WALLETS_THREADS=${THREADS:-6} LAB_MARKOUT_BUCKETS=${BUCKETS:-32} LAB_REPORT_WORKERS=${WORKERS:-6} \
+  LAB_SPILL_DIR=${LAB_SPILL_DIR:-/lab/tmp/nas-depthband-proof} LAB_SPILL_MAX=${LAB_SPILL_MAX:-150GB} LAB_STORE=$STORE LAB_ENGINE=$DEV_ENGINE
 mkdir -p "$OUT" "$LOG" "$LAB_SPILL_DIR"
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$LOG/nas_depthband_proof.log"; }
 red() { log "RED: $*"; exit 1; }
