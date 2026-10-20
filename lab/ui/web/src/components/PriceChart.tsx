@@ -1,3 +1,4 @@
+import { compactPrice } from "../format";
 import { useEffect, useRef } from "react";
 import {
   CandlestickSeries, ColorType, HistogramSeries, createChart, createSeriesMarkers,
@@ -34,8 +35,7 @@ export function eventMarkers(events: MarketEvent[], createTime: number | null): 
   return out;
 }
 
-const fmtPrice = (v: number) => (v === 0 ? "0" : Math.abs(v) >= 1 ? v.toLocaleString("nl-NL", { maximumFractionDigits: 3 })
-  : v.toLocaleString("nl-NL", { maximumSignificantDigits: 3 }));
+const fmtPrice = (v: number) => compactPrice(v);
 const fmtMcap = (v: number) => (v >= 1000 ? (v / 1000).toLocaleString("nl-NL", { maximumFractionDigits: 1 }) + "k" : v.toLocaleString("nl-NL", { maximumFractionDigits: 1 }));
 
 export default function PriceChart({ candles, supply, markers, height = 360, unit = "mcap", bucket = 60, focus }: {

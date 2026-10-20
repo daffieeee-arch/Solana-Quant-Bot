@@ -1,7 +1,8 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { get } from "../api";
 import { cn } from "../lib/utils";
-import { shortAddr, unixClock } from "../format";
+import { compactPrice, shortAddr, unixClock } from "../format";
+import NoteBox from "./NoteBox";
 import type { PaperPosition } from "../paperTypes";
 
 // "Verklaar deze trade" (backlog 2): why the bot entered (the F7 trigger, the farm label and farmer history), what
@@ -21,7 +22,7 @@ const EXIT: Record<string, string> = {
   take_profit: "doel geraakt", stop_loss: "stop-loss", time: "tijdslimiet", outflow: "uitstroom", graduation: "migratie",
   window_end: "einde data", restart_lost: "verloren bij herstart", after_window_end: "einde data", end_of_data: "einde data",
 };
-const px = (v: number | null | undefined) => (v == null ? "–" : v.toLocaleString("nl-NL", { maximumSignificantDigits: 4 }));
+const px = (v: number | null | undefined) => (v == null ? "–" : compactPrice(v));
 const pct = (v: number | null | undefined, d = 2) => (v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toLocaleString("nl-NL", { maximumFractionDigits: d })}%`);
 
 function Row({ k, children }: { k: string; children: ReactNode }) {
@@ -45,6 +46,7 @@ export default function Explain({ p }: { p: PaperPosition | null | undefined }) 
   if (!x) return <p className="m-0 text-xs text-muted">Verklaring laden…</p>;
   const s = x.signal, e = x.entry, o = x.exit;
   return (
+    <div className="grid gap-3">
     <div className="grid gap-3 sm:grid-cols-3 text-xs">
       <div>
         <h3 className="m-0 mb-1 text-xs font-extrabold text-fg-2">Waarom instap</h3>
@@ -82,6 +84,9 @@ export default function Explain({ p }: { p: PaperPosition | null | undefined }) 
           </>
         ) : x.open ? <Row k="nu (mark)">{x.open.mark_pnl_sol == null ? "–" : `${x.open.mark_pnl_sol.toLocaleString("nl-NL", { maximumFractionDigits: 3 })} SOL`}</Row> : <p className="m-0 text-muted">–</p>}
       </div>
+    </div>
+    {/* The owner's note on this trade (backlog 5): only on a paired device, as the day card's. */}
+    <NoteBox target={{ key: p.key, variant: p.variant, t }} />
     </div>
   );
 }
