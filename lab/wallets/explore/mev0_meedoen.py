@@ -1,6 +1,9 @@
 """MEV phase 0 follow-up (lab/reports/2026-10-20-mev0-meedoen.md, E43): what taking part would need, read from the
 existing E17 output (wallets/mev0-rerun/mev0-v1, NAS job 96 on a33446b). Read-only DuckDB over the parquet files;
 nothing is sent or traded. 'explained' = net <= |legs_sol| (the 2026-10-15 note: the rest are LP withdrawals).
+Fees (section 2): tx_fee is meta.fee, which already holds the priority part (the extractor sets priority_fee = fee -
+signatures x 5000 lamports), so the fee share is sum(tx_fee) / gross and the priority share is shown apart; adding the two
+doubled the priority part (Codex finding, 2026-10-20). Net is untouched: gross = net + tx_fee + jito_tip, once.
 
   python -I lab/wallets/explore/mev0_meedoen.py [DIR]   (in a 3G scope; ~250 MB of parquet)
 """
@@ -40,10 +43,11 @@ P("(1c) top-3 payers (ranked on reachable explained net) vs newcomers, 09-29 exp
    count(*) n, round(sum(a.net)/1e9,2) net_sol, round(quantile_cont(a.dist_slots,0.5),1) med_slots, round(avg((a.jito_tip>0)::INT),3) tipped,
    round(quantile_cont(a.jito_tip,0.5)/1e9,6) med_tip, round(quantile_cont(a.priority_fee,0.5)/1e9,6) med_prio
  FROM arbs a LEFT JOIN sg USING (fee_payer) WHERE a.day='2026-09-29' AND a.explained AND a.backrun GROUP BY 1 ORDER BY 1""")
-P("(2) tips and fees as share of gross (explained arbs), per day", """
+P("(2) tips and fees as share of gross (explained arbs), per day; fee_share = tx_fee / gross (priority inside tx_fee, shown apart)", """
  SELECT day, count(*) n, round(sum(gross)/1e9,1) gross_sol, round(sum(net)/1e9,1) net_sol, round(sum(jito_tip)/1e9,2) tips_sol,
-   round(sum(priority_fee)/1e9,3) prio_sol, round(sum(tx_fee)/1e9,3) txfee_sol, round(sum(jito_tip)/sum(gross),3) tip_share,
-   round(sum(priority_fee+tx_fee)/sum(gross),3) fee_share, round(avg((jito_tip>0)::INT),3) tipped, round(quantile_cont(net,0.5)/1e9,5) med_net
+   round(sum(tx_fee)/1e9,3) txfee_sol, round(sum(priority_fee)/1e9,3) prio_sol, round(sum(jito_tip)/sum(gross),3) tip_share,
+   round(sum(tx_fee)/sum(gross),3) fee_share, round(sum(priority_fee)/sum(gross),3) prio_share, round((sum(tx_fee)+sum(jito_tip))/sum(gross),3) fee_plus_tip_share,
+   round(avg((jito_tip>0)::INT),3) tipped, round(quantile_cont(net,0.5)/1e9,5) med_net
  FROM arbs WHERE explained AND gross > 0 GROUP BY 1 ORDER BY 1""")
 P("(2b) reachable explained 09-29: net per opportunity", """
  SELECT count(*) n, round(quantile_cont(net,0.5)/1e9,5) p50, round(quantile_cont(net,0.9)/1e9,4) p90, round(quantile_cont(net,0.99)/1e9,3) p99,
