@@ -277,6 +277,15 @@ class NasJob(Base):
         self.assertEqual((j["state"], j["result"]["rows"][0]["mean_pnl_sol"]), ("done", 0.04))
         self.assertEqual(self.disp.run({}, fake), [])  # nothing left to do
 
+    def test_a_bad_answer_ends_only_that_jobs_step(self):
+        _, rid = self.submit()
+        self.ex.run()
+        ok = lambda cfg, c, stdin=None, timeout=60: (0, json.dumps({"backtest-f7": "a" * 64}).encode() if c == "sums" else b"x", "")  # noqa: E731
+        self.assertEqual(self.disp.run({}, ok)[0][:2], (rid, "sent"))
+        garbage = lambda cfg, c, stdin=None, timeout=60: (0, b"<html>not json", "")  # noqa: E731
+        self.assertEqual(self.disp.run({}, garbage)[0][:2], (rid, "bad answer"))  # no exception, the pass goes on
+        self.assertEqual(self.a.jobs_view()[0]["state"], "sent")  # unchanged until a real answer comes
+
     def test_dispatcher_refuses_without_a_pinned_template_and_retries_a_failed_put(self):
         _, rid = self.submit()
         self.ex.run()

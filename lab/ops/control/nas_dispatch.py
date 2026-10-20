@@ -93,18 +93,24 @@ def run(cfg, call=ssh):
         st = _status(rid) if n.endswith(".json") and ID_RE.match(rid) else None
         if not st or st.get("state") in FINAL:
             continue
-        rc, out, err = call(cfg, f"status {rid}")
-        if rc != 0:
-            done.append((rid, "status failed", err))
-            continue
-        nas = json.loads(out)
-        state = {"done": "done", "failed": "failed", "refused": "refused", "running": "running", "queued": "queued"}.get(nas.get("state"), st["state"])
-        if state == "done":
-            rc, out, err = call(cfg, f"get {rid}")
+        try:  # one job's bad answer (not JSON, a timeout) never ends the pass for the others (LAB review on #451)
+            rc, out, err = call(cfg, f"status {rid}")
             if rc != 0:
-                done.append((rid, "get failed", err))
+                done.append((rid, "status failed", err))
                 continue
-            _write(os.path.join(RESULTS, rid, "result.json"), json.loads(out))
+            nas = json.loads(out)
+            if not isinstance(nas, dict):
+                raise ValueError("status is not an object")
+            state = {"done": "done", "failed": "failed", "refused": "refused", "running": "running", "queued": "queued"}.get(nas.get("state"), st["state"])
+            if state == "done":
+                rc, out, err = call(cfg, f"get {rid}")
+                if rc != 0:
+                    done.append((rid, "get failed", err))
+                    continue
+                _write(os.path.join(RESULTS, rid, "result.json"), json.loads(out))
+        except (ValueError, RecursionError, OSError, subprocess.TimeoutExpired) as e:
+            done.append((rid, "bad answer", str(e)[:200]))
+            continue
         _write(os.path.join(st_dir, f"{rid}.json"), dict(st, state=state, nas=nas, checked_unix=int(time.time())))
         done.append((rid, state, ""))
     # 1. a queued job, only when none is on its way.
@@ -116,7 +122,10 @@ def run(cfg, call=ssh):
         try:
             with open(path) as f:
                 local = json.load(f)
-            rc, out, err = call(cfg, "sums")
+            try:
+                rc, out, err = call(cfg, "sums")
+            except (OSError, subprocess.TimeoutExpired) as e:
+                rc, out, err = 255, b"", str(e)[:200]
             if rc != 0:
                 done.append((rid, "sums failed", err))
                 break
@@ -129,7 +138,10 @@ def run(cfg, call=ssh):
             os.replace(path, os.path.join(q, f".refused-{n}"))
             done.append((rid, "refused", str(e)))
             continue
-        rc, out, err = call(cfg, "put", json.dumps(job).encode())
+        try:
+            rc, out, err = call(cfg, "put", json.dumps(job).encode())
+        except (OSError, subprocess.TimeoutExpired) as e:
+            rc, out, err = 255, b"", str(e)[:200]
         if rc != 0:
             done.append((rid, "put failed", err))
             break  # try again next pass; the job stays queued
