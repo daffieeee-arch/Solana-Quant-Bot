@@ -540,6 +540,48 @@ class Alerts(unittest.TestCase):
                 del os.environ["LAB_PAPER_RISK"]
 
 
+class OnCourse(unittest.TestCase):
+    """'Op koers?': the paper per trade beside LAB research's expectation file, pinned by sha256; a file that is not
+    the pinned one shows nothing; the primary band in SOL per trade at the file's size; the position only from
+    MIN_TRADES_SHOWN trades on."""
+
+    def test_pinned_file_and_position(self):
+        import hashlib
+        exp = {"version": "t", "regime_note": "n", "rules": ["beslist niets"], "candidates": {
+            "K3": {"name": "K3", "primary": {"ci95_ret_pct": [-0.9, 0.61], "mean_ret_pct": 0.02, "trades": 3789,
+                                             "config": {"variant": "tp4_T600", "size_sol": 0.5}}, "secondary": []},
+            "H5": {"name": "H5", "primary": {"status": "pending"}, "caveats": ["c"],
+                   "secondary": [{"regime": "270ms", "mean_net_sol_per_trade": 0.044, "ci95_sol_per_trade": [0.02, 0.06],
+                                  "config": {"variant": "flow300_tp100_H6", "size_sol": 0.5}}]},
+            "H4": {"name": "H4", "primary": {"status": "pending"}, "secondary": [{"config": {"variant": "flow300_H6", "size_sol": 0.5}}]}}}
+        raw = json.dumps(exp).encode()
+        exits = [{"family": "F7", "variant": "tp4_T600", "day": f"2026-10-{20 + i % 6}", "tokens": 5, "pnl": 1_000_000} for i in range(60)]
+        exits += [{"family": "F7", "variant": "flow300_tp100_H6", "day": "2026-10-20", "tokens": 5, "pnl": -100_000_000}]
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            f.write(raw)
+        old = paper.EXPECTATIONS, paper.EXPECTATIONS_SHA256
+        try:
+            paper.EXPECTATIONS, paper.EXPECTATIONS_SHA256 = f.name, hashlib.sha256(raw).hexdigest()
+            oc = paper.on_course(exits, {"tp4_T600"}, {"H": ["flow300_tp100_H6"]})
+            self.assertEqual([c["id"] for c in oc["candidates"]], ["K3", "H5"])  # H4's variant does not run here
+            k3, h5 = oc["candidates"]
+            self.assertEqual((k3["group"], k3["paper"]["trades"], k3["position"]), ("K3", 60, "inside"))  # +0.001 in [-0.0045, 0.00305]
+            self.assertAlmostEqual(k3["primary"]["ci95_sol"][0], -0.0045)
+            self.assertIsNotNone(k3["paper"]["ci95_sol"])  # 6 days: the stop rule's interval
+            self.assertEqual((h5["group"], h5["position"], h5["primary"]["status"], h5["caveats"]), ("H", None, "pending", ["c"]))
+            paper.EXPECTATIONS_SHA256 = "0" * 64
+            self.assertEqual(paper.on_course(exits, {"tp4_T600"}, {})["candidates"], [])  # not the pinned file: nothing
+            self.assertIn("sha256", paper.on_course(exits, {"tp4_T600"}, {})["error"])
+        finally:
+            paper.EXPECTATIONS, paper.EXPECTATIONS_SHA256 = old
+            os.unlink(f.name)
+
+    def test_the_real_file_is_the_pinned_one(self):
+        if not os.path.exists(paper.EXPECTATIONS):
+            self.skipTest("no expectations file here")
+        self.assertIsNone(paper._expectations()[1])
+
+
 class Recorder(unittest.TestCase):
     def test_sample_is_marked_and_summed_per_stream(self):
         os.environ["LAB_RECORDER_ROOT"] = "/nonexistent"

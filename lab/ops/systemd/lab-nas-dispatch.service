@@ -1,0 +1,19 @@
+# lab-nas-dispatch: hands the interactive UI's research jobs to the NAS and fetches their results
+# (lab/ops/control/nas_dispatch.py; spec v0.3 §5.1). The only holder of the NAS job key (~/.config/solana-lab/nas-ui.env).
+[Unit]
+Description=Solana lab: the UI's NAS job dispatcher
+Documentation=file:%h/Solana-project/worktrees/lab-ui-deploy/lab/ops/control/README.md
+ConditionPathExists=%h/.config/solana-lab/nas-ui.env
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Solana-project/worktrees/lab-ui-deploy
+Environment=LAB_DATA_ROOT=%h/Solana-project/data-old-faithful-one/lab
+ExecStart=%h/.local/share/solana-quant/toolchains/columnar-query-313-duckdb155/bin/python -I lab/ops/control/nas_dispatch.py
+StandardOutput=append:%h/Solana-project/data-old-faithful-one/lab/logs/nas-dispatch.log
+StandardError=inherit
+MemoryMax=128M
+CPUQuota=25%
+TasksMax=16
+NoNewPrivileges=yes
+TimeoutStartSec=300

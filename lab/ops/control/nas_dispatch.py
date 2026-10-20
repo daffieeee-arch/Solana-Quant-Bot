@@ -1,0 +1,165 @@
+"""lab-nas-dispatch: hands the UI's research jobs to the NAS and fetches their results (spec v0.3 §5, §5.1).
+The only holder of the NAS key. Parameters only: the NAS's forced command (lab/ops/uijobs/ui_queue.py) takes a
+schema-checked JSON and nothing else; the NAS renders the job from a template it has pinned.
+
+Each run (lab-nas-dispatch.timer, every 2 minutes; one at a time by flock):
+  1. a job in <control>/nas-queue/: ask the NAS `sums` for the pinned template's sha256, build the job (schema
+     check), `put` it, record nas-status/<id>.json = sent; one job on its way at a time;
+  2. a job on its way: `status <id>`; once done, `get <id>` -> <data>/nas-results/ui/<id>/result.json.
+
+Settings in ~/.config/solana-lab/nas-ui.env (no secret in the repo; the key file itself stays where it is):
+  NAS_UI_HOST=<the NAS's tailnet IP>  NAS_UI_USER=<user>  NAS_UI_KEY=<path of a key only for this dispatcher>
+  NAS_UI_KNOWN_HOSTS=<a known_hosts file with the NAS's host key>
+ssh runs with BatchMode, StrictHostKeyChecking=yes against that known_hosts file only, IdentitiesOnly, a short
+ConnectTimeout, no agent, no forwarding, and an argv (no shell on this side).
+
+  python3 -I lab/ops/control/nas_dispatch.py
+"""
+
+import fcntl
+import json
+import os
+import re
+import subprocess
+import time
+
+DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")
+CONTROL = os.environ.get("LAB_CONTROL", os.path.join(DATA, "control"))
+RESULTS = os.environ.get("LAB_NAS_RESULTS", os.path.join(DATA, "nas-results", "ui"))
+ENV_FILE = os.environ.get("LAB_NAS_UI_ENV", os.path.expanduser("~/.config/solana-lab/nas-ui.env"))
+ID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
+TEMPLATE = "backtest-f7"
+FINAL = ("done", "failed", "refused")
+
+
+def _schema():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("lab_uijobs_schema_d", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "uijobs", "schema.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def settings(path=ENV_FILE):
+    """KEY=VALUE lines of nas-ui.env (no shell parsing); the four settings must be there."""
+    out = {}
+    with open(path) as f:
+        for line in f:
+            k, sep, v = line.strip().partition("=")
+            if sep and k in ("NAS_UI_HOST", "NAS_UI_USER", "NAS_UI_KEY", "NAS_UI_KNOWN_HOSTS"):
+                out[k] = v.strip().strip('"')
+    missing = {"NAS_UI_HOST", "NAS_UI_USER", "NAS_UI_KEY", "NAS_UI_KNOWN_HOSTS"} - set(out)
+    if missing:
+        raise SystemExit(f"nas-ui.env: missing {', '.join(sorted(missing))}")
+    if not re.fullmatch(r"[0-9A-Za-z._-]{1,64}", out["NAS_UI_USER"]) or not re.fullmatch(r"[0-9A-Za-z.:-]{1,253}", out["NAS_UI_HOST"]):
+        raise SystemExit("nas-ui.env: a bad host or user")
+    return out
+
+
+def ssh(cfg, command, stdin=None, timeout=60):
+    """One command of the forced command (sums | put | status <id> | get <id>): (exit code, stdout, stderr)."""
+    argv = ["ssh", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", f"UserKnownHostsFile={cfg['NAS_UI_KNOWN_HOSTS']}",
+            "-o", "GlobalKnownHostsFile=/dev/null", "-o", "IdentitiesOnly=yes", "-o", "IdentityAgent=none", "-o", "ConnectTimeout=10",
+            "-o", "ServerAliveInterval=10", "-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "ClearAllForwardings=yes",
+            "-i", cfg["NAS_UI_KEY"], "-l", cfg["NAS_UI_USER"], cfg["NAS_UI_HOST"], command]
+    r = subprocess.run(argv, input=stdin, capture_output=True, timeout=timeout)
+    return r.returncode, r.stdout, r.stderr.decode(errors="replace")[-300:]
+
+
+def _write(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "w") as f:
+        json.dump(obj, f)
+    os.replace(path + ".tmp", path)
+
+
+def _status(rid):
+    try:
+        with open(os.path.join(CONTROL, "nas-status", f"{rid}.json")) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def run(cfg, call=ssh):
+    """One dispatcher pass; a list of what it did (for the log and the tests)."""
+    done = []
+    st_dir, q = os.path.join(CONTROL, "nas-status"), os.path.join(CONTROL, "nas-queue")
+    os.makedirs(st_dir, exist_ok=True)
+    os.makedirs(q, exist_ok=True)
+    # 2. jobs on their way: status, then the result once final.
+    for n in sorted(os.listdir(st_dir)):
+        rid = n[:-5]
+        st = _status(rid) if n.endswith(".json") and ID_RE.match(rid) else None
+        if not st or st.get("state") in FINAL:
+            continue
+        try:  # one job's bad answer (not JSON, a timeout) never ends the pass for the others (LAB review on #451)
+            rc, out, err = call(cfg, f"status {rid}")
+            if rc != 0:
+                done.append((rid, "status failed", err))
+                continue
+            nas = json.loads(out)
+            if not isinstance(nas, dict):
+                raise ValueError("status is not an object")
+            state = {"done": "done", "failed": "failed", "refused": "refused", "running": "running", "queued": "queued"}.get(nas.get("state"), st["state"])
+            if state == "done":
+                rc, out, err = call(cfg, f"get {rid}")
+                if rc != 0:
+                    done.append((rid, "get failed", err))
+                    continue
+                _write(os.path.join(RESULTS, rid, "result.json"), json.loads(out))
+        except (ValueError, RecursionError, OSError, subprocess.TimeoutExpired) as e:
+            done.append((rid, "bad answer", str(e)[:200]))
+            continue
+        _write(os.path.join(st_dir, f"{rid}.json"), dict(st, state=state, nas=nas, checked_unix=int(time.time())))
+        done.append((rid, state, ""))
+    # 1. a queued job, only when none is on its way.
+    if any((_status(n[:-5]) or {}).get("state") not in FINAL for n in os.listdir(st_dir) if n.endswith(".json")):
+        return done
+    for n in sorted(x for x in os.listdir(q) if x.endswith(".json") and not x.startswith(".")):
+        rid = n[:-5]
+        path = os.path.join(q, n)
+        try:
+            with open(path) as f:
+                local = json.load(f)
+            try:
+                rc, out, err = call(cfg, "sums")
+            except (OSError, subprocess.TimeoutExpired) as e:
+                rc, out, err = 255, b"", str(e)[:200]
+            if rc != 0:
+                done.append((rid, "sums failed", err))
+                break
+            sha = json.loads(out).get(TEMPLATE)
+            if not sha:
+                raise ValueError(f"the NAS has no pinned {TEMPLATE}")
+            job = _schema().validate({"id": rid, "template": TEMPLATE, "template_sha256": sha, "params": local["params"]})
+        except (OSError, ValueError, KeyError, RecursionError) as e:
+            _write(os.path.join(st_dir, f"{rid}.json"), {"id": rid, "state": "refused", "reason": str(e)[:300], "checked_unix": int(time.time())})
+            os.replace(path, os.path.join(q, f".refused-{n}"))
+            done.append((rid, "refused", str(e)))
+            continue
+        try:
+            rc, out, err = call(cfg, "put", json.dumps(job).encode())
+        except (OSError, subprocess.TimeoutExpired) as e:
+            rc, out, err = 255, b"", str(e)[:200]
+        if rc != 0:
+            done.append((rid, "put failed", err))
+            break  # try again next pass; the job stays queued
+        _write(os.path.join(st_dir, f"{rid}.json"), {"id": rid, "state": "sent", "params": job["params"], "template_sha256": sha,
+                                                     "sent_unix": int(time.time())})
+        os.replace(path, os.path.join(q, f".sent-{n}"))
+        done.append((rid, "sent", ""))
+        break  # one job at a time
+    return done
+
+
+def main():
+    with open(os.path.join(CONTROL, "nas-dispatch.lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        for rid, what, err in run(settings()):
+            print(f"{time.strftime('%FT%TZ', time.gmtime())} {rid} {what} {err}".rstrip(), flush=True)
+
+
+if __name__ == "__main__":
+    os.makedirs(CONTROL, exist_ok=True)
+    main()
