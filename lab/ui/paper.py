@@ -22,6 +22,7 @@ and counted, as is any recorder usage of such a segment.
 import bisect
 import calendar
 import glob
+import hashlib
 import heapq
 import importlib.util
 import json
@@ -571,8 +572,75 @@ def journal_view(path, now):
             "status": status, "variants": variants, "totals": totals, "positions": pos, "stop_rule": stop,
             "capital": capital, "n2": n2, "ranges": ranges, "ticker": ticker, "shadow_positions": shadow_rows,
             "arms": arm_groups(exits, positions, further, day), "arm_positions": arm_rows, "journal_usage_rows": len(usage),
+            "on_course": on_course(exits, primary, further),
             "groups_inferred": groups_inferred,
             "holdout_rows_dropped": j.dropped}
+
+
+# "Op koers?" (backlog 3): paper per trade beside the backtest's expectation, from LAB research's versioned file,
+# pinned by its sha256 (a new version gets a new sha and a new pin here; a mismatch shows nothing).
+EXPECTATIONS = os.path.join(DATA, "research", "paper-expectations-2026-10-20.json")
+EXPECTATIONS_SHA256 = "f1a62c3dc296404df3b2b21dda4acc121bc5dc5ebbcb2373a4dc3a9b5f0391d1"
+MIN_TRADES_SHOWN = 50  # below this many filled paper trades the comparison says "nog te weinig"
+
+
+def _expectations():
+    try:
+        with open(EXPECTATIONS, "rb") as f:
+            raw = f.read()
+    except OSError:
+        return None, "geen verwachtingsbestand"
+    if hashlib.sha256(raw).hexdigest() != EXPECTATIONS_SHA256:
+        return None, "verwachtingsbestand wijkt af van de gepinde sha256"
+    try:
+        return json.loads(raw), None
+    except ValueError:
+        return None, "verwachtingsbestand onleesbaar"
+
+
+def on_course(exits, primary, further):
+    """Per candidate whose variant this journal runs: the paper's net P&L per filled trade (failed entries' costs
+    included, as the stop rule), with the stop rule's day bootstrap from 5 days, beside the expectation file's
+    primary (out-of-sample) and secondary (dev in-sample, 'optimistisch') per-trade bands, in SOL per trade at
+    the file's size. Where the paper mean falls against the primary band, from MIN_TRADES_SHOWN trades on.
+    Decides nothing: the stop rule and the forward test do."""
+    exp, why = _expectations()
+    if exp is None:
+        return {"error": why, "candidates": []}
+    running = set(primary or ()) | {v for vs in further.values() for v in vs}
+    out = []
+    for cid, c in exp.get("candidates", {}).items():
+        prim, sec = c.get("primary") or {}, c.get("secondary") or []
+        cfg = prim.get("config") or (sec[0].get("config") if sec else {}) or {}
+        variant, size = cfg.get("variant"), float(cfg.get("size_sol") or 0.5)
+        if variant not in running:
+            continue
+        xs = [x for x in exits if x["family"] == "F7" and x["variant"] == variant]
+        by_day, filled_by_day, n = stoprule.stop_rule_inputs([dict(x, pnl=x["pnl"] or 0) for x in xs])
+        mean, lo, hi, _ = stoprule.verdict(by_day, n, filled_by_day)
+        sol = lambda v: None if v is None else v / 1e9  # noqa: E731
+        band = None
+        if prim.get("ci95_ret_pct"):
+            band = [p / 100 * size for p in prim["ci95_ret_pct"]]
+        elif prim.get("ci95_sol_per_trade"):
+            band = list(prim["ci95_sol_per_trade"])
+        pm = sol(mean)
+        position = None
+        if band and pm is not None and n >= MIN_TRADES_SHOWN:
+            position = "below" if pm < band[0] else "above" if pm > band[1] else "inside"
+        out.append({
+            "id": cid, "name": c.get("name"), "variant": variant, "group": "K3" if primary and variant in primary else next(
+                (g for g, vs in further.items() if variant in vs), None),
+            "paper": {"trades": n, "failed_entries": len(xs) - n, "days": len(by_day), "mean_sol": pm, "ci95_sol": [sol(lo), sol(hi)] if lo is not None else None},
+            "primary": {"label": prim.get("label"), "status": prim.get("status"), "trades": prim.get("trades"),
+                        "mean_sol": (prim["mean_ret_pct"] / 100 * size) if prim.get("mean_ret_pct") is not None else prim.get("mean_net_sol_per_trade"),
+                        "ci95_sol": band, "verdict": prim.get("verdict"), "source": prim.get("source")},
+            "secondary": [{"label": x.get("label"), "regime": x.get("regime"), "trades": x.get("trades"), "mean_sol": x.get("mean_net_sol_per_trade"),
+                           "ci95_sol": x.get("ci95_sol_per_trade")} for x in sec],
+            "caveats": [str(v) for v in (c.get("caveats") or [])], "position": position,
+        })
+    return {"version": exp.get("version"), "sha256": EXPECTATIONS_SHA256, "regime_note": exp.get("regime_note"),
+            "rules": exp.get("rules") or [], "min_trades": MIN_TRADES_SHOWN, "candidates": out}
 
 
 def arm_groups(exits, positions, further, day):
