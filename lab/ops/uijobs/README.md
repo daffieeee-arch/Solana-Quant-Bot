@@ -9,7 +9,7 @@ The UI's strategy chooser asks for a backtest. The VPS sends **parameters only**
 | File | Where it runs | What it does |
 |---|---|---|
 | `schema.py` | everywhere (stdlib) | The one schema: template, F7 variant (the engine's grids), segment, farm, size, delay, store, whole epochs ≤ 7. **Hold-out 1047–1051 and clean 1055–1063 are never selectable.** `env()` gives the template's `UI_*` values. |
-| `ui_queue.py` | NAS host, as the SSH forced command | `put` (a job on stdin → `queue/ui-<id>.json`), `status <id>`, `get <id>` (`result.json`). Nothing else. |
+| `ui_queue.py` | NAS host, as the SSH forced command | `sums` (the pinned templates' sha256, read-only), `put` (a job on stdin → `queue/ui-<id>.json`), `status <id>`, `get <id>` (`result.json`). Nothing else. |
 | `nas_runner.py` | NAS, a service of the app (≤ 3 CPU / 8 GB) | One job at a time, held while `ui-hold` exists. It runs a template only if the job's `template_sha256` is the one in `SHA256SUMS` and the file still hashes to it. The job's values reach the template as environment only. |
 | `templates/backtest-f7.sh` | NAS, via the runner | The tournament for the chosen variant and K3 (`tp4_T600`) on the job's store and epochs, then `result.py`. |
 | `result.py` | NAS (lab venv) | The result **as the canonical tournament report computes it**: `backtest.report.summarize` itself on the run's parts (base costs, the report's day-clustered bootstrap), one row per variant, d and regime, for the variant and for K3. |
@@ -42,7 +42,7 @@ The UI's strategy chooser asks for a backtest. The VPS sends **parameters only**
    - On the NAS, in the `authorized_keys` of an unprivileged user that may write `<NAS_LAB>/jobs-ui` (one line):
 
      ```text
-     restrict,command="UI_JOBS_DIR=<NAS_LAB>/jobs-ui /usr/bin/python3 -I <NAS_LAB>/bin/uijobs/ui_queue.py" ssh-ed25519 AAAA… lab-ui-jobs
+     restrict,command="UI_JOBS_DIR=<NAS_LAB>/jobs-ui UI_TEMPLATES_DIR=<NAS_LAB>/templates /usr/bin/python3 -I <NAS_LAB>/bin/uijobs/ui_queue.py" ssh-ed25519 AAAA… lab-ui-jobs
      ```
 
      `restrict` turns off port, agent and X11 forwarding and the pty. The forced command ignores whatever command the client asks for and reads it only from `SSH_ORIGINAL_COMMAND`.

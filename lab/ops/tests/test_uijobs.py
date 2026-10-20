@@ -202,3 +202,53 @@ def test_result_rows_are_the_tournament_reports():
             assert tuple(r[k] for k in keys) == w[(r["variant"], r["d"], r["regime"])], (farm, r["variant"], r["d"], r["regime"])
     k3 = next(r for r in result.rows(LONG_DEV, ["tp4_T600"], "pool_reversed", "all", 0.5) if r["d"] == 2 and r["regime"] == "270ms")
     assert round(k3["mean_pnl_sol"], 4) == 0.0029  # the report's d 2 270 ms
+
+
+def test_sums_and_deep_json():
+    with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as tpl:
+        with open(os.path.join(tpl, "SHA256SUMS"), "w") as f:
+            f.write(f"{'a' * 64}  backtest-f7.sh\n{'b' * 64}  other.sh\nnot a line\n")
+        env = dict(os.environ, UI_JOBS_DIR=root, UI_TEMPLATES_DIR=tpl, SSH_ORIGINAL_COMMAND="sums")
+        r = subprocess.run([sys.executable, "-I", os.path.join(UIJOBS, "ui_queue.py")], env=env, capture_output=True)
+        assert r.returncode == 0 and json.loads(r.stdout) == {"backtest-f7": "a" * 64}  # only known templates
+        deep = b"[" * 100_000 + b"]" * 100_000
+        r = _queue(root, "put", deep[: schema.MAX_BYTES])
+        assert r.returncode == 2 and b"Traceback" not in r.stderr
+        with pytest.raises(ValueError):
+            schema.validate("[" * 50_000 + "]" * 50_000)
+
+
+TIMEOUT_STUB = """#!/bin/bash
+sleep 300 &
+echo $! > "$UI_OUT/child.pid"
+wait
+"""
+
+
+def test_timeout_kills_the_whole_job():
+    import time
+    runner = _load("nas_runner")
+    with tempfile.TemporaryDirectory() as root, tempfile.TemporaryDirectory() as tpl:
+        with open(os.path.join(tpl, "backtest-f7.sh"), "w") as f:
+            f.write(TIMEOUT_STUB)
+        sha = hashlib.sha256(TIMEOUT_STUB.encode()).hexdigest()
+        with open(os.path.join(tpl, "SHA256SUMS"), "w") as f:
+            f.write(f"{sha}  backtest-f7.sh\n")
+        runner.ROOT, runner.TEMPLATES, runner.TIMEOUT = root, tpl, 1
+        q = _load("ui_queue")
+        q.ROOT = root
+        q.run("put", io.BytesIO(json.dumps(dict(job(), template_sha256=sha)).encode()), io.StringIO())
+        assert runner.once() == JID
+        with open(os.path.join(root, "results", JID, "status.json")) as f:
+            st = json.load(f)
+        assert (st["state"], st["rc"]) == ("failed", "timeout")
+        with open(os.path.join(root, "results", JID, "child.pid")) as f:
+            pid = int(f.read())
+        for _ in range(50):  # the worker of the job's group is gone too, not only bash
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            raise AssertionError("the job's child survived the timeout")

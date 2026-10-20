@@ -162,6 +162,7 @@ class Csrf(Base):
         self.refused(403, self.a.check_post, {k: v for k, v in JSON.items() if k != "Origin"}, ok, b"{}")
         self.refused(413, self.a.check_post, JSON, ok, b"{" + b" " * 5000 + b"}")
         self.refused(400, self.a.check_post, JSON, ok, b"[1]")
+        self.refused(400, self.a.check_post, JSON, ok, b"[" * 2000 + b"]" * 2000)  # nested too deeply: refused, no traceback
 
 
 class PrepareCommit(Base):

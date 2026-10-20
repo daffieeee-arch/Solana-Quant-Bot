@@ -107,3 +107,64 @@ def test_buckets_and_bounds_equal(tmp_path, monkeypatch):
     assert set(s) == {("P", hour_a), ("R", hour_a)} and sm["partial_edge_hours"] is True
     with pytest.raises(ValueError):
         revival.aggregate(str(tmp_path / "bad"), hi=revival.HOLDOUT_START + 1, store=str(tmp_path / "mini.duckdb"))
+
+
+def test_detect(tmp_path, monkeypatch):
+    """A sleeping pre-window pool with one burst hour on day 10, an always-active pool, a young in-window pool and a mayhem pool."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path))
+    agg = tmp_path / "agg"
+    agg.mkdir()
+    day0 = 1_789_000_000 // 86400 * 86400  # some UTC midnight; FIRST_DAY is passed explicitly below
+    H = 3600
+    rows = []
+
+    def hour(pool, h, vol_sol, traders, farmer_trades=0, t10=None, t20=None, t50=None, tr=None, depth=100 * SOL):
+        rows.append({"pool": pool, "hour": h, "trades": 10, "buys": 6, "sells": 4, "sol_volume": int(vol_sol * SOL), "sol_buy": int(vol_sol * SOL),
+                     "sol_sell": 0, "net_inflow": int(vol_sol * SOL), "traders": traders, "buyers": traders, "farmer_trades": farmer_trades,
+                     "farmer_sol": 0, "first_slot": SLOT0 + (h - day0) // 267 * 1000, "last_slot": SLOT0 + (h - day0) // 267 * 1000 + 5,
+                     "end_depth": depth, "end_b": 1, "end_e": 2, "end_vq": 3, "end_bps": 25,
+                     "t10_slot": t10, "t10_tx": 1 if t10 else None, "t10_traders": tr, "t10_depth": depth if t10 else None,
+                     "t20_slot": t20, "t20_tx": 1 if t20 else None, "t20_traders": tr, "t20_depth": depth if t20 else None,
+                     "t50_slot": t50, "t50_tx": 1 if t50 else None, "t50_traders": tr, "t50_depth": depth if t50 else None})
+    # A: pre-window, one 0.5 SOL hour per day for 9 days (sleeping), then on day 9 (= 2026-09-21 by the first_day below) a
+    # 25 SOL burst hour with 12 traders, a second burst the same day (deduplicated), and on day 10 a 4 SOL hour (below D)
+    for dday in range(9):
+        hour("A", day0 + dday * 86400 + 3 * H, 0.5, 1)
+    burst = day0 + 9 * 86400 + 5 * H
+    hour("A", burst, 25, 12, t10=SLOT0 + 900_000, t20=SLOT0 + 900_010, tr=7)
+    hour("A", burst + 2 * H, 30, 15, t10=SLOT0 + 901_000, t20=SLOT0 + 901_010, tr=9)
+    hour("A", day0 + 10 * 86400 + 5 * H, 4, 6)
+    # B: active every hour (50 SOL): never sleeping
+    for h in range(0, 11 * 24):
+        hour("B", day0 + h * H, 50, 20, t10=SLOT0 + 1000 + h, t20=SLOT0 + 1000 + h, t50=SLOT0 + 1000 + h, tr=20)
+    # C: in-window pool created 2 days before its burst: too young
+    hour("C", burst, 25, 12, t10=SLOT0 + 950_000, tr=12)
+    # M: mayhem pool, sleeping then bursting: excluded
+    for dday in range(9):
+        hour("M", day0 + dday * 86400 + 3 * H, 0.5, 1)
+    hour("M", burst, 25, 12, t10=SLOT0 + 960_000, tr=12)
+    pq.write_table(pa.table({k: [r[k] for r in rows] for k in rows[0]}), agg / "pool_hour.parquet")
+    pools = {"pool": ["A", "B", "C", "M"], "orientation": ["reversed", "normal", "reversed", "reversed"], "quote_class": ["reversed", "sol", "reversed", "reversed"],
+             "created_in_period": [False, False, True, False], "create_slot": [None, None, SLOT0 + 900_000 - 2 * 323_000, None],
+             "mayhem": [False, False, False, True], "coin_creator": ["c"] * 4, "b0": [1] * 4, "q0": [2] * 4}
+    pq.write_table(pa.table(pools), agg / "pools.parquet")
+    first_day = str(__import__("datetime").date(1970, 1, 1) + __import__("datetime").timedelta(days=(day0 + 9 * 86400) // 86400))
+    st = duckdb.connect(str(tmp_path / "mini.duckdb"))
+    st.execute("CREATE TABLE pools (pool VARCHAR, mint VARCHAR)")
+    st.execute("INSERT INTO pools VALUES ('A', 'MA'), ('B', 'MB'), ('C', 'MC'), ('M', 'MM')")
+    st.close()
+    out = tmp_path / "det"
+    info = revival.detect(str(agg), str(out), first_day=first_day, store=str(tmp_path / "mini.duckdb"))
+    con = duckdb.connect()
+    sig = con.execute(f"SELECT variant, pool, t, traders_at_t, farm, segment, day FROM read_parquet('{out}/signals.parquet') ORDER BY 1, 2").fetchall()
+    # A fires for D10 and D20 (25 SOL >= max(D, 10 x p90 = 5)), for T5 and T10 (12 traders), under S1 and S5; not D50, not T20
+    variants = sorted({v for v, *_ in sig})
+    assert variants == sorted(f"S{S}_D{D}_T{T}" for S in (1, 5) for D in (10, 20) for T in (5, 10))
+    assert {p for _, p, *_ in sig} == {"A"}
+    assert con.execute(f"SELECT DISTINCT mint FROM read_parquet('{out}/signals.parquet')").fetchall() == [("MA",)]
+    assert all(t == SLOT0 + 900_000 or t == SLOT0 + 900_010 for _, _, t, *_ in sig)  # the first burst of the day only
+    assert all(tr == 7 and farm == "organic" and seg == "pool_reversed" and day == first_day for _, _, _, tr, farm, seg, day in sig)
+    assert info["signals"] == 8 and info["cells"] == 18 and info["per_cell"]["S1_D10_T5"]["traders_at_t_ge_T"] == 1
+    assert info["per_cell"]["S1_D10_T10"]["traders_at_t_ge_T"] == 0  # 7 traders up to the D leg, 12 in the hour
