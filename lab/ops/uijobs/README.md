@@ -67,6 +67,19 @@ The UI's strategy chooser asks for a backtest. The VPS sends **parameters only**
    - **Hold UI jobs:** `touch <NAS_LAB>/jobs-ui/ui-hold` (during a hold-out run or an app update). Remove it to go on.
    - Results land in `<NAS_LAB>/jobs-ui/results/<id>/`: `status.json`, `result.json` and `job.log`.
 
+## Retention
+
+Keep `jobs-ui/done/ui-<id>.json` as long as `jobs-ui/results/<id>/`: `status` takes the job's `job_sha256` from that file, and the dispatcher treats an answer without it as unclear (after 10 passes the job is failed). Delete the two together, and only for a job that is final on the VPS (`control/nas-status/<id>.json` done, failed or refused).
+
+## Template checklist (review of a template or of what it runs)
+
+The runner finds a job's processes by `UI_JOB_ID` in their environment (recovery after a stopped runner). So a template and everything it starts:
+- never clears or replaces the environment: no `env -i`, no `exec -c`, no re-exec with a new environment (Python's `subprocess` and `multiprocessing` keep it, which is fine);
+- never daemonises: no `setsid`, `nohup … &`, `disown` or double fork that leaves a process behind; every worker is a child the template waits for;
+- writes `result.json` last, and only when the job succeeded (the runner's `done` needs exit 0 and the file).
+
+Considered, not done: the container's own `cgroup.procs` as a second liveness source. It also lists an operator's `docker exec` shell, which the runner cannot tell from a job's process (and must never kill); a per-job cgroup would need cgroup delegation the app does not have.
+
 ## What stays out
 
 - No script travels: the VPS cannot send code.

@@ -338,11 +338,48 @@ class NasJob(Base):
         self.assertEqual(self.disp.run({}, call), [(rid, "sent (put's answer lost, found on the NAS)", "")])
         self.assertEqual(sorted(os.listdir(os.path.join(q.ROOT, "queue"))), [".put.lock", f"ui-{rid}.json"])
         self.assertEqual(self.disp.run({}, call), [(rid, "queued", "")])  # the status pass: its own job
-        # The NAS answers for a different job under this id: never taken for ours, never fetched.
+        # The NAS answers for a different job under this id: never taken for ours, never fetched; final (#467 review).
         with open(os.path.join(q.ROOT, "queue", f"ui-{rid}.json"), "ab") as f:
             f.write(b" ")
-        self.assertEqual(self.disp.run({}, call)[0][:2], (rid, "bad answer"))
-        self.assertEqual(self.a.jobs_view()[0]["state"], "queued")  # as the last answer about its own job
+        self.assertEqual(self.disp.run({}, call), [(rid, "refused", "the NAS's job under this id is not the one sent")])
+        self.assertEqual(self.a.jobs_view()[0]["state"], "refused")
+        self.assertFalse(self.a.job_in_flight())  # the queue goes on
+
+    def test_no_consistent_answer_ends_after_max_passes_but_no_answer_is_not_counted(self):
+        """LAB review on #467: an answer that is 'unknown' (or has no job_sha256, or is not JSON) is counted; after
+        MAX_UNCLEAR passes the job is failed and the queue goes on. No answer at all (NAS down) is never counted."""
+        _, rid = self.submit()
+        self.ex.run()
+        q, call = self.nas_queue([])
+        self.assertEqual(self.disp.run({}, call), [(rid, "sent", "")])
+        os.remove(os.path.join(q.ROOT, "queue", f"ui-{rid}.json"))  # the NAS lost it: status says unknown
+        down = lambda cfg, c, stdin=None, timeout=60: (_ for _ in ()).throw(OSError("No route to host"))  # noqa: E731
+        for _ in range(3 * self.disp.MAX_UNCLEAR):
+            self.assertEqual(self.disp.run({}, down)[0][:2], (rid, "status failed"))
+        for k in range(1, self.disp.MAX_UNCLEAR):
+            self.assertEqual(self.disp.run({}, call), [(rid, "bad answer", f"no job_sha256 or an unknown id (state 'unknown') ({k}/{self.disp.MAX_UNCLEAR})")])
+        (last,) = self.disp.run({}, call)
+        self.assertEqual(last[:2], (rid, "failed"))
+        self.assertIn("no consistent answer", last[2])
+        self.assertEqual(self.a.jobs_view()[0]["state"], "failed")
+        self.assertFalse(self.a.job_in_flight())
+
+    def test_a_put_the_nas_refused_itself_is_refused_here_and_the_queue_goes_on(self):
+        _, rid = self.submit()
+        self.ex.run()
+
+        def nas(cfg, command, stdin=None, timeout=60):
+            if command == "sums":
+                return 0, json.dumps({"backtest-f7": "a" * 64}).encode(), ""
+            if command == "put":
+                return 2, b"", "refused: job larger than 4096 bytes\n"
+            return 0, json.dumps({"id": rid, "state": "unknown"}).encode(), ""
+        self.assertEqual(self.disp.run({}, nas), [(rid, "refused", "the NAS refused the job: refused: job larger than 4096 bytes")])
+        self.assertEqual(self.a.jobs_view()[0]["state"], "refused")
+        _, rid2 = self.submit()  # the next job is not held up
+        self.ex.run()
+        q, call = self.nas_queue([])
+        self.assertEqual(self.disp.run({}, call), [(rid2, "sent", "")])
 
     def test_a_lost_put_and_a_lost_status_stay_queued_then_put_again(self):
         _, rid = self.submit()
