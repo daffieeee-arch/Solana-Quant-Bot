@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 
 # lab/ui/paper.py by its path, as the server loads it: the name 'paper' is lab/paper's package (OneProcess).
@@ -360,6 +361,83 @@ class DecisionBoundary(unittest.TestCase):
             self.assertIn("**GO is geen toestemming voor live geld; dat is een aparte eigenaarsbeslissing.**", md)
             self.assertIn("only 10 trading days: below 14 the day bootstrap is coarse", md)
             self.assertIn("### What the verdict rests on", md)
+
+
+class TokenNames(unittest.TestCase):
+    """Names come from the data we hold, in layers: the paper run's store (pools -> mint, mints' name), the journal's
+    learned pools, the recorder's segments (pump CreateEvent, token_meta, pool_creations); a key found nowhere keeps
+    its mint if known and is looked up again later, reading newer segments only. No outside service."""
+
+    def test_layers_and_retry(self):
+        import duckdb
+        sol = paper.SOL_MINT
+        with tempfile.TemporaryDirectory() as d:
+            store = os.path.join(d, "fwd.duckdb")
+            con = duckdb.connect(store)
+            con.execute("CREATE TABLE pools (pool VARCHAR, mint VARCHAR)")
+            con.execute("CREATE TABLE mints (mint VARCHAR, name VARCHAR, symbol VARCHAR)")
+            con.execute("INSERT INTO pools VALUES ('PoolStore', 'MintStore'), ('PoolGap', 'MintGap')")
+            con.execute("INSERT INTO mints VALUES ('MintStore', 'Store <b>Coin</b>', 'STO')")
+            con.close()
+            jdir = os.path.join(d, "paper-k3", "journal")
+            os.makedirs(jdir)
+            db = sqlite3.connect(os.path.join(jdir, "journal.sqlite"))
+            db.execute("CREATE TABLE state (k TEXT PRIMARY KEY, v TEXT)")
+            db.execute("CREATE TABLE learned (kind TEXT, key TEXT, seq INTEGER, slot INTEGER, info TEXT, PRIMARY KEY (kind, key))")
+            db.execute("INSERT INTO state VALUES ('farmer_seed', ?)", [json.dumps({"store": store})])
+            db.execute("INSERT INTO learned VALUES ('pool', 'PoolLearned', 3, 1, ?)",
+                       [json.dumps(["sol", "normal", "PoolLearned", "MintLive", "normal", "sol", False, "c", 1])])
+            db.commit()
+            db.close()
+            root = os.path.join(d, "recorder")
+
+            def segment(seq, tables):
+                sd = os.path.join(root, "segments", f"{seq:09d}")
+                for sub, (cols, rows) in tables.items():
+                    os.makedirs(os.path.join(sd, sub))
+                    values = ", ".join("(" + ", ".join(f"'{v}'" for v in r) + ")" for r in rows)
+                    duckdb.sql(f"COPY (SELECT * FROM (VALUES {values}) t({cols})) TO '{os.path.join(sd, sub, 'part-00000.parquet')}' (FORMAT parquet)")
+                with open(os.path.join(sd, "_segment.json"), "w") as f:
+                    json.dump({"seq": seq, "first_slot": 470_000_000 + seq, "last_slot": 470_000_000 + seq, "complete": True,
+                               "written_unix": int(time.time()) - 100 + seq, "usage": []}, f)
+            segment(1, {"pump/CreateEvent": ("mint, name, symbol", [("MintLive", "Live Coin", "LIVE")]),
+                        "pool_creations": ("pool, base_mint, quote_mint", [("PoolRev", sol, "MintRev")]),
+                        "token_meta": ("mint, name, symbol", [("MintRev", "Reversed Coin", "REV")])})
+            with open(os.path.join(root, "budget.json"), "w") as f:
+                json.dump({"day": 0, "spent_bytes": 0, "cap_bytes": 1}, f)
+            env = {"LAB_PAPER_JOURNAL": jdir, "LAB_RECORDER_ROOT": root}
+            os.environ.update(env)
+            dev, paper._dev_names = paper._dev_names, lambda keys: {}  # no development data here
+            try:
+                keys = ["PoolStore", "PoolLearned", "PoolRev", "PoolGap", "Unknown1111"]
+                n = paper.token_names(keys)
+                self.assertEqual(n["PoolStore"], {"mint": "MintStore", "symbol": "STO", "name": "Store <b>Coin</b>"})  # raw text: the page escapes
+                self.assertEqual((n["PoolLearned"]["symbol"], n["PoolLearned"]["mint"]), ("LIVE", "MintLive"))
+                self.assertEqual((n["PoolRev"]["symbol"], n["PoolRev"]["mint"]), ("REV", "MintRev"))  # base WSOL: the quote is the token
+                self.assertEqual(n["PoolGap"], {"mint": "MintGap"})  # a mint, no name: the page shows its short address
+                self.assertEqual(n["Unknown1111"], {})
+                # The gap token's create arrives in a newer segment: after NAME_RETRY it is found, reading that one only.
+                segment(2, {"pump/CreateEvent": ("mint, name, symbol", [("MintGap", "Gap Coin", "GAP")])})
+                self.assertEqual(paper.token_names(["PoolGap"])["PoolGap"], {"mint": "MintGap"})  # not yet: retry later
+                paper._name_miss["PoolGap"] = (0, paper._name_miss["PoolGap"][1])
+                self.assertEqual(paper.token_names(["PoolGap"])["PoolGap"]["symbol"], "GAP")
+                self.assertEqual(paper._name_seq.get("Unknown1111"), 1)  # searched up to segment 1
+            finally:
+                paper._dev_names = dev
+                for k in env:
+                    del os.environ[k]
+                for k in ("PoolStore", "PoolLearned", "PoolRev", "PoolGap", "Unknown1111"):
+                    paper._names.pop(k, None)
+                    paper._name_miss.pop(k, None)
+                    paper._name_seq.pop(k, None)
+
+    def test_the_page_never_injects_html(self):
+        web = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "src")
+        for dirpath, _, files in os.walk(web):
+            for f in files:
+                if f.endswith((".tsx", ".ts")):
+                    with open(os.path.join(dirpath, f)) as fh:
+                        self.assertNotIn("dangerouslySetInnerHTML", fh.read(), f)  # token names are user-chosen text
 
 
 class GroupPositions(unittest.TestCase):

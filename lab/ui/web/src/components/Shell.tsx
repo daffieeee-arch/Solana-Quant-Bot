@@ -37,7 +37,7 @@ export function TickerBar() {
   if (!j?.ticker.length) return null;
   const items = j.ticker.map((t, i) => (
     <span key={i} className="inline-flex gap-1.5">
-      <span className="text-muted">{label(t.symbol, 14) || shortAddr(t.key)}</span>
+      <span className="text-muted">{label(t.symbol, 14) || shortAddr(t.mint ?? t.key)}</span>
       {t.failed ? <span className="text-fg-2">mislukt</span> : t.ret == null ? <span className="text-fg-2">–</span> : (
         <span className={t.ret > 0 ? "text-buy" : t.ret < 0 ? "text-sell" : "text-fg-2"}>
           {t.ret > 0 ? "▲ +" : t.ret < 0 ? "▼ −" : ""}{Math.abs(t.ret * 100).toLocaleString("nl-NL", { maximumFractionDigits: 1 })}%
