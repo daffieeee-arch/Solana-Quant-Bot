@@ -25,11 +25,62 @@ MAX_BYTES = 4096
 KEYS = {"id", "action", "params", "node", "name", "ts"}
 
 
-def _ping(params):
+def _ping(params, rid):
+    if params != {}:
+        raise ValueError("ping takes no parameters")
     return {"ok": True, "pong_unix": int(time.time())}
 
 
-ACTIONS = {"ping": _ping}
+def _schema():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("lab_uijobs_schema_x", os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "uijobs", "schema.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+TRIALS_HEADER = ("| id | datum | wat | data | regel vooraf | uitkomst | status | correcties |\n"
+                 "|---|---|---|---|---|---|---|---|\n")
+
+
+def _trial(rid, p):
+    """Every UI job counts as a trial (spec v0.3 §5.2): one row in the experiment register's format in
+    <control>/ui-trials.md (the coordinator carries the count into lab/reports/experiment-register.md) and one
+    JSON line in ui-trials.jsonl."""
+    md = os.path.join(CONTROL, "ui-trials.md")
+    day = time.strftime("%Y-%m-%d", time.gmtime())
+    row = (f"| UI-{rid} | {day} | backtest-f7 via de UI: {p['variant']} naast K3 (tp4_T600), {p['segment']}, farm {p['farm']}, "
+           f"{p['size_sol']:g} SOL, {p['d_ms']} ms | store {p['store']} epochs {p['epoch_from']}–{p['epoch_to']} (verbruikte data) | "
+           f"geen: UI-verkenning | zie nas-results/ui/{rid} | verkennend, geen bewijs | – |\n")
+    new = not os.path.exists(md)
+    with open(md, "a") as f:
+        if new:
+            f.write("# UI-trials (strategiekiezer; elke job telt als een trial)\n\n" + TRIALS_HEADER)
+        f.write(row)
+    with open(os.path.join(CONTROL, "ui-trials.jsonl"), "a") as f:
+        f.write(json.dumps({"id": rid, "day": day, "params": p}, sort_keys=True) + "\n")
+
+
+def _nas_job(params, rid):
+    """Queue a UI research job for the dispatcher (lab/ops/control/nas_dispatch.py): parameters only, checked
+    against the job schema; one job at a time."""
+    schema = _schema()
+    p = schema.validate({"id": rid, "template": "backtest-f7", "template_sha256": "0" * 64, "params": params})["params"]
+    q = os.path.join(CONTROL, "nas-queue")
+    os.makedirs(q, exist_ok=True)
+    st = os.path.join(CONTROL, "nas-status")
+    busy = any(n.endswith(".json") and not n.startswith(".") for n in os.listdir(q))
+    for n in os.listdir(st) if os.path.isdir(st) else []:
+        with open(os.path.join(st, n)) as f:
+            busy |= json.load(f).get("state") in ("sent", "queued", "running")
+    if busy:
+        raise ValueError("a UI job is already on its way (one at a time)")
+    _write(os.path.join(q, f"{rid}.json"), {"id": rid, "params": p, "ts": int(time.time())})
+    _trial(rid, p)
+    return {"ok": True, "job_id": rid, "state": "queued"}
+
+
+ACTIONS = {"ping": _ping, "nas_job": _nas_job}
 
 
 def _audit(**fields):
@@ -73,7 +124,7 @@ def handle(path):
             raise ValueError("action not allowed")
         if not isinstance(req["params"], dict):
             raise ValueError("params")
-        result = fn(req["params"])
+        result = fn(req["params"], rid)
         outcome = "ok"
     except (ValueError, OSError, KeyError, TypeError) as e:
         result = {"ok": False, "error": str(e)[:300]}

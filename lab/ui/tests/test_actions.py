@@ -45,6 +45,10 @@ class Base(unittest.TestCase):
         self.a = load("t_actions", os.path.join(UI, "actions.py"))
         self.pair_mod = load("t_pair", os.path.join(UI, "pair.py"))
         self.ex = load("t_executor", os.path.join(OPS, "control", "executor.py"))
+        self.disp = load("t_dispatch", os.path.join(OPS, "control", "nas_dispatch.py"))
+        self.disp.CONTROL = self.a.CONTROL
+        self.disp.RESULTS = os.path.join(self.tmp, "nas-results", "ui")
+        self.a.DATA = self.tmp
         self.nodes = {"100.64.0.1": PHONE, "100.64.0.2": OTHER}
         self.serve = {}
         self.a._localapi = self.fake_localapi
@@ -211,6 +215,106 @@ class PrepareCommit(Base):
             self.a.commit(peer, sid, {"csrf": csrf, "nonce": p["nonce"]}, 8501)
             self.ex.run()
         self.refused(429, self.a.prepare, peer, sid, {"csrf": csrf, "action": "ping"}, 8501)
+
+
+JOB = {"variant": "flow300_H6", "segment": "pool_reversed", "farm": "organic", "size_sol": 0.5, "d_ms": 600,
+       "store": "dev2", "epoch_from": 1040, "epoch_to": 1046}
+
+
+class NasJob(Base):
+    """B3b: a research job from the UI: params checked at prepare, by the executor and by the dispatcher; one at a
+    time; every job a trial; the dispatcher only talks to the forced command (sums, put, status, get)."""
+
+    def submit(self, params=JOB):
+        sid, csrf = self.session()
+        p = self.a.prepare("100.64.0.1:5000", sid, {"csrf": csrf, "action": "nas_job", "params": params}, 8501)
+        rid = self.a.commit("100.64.0.1:5000", sid, {"csrf": csrf, "nonce": p["nonce"]}, 8501)["id"]
+        return p, rid
+
+    def test_params_are_checked_before_anything_is_filed(self):
+        sid, csrf = self.session()
+        for bad in (dict(JOB, epoch_to=1047), dict(JOB, variant="x; rm -rf /"), dict(JOB, size_sol=1), dict(JOB, extra=1)):
+            self.refused(400, self.a.prepare, "100.64.0.1:5000", sid, {"csrf": csrf, "action": "nas_job", "params": bad}, 8501)
+        self.assertFalse(os.path.exists(os.path.join(self.a.CONTROL, "requests")))
+
+    def test_job_round_trip_through_the_dispatcher(self):
+        p, rid = self.submit()
+        self.assertIn("flow300_H6", p["text"])
+        self.assertIn("Verandert niets aan de paper-bot", p["text"])
+        self.assertEqual(self.ex.run(), [(rid, "ok")])
+        self.assertTrue(self.a.job_in_flight())
+        with open(os.path.join(self.a.CONTROL, "ui-trials.md")) as f:
+            md = f.read()
+        self.assertIn(f"| UI-{rid} |", md)
+        self.assertIn("| id | datum | wat | data | regel vooraf | uitkomst | status | correcties |", md)
+        # a second job while the first is on its way: refused at prepare
+        sid, csrf = self.session()
+        self.refused(429, self.a.prepare, "100.64.0.1:5000", sid, {"csrf": csrf, "action": "nas_job", "params": JOB}, 8501)
+        calls, nas = [], {"state": "queued"}
+
+        def fake(cfg, command, stdin=None, timeout=60):
+            calls.append((command, stdin))
+            if command == "sums":
+                return 0, json.dumps({"backtest-f7": "a" * 64}).encode(), ""
+            if command == "put":
+                job = json.loads(stdin)
+                self.assertEqual((job["id"], job["template_sha256"], job["params"]["variant"]), (rid, "a" * 64, "flow300_H6"))
+                return 0, (rid + "\n").encode(), ""
+            if command == f"status {rid}":
+                return 0, json.dumps(dict(nas, id=rid)).encode(), ""
+            if command == f"get {rid}":
+                return 0, json.dumps({"id": rid, "rows": [{"variant": "flow300_H6", "mean_pnl_sol": 0.04}]}).encode(), ""
+            raise AssertionError(command)
+
+        self.assertEqual(self.disp.run({}, fake), [(rid, "sent", "")])
+        self.assertEqual([c[0] for c in calls], ["sums", "put"])
+        self.assertEqual(self.disp.run({}, fake), [(rid, "queued", "")])
+        nas["state"] = "done"
+        self.assertEqual(self.disp.run({}, fake)[0][:2], (rid, "done"))
+        self.assertFalse(self.a.job_in_flight())
+        (j,) = self.a.jobs_view()
+        self.assertEqual((j["state"], j["result"]["rows"][0]["mean_pnl_sol"]), ("done", 0.04))
+        self.assertEqual(self.disp.run({}, fake), [])  # nothing left to do
+
+    def test_dispatcher_refuses_without_a_pinned_template_and_retries_a_failed_put(self):
+        _, rid = self.submit()
+        self.ex.run()
+        self.assertEqual(self.disp.run({}, lambda cfg, c, stdin=None, timeout=60: (0, b"{}", "") if c == "sums" else (1, b"", "x")),
+                         [(rid, "refused", "the NAS has no pinned backtest-f7")])
+        self.assertEqual(self.a.jobs_view()[0]["state"], "refused")
+        _, rid2 = self.submit()
+        self.ex.run()
+
+        def put_fails(cfg, command, stdin=None, timeout=60):
+            return (0, json.dumps({"backtest-f7": "b" * 64}).encode(), "") if command == "sums" else (255, b"", "Connection timed out")
+        self.assertEqual(self.disp.run({}, put_fails), [(rid2, "put failed", "Connection timed out")])
+        self.assertEqual(self.a.jobs_view()[0]["state"], "queued_here")  # stays queued for the next pass
+
+    def test_ssh_is_strict_and_settings_are_checked(self):
+        argv = []
+        real = self.disp.subprocess.run
+        self.disp.subprocess.run = lambda a, **k: argv.append(a) or type("R", (), {"returncode": 0, "stdout": b"", "stderr": b""})()
+        try:
+            self.disp.ssh({"NAS_UI_KNOWN_HOSTS": "/k", "NAS_UI_KEY": "/key", "NAS_UI_USER": "u", "NAS_UI_HOST": "100.79.0.1"}, "sums")
+        finally:
+            self.disp.subprocess.run = real
+        a = " ".join(argv[0])
+        for opt in ("BatchMode=yes", "StrictHostKeyChecking=yes", "UserKnownHostsFile=/k", "GlobalKnownHostsFile=/dev/null",
+                    "IdentitiesOnly=yes", "ConnectTimeout=10", "ForwardAgent=no"):
+            self.assertIn(opt, a)
+        self.assertEqual(argv[0][-1], "sums")
+        env = os.path.join(self.tmp, "nas-ui.env")
+        with open(env, "w") as f:
+            f.write("NAS_UI_HOST=100.79.0.1\nNAS_UI_USER=u\n")
+        with self.assertRaises(SystemExit):
+            self.disp.settings(env)
+        with open(env, "a") as f:
+            f.write("NAS_UI_KEY=/k\nNAS_UI_KNOWN_HOSTS=/kh\n")
+        self.assertEqual(self.disp.settings(env)["NAS_UI_USER"], "u")
+        with open(env, "a") as f:
+            f.write("NAS_UI_USER=u;rm\n")
+        with self.assertRaises(SystemExit):
+            self.disp.settings(env)
 
 
 class Executor(Base):

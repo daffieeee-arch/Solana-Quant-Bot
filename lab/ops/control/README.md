@@ -61,3 +61,58 @@ It prints a 20-character code, valid 5 minutes and usable once. Type it on the p
   - `tailscale status` shows the VPS is not shared out of the tailnet.
   - The web app re-checks Funnel and Serve on every action.
 - **Variant B (spec §2.3):** the web app and the executor share the owner's user, so this separation is logical only. B0 and B3 only; no bot action is enabled before variant A (#438).
+
+## The NAS job dispatcher (B3b)
+
+The action `nas_job` takes the strategy chooser's parameters:
+- **Checked three times:** by the web app (prepare), the executor, and the dispatcher, all against `lab/ops/uijobs/schema.py`. The NAS checks a fourth time.
+- **Queued:** the executor writes `nas-queue/<id>.json` and records the trial.
+- **Dispatched:** `lab-nas-dispatch` (`nas_dispatch.py`, every 2 minutes) hands one job at a time to the NAS through the forced command:
+  1. `sums` for the pinned template sha;
+  2. `put`;
+  3. `status <id>` until done;
+  4. `get <id>` → `$LAB/nas-results/ui/<id>/result.json`.
+
+**Trials.** Every job counts as a trial (spec §5.2): a row in the experiment register's format in `$LAB/control/ui-trials.md` (plus `ui-trials.jsonl`). The coordinator carries the count into `lab/reports/experiment-register.md`.
+
+**Install (the coordinator, after #445 and the NAS side are in place; no sudo).**
+
+1. A key only for the dispatcher. Not the coordinator's key. Its public half goes on the NAS behind `restrict,command=…` (lab/ops/uijobs/README.md):
+
+   ```bash
+   ssh-keygen -t ed25519 -N '' -C lab-ui-jobs -f ~/.ssh/id_ed25519_nas_ui
+   ```
+
+2. The NAS's host key in a known_hosts of its own. Check the fingerprint against the NAS console before trusting it:
+
+   ```bash
+   ssh-keyscan -t ed25519 100.79.221.55 > ~/.config/solana-lab/nas-ui.known_hosts
+   ```
+
+3. The settings. These are no secrets, but they stay out of the repo:
+
+   ```bash
+   cat > ~/.config/solana-lab/nas-ui.env <<'EOF'
+   NAS_UI_HOST=100.79.221.55
+   NAS_UI_USER=ClaudeCode
+   NAS_UI_KEY=/home/chupa/.ssh/id_ed25519_nas_ui
+   NAS_UI_KNOWN_HOSTS=/home/chupa/.config/solana-lab/nas-ui.known_hosts
+   EOF
+   chmod 600 ~/.config/solana-lab/nas-ui.env
+   ```
+
+4. The units:
+
+   ```bash
+   cp lab/ops/systemd/lab-nas-dispatch.service lab/ops/systemd/lab-nas-dispatch.timer ~/.config/systemd/user/
+   systemctl --user daemon-reload && systemctl --user enable --now lab-nas-dispatch.timer
+   ```
+
+`ssh` always runs with:
+- `BatchMode`, `StrictHostKeyChecking=yes` against that file only (`GlobalKnownHostsFile=/dev/null`), `IdentitiesOnly`, `IdentityAgent=none`;
+- `ConnectTimeout=10`, no forwarding;
+- an argv, with no shell on this side.
+
+The log goes to `$LAB/logs/nas-dispatch.log`.
+
+**Under variant B** the key is readable by the web server's user (the same user). That is acceptable because the forced command can only queue a valid templated job (spec §2.3). Under variant A only the owner's user reads it.

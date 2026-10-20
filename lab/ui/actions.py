@@ -37,8 +37,105 @@ SESSION_SECS, NONCE_SECS, PAIR_LOCK_SECS = 12 * 3600, 60, 15 * 60
 MAX_FAILS, PER_HOUR, MAX_BODY = 5, 10, 4096
 COOKIE = "lab_session"
 CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
-# The actions the web server may file. The executor has its own list and checks again (lab/ops/control).
-ACTIONS = {"ping": "Test: de executor antwoordt (verandert niets)."}
+
+
+def _load_schema():
+    """lab/ops/uijobs/schema.py by its path: the one schema of a UI research job (spec v0.3 §5.1)."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "ops", "uijobs", "schema.py")
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("lab_uijobs_schema", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+jobs = _load_schema()
+
+
+def _job_params(params):
+    """A NAS job's params, checked against the job schema (the executor and the NAS check again)."""
+    try:
+        return jobs.validate({"id": "0" * 26, "template": "backtest-f7", "template_sha256": "0" * 64, "params": params})["params"]
+    except (ValueError, TypeError, RecursionError) as e:
+        raise Refused(400, f"job: {e}") from None
+
+
+def _job_text(p):
+    return (f"Backtest op de NAS: {p['variant']} naast K3 (tp4_T600), {p['segment']}, farm {p['farm']}, {p['size_sol']:g} SOL, "
+            f"{p['d_ms']} ms, store {p['store']} epochs {p['epoch_from']}–{p['epoch_to']}. Verkennend: telt als een trial in het "
+            "register. Verandert niets aan de paper-bot.")
+
+
+# The actions the web server may file: action -> (validate params, the text to confirm). The executor has its own
+# list and checks again (lab/ops/control/executor.py), and the NAS a third time for a job.
+def _no_params(params):
+    if params != {}:
+        raise Refused(400, "ping takes no parameters")
+    return {}
+
+
+ACTIONS = {
+    "ping": (_no_params, lambda p: "Test: de executor antwoordt (verandert niets)."),
+    "nas_job": (_job_params, _job_text),
+}
+DESCRIPTIONS = {"ping": "Test: de executor antwoordt (verandert niets).",
+                "nas_job": "Een backtest op de NAS uit een vast sjabloon (strategiekiezer); verandert niets aan de paper-bot."}
+
+
+def jobs_view(limit=20):
+    """The UI's research jobs, newest first: queued here, sent, on the NAS, done (with the result), refused.
+    Read-only; the result is the tournament report's own rows (lab/ops/uijobs/result.py)."""
+    out = {}
+    q, st = os.path.join(CONTROL, "nas-queue"), os.path.join(CONTROL, "nas-status")
+    for n in os.listdir(q) if os.path.isdir(q) else []:
+        if n.endswith(".json") and not n.startswith("."):
+            try:
+                with open(os.path.join(q, n)) as f:
+                    j = json.load(f)
+                out[j["id"]] = {"id": j["id"], "state": "queued_here", "params": j.get("params"), "ts": j.get("ts")}
+            except (OSError, ValueError, KeyError):
+                continue
+    for n in os.listdir(st) if os.path.isdir(st) else []:
+        try:
+            with open(os.path.join(st, n)) as f:
+                j = json.load(f)
+            out[j["id"]] = {"id": j["id"], "state": j.get("state"), "params": j.get("params") or (out.get(j["id"]) or {}).get("params"),
+                            "reason": j.get("reason"), "ts": j.get("sent_unix") or j.get("checked_unix")}
+        except (OSError, ValueError, KeyError):
+            continue
+    res_dir = os.path.join(DATA, "nas-results", "ui")
+    for jid, j in out.items():
+        p = os.path.join(res_dir, jid, "result.json")
+        if os.path.isfile(p):
+            try:
+                with open(p) as f:
+                    j["result"] = json.load(f)
+            except (OSError, ValueError):
+                pass
+    return sorted(out.values(), key=lambda j: j["id"], reverse=True)[:limit]
+
+
+def job_options():
+    """The job form's choices, straight from the job schema (so the page and the checks never drift)."""
+    return {"grids": jobs.GRIDS, "k3": jobs.K3, "segments": list(jobs.SEGMENTS), "farms": list(jobs.FARMS), "sizes": list(jobs.SIZES),
+            "delays_ms": list(jobs.DELAYS_MS), "max_epochs": jobs.MAX_EPOCHS,
+            "stores": {k: {"from": v[1], "to": v[2]} for k, v in jobs.STORES.items()}}
+
+
+def job_in_flight():
+    """Whether a UI job is still on its way (queued here, sent, queued or running on the NAS): one at a time."""
+    q = os.path.join(CONTROL, "nas-queue")
+    if os.path.isdir(q) and any(n.endswith(".json") and not n.startswith(".") for n in os.listdir(q)):
+        return True
+    st = os.path.join(CONTROL, "nas-status")
+    for n in os.listdir(st) if os.path.isdir(st) else []:
+        try:
+            with open(os.path.join(st, n)) as f:
+                if json.load(f).get("state") in ("sent", "queued", "running"):
+                    return True
+        except (OSError, ValueError):
+            continue
+    return False
 
 _lock = threading.Lock()
 _nonces = {}  # nonce -> (node id, action, params, text, expires)
@@ -262,17 +359,22 @@ def prepare(peer, cookie, data, port):
     action, params = data.get("action"), data.get("params") or {}
     if action not in ACTIONS:
         raise Refused(400, "unknown action")
-    if params != {}:
-        raise Refused(400, "ping takes no parameters")
+    if not isinstance(params, dict):
+        raise Refused(400, "params: an object")
+    check, text = ACTIONS[action]
+    params = check(params)
+    if action == "nas_job" and job_in_flight():
+        raise Refused(429, "er loopt al een backtest-job (één tegelijk)")
     now = time.time()
     _rate(s["node"], now)
     nonce = secrets.token_urlsafe(24)
+    txt = text(params)
     with _lock:
         for k in [k for k, v in _nonces.items() if v[4] < now]:
             del _nonces[k]
-        _nonces[nonce] = (s["node"], action, params, ACTIONS[action], now + NONCE_SECS)
+        _nonces[nonce] = (s["node"], action, params, txt, now + NONCE_SECS)
     audit("prepare", node=s["node"], action=action)
-    return {"nonce": nonce, "text": ACTIONS[action], "expires_unix": int(now + NONCE_SECS)}
+    return {"nonce": nonce, "text": txt, "expires_unix": int(now + NONCE_SECS)}
 
 
 def commit(peer, cookie, data, port):
