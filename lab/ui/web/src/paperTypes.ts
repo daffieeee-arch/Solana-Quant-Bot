@@ -34,6 +34,8 @@ export interface PaperJournal {
   arms: { group: string; variants: (PaperGroup & { variant: string; today_sol: number })[] }[];
   // Further groups' (H) open positions and the day's exits (lab/ui/paper.py journal_view), each with its group.
   arm_positions: (PaperPosition & { group: string })[];
+  // The journal has no state 'groups' (an older journal): K3 and H inferred from the variant names (paper.infer_groups).
+  groups_inferred?: boolean;
   holdout_rows_dropped: number;
 }
 // stoprule.decide: a verdict from MIN_TRADES filled trades and MIN_DAYS_CI trading days (owner, 2026-10-16).
