@@ -91,6 +91,7 @@ class Api(unittest.TestCase):
     def test_meta_lists_only_tabs_with_data(self):
         m = self.get("/api/meta")
         self.assertIn("overview", m["tabs"])
+        self.assertEqual(m["tabs"][-1], "control")  # Bediening: always there, it says itself when actions are not possible
         self.assertLess(m["meta"]["slot_end_exclusive"], HOLDOUT_START + 1)
 
     def test_tokens_search_and_paging(self):
