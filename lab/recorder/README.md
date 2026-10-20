@@ -17,7 +17,7 @@ transactions.
 | `tx_new_pools` | `account_required` = [PumpSwap, pump.fun withdraw authority `39azUYFW…`]; on unless `--no-new-pools` | every pump.fun graduation (new canonical pool, M1). Measured on 1052 (`lab/checks/creation_filter.py`, two windows of 100k slots): 100% of migrations, 0 other transactions, ~0.003 GB/day. Direct `create_pool` calls (mostly reversed pools) have no cheap rule (8–56 GB/day) |
 | `blocks` | block meta | block time, height, tx count per slot (the engine's clock) |
 | `slots` | slot status, `filter_by_commitment` | a slot is written once confirmed (+ `--close-lag`) |
-| `tx_new_reversed` (off by default, `--new-reversed`) | `account_include` [PumpSwap], `account_exclude` 15 generic accounts (protocol and buyback fee recipients, Jupiter v6, a few routers; `watch.rs` `NEW_REVERSED_EXCLUDE`) | direct pool creations, mostly reversed pools (97% of the reversed pools ≥ 150 SOL on a day are created that day). The certain fallback: ~7–8 GB/day with ~100% of direct creations (creation-filter measurement, 1052). The exclusion list also lets through deposits, withdrawals and other non-trade PumpSwap transactions |
+| `tx_new_reversed` (off by default, `--new-reversed`) | `account_include` [PumpSwap], `account_exclude` 15 generic accounts (protocol and buyback fee recipients, Jupiter v6, a few routers; `watch.rs` `NEW_REVERSED_EXCLUDE`) plus up to 64 learned fee recipients (below) | direct pool creations, mostly reversed pools (97% of the reversed pools ≥ 150 SOL on a day are created that day). The certain fallback: ~7–8 GB/day with ~100% of direct creations (creation-filter measurement, 1052). The exclusion list also lets through deposits, withdrawals and other non-trade PumpSwap transactions |
 | `pool_creations` (off by default, `--pool-creations`) | owner PumpSwap + memcmp Pool discriminator + memcmp 16 zero bytes at 271 (`watch.rs` `POOL_WRITE_PROBE`), data slice 43..244 | **a measurement, not a creation detector.** The measuring hour of 2026-10-20 refuted the "fresh fees" hypothesis: the bytes are zero in every pool today, so the stream sees every pool write, old pools too (~1.3 GB/day). It starts no probe and follows no vault, and the feeds learn no pool from it (creation-filters spec v0.2 P3, M1). Every update is written (`pool_creations/`), not deduplicated |
 | `tx_pump_creates` (off by default, `--pump-creates`) | `account_required` = [pump.fun, its mint authority `TSLvdd1p…` (PDA "mint-authority")] | every pump.fun create transaction: the CreateEvent (name, symbol, uri, **creator**) and the Metaplex/Token-2022 metadata it creates (`token_meta/`), for the UI's token names. LiveFeed takes the creator of every token created after its store snapshot from it: without it F7's creator rule falls back to the pool's coin creator, which is a sharing config when the creator moved the creator fee (pfee `migrate_bonding_curve_creator`, #233 job 84). ~0.1 GB/day; a downscale drops it last before the watchlist pools |
 | `tx_probes` | `account_include` = the recorder's own probe pools | a new WSOL pool becomes a probe (full transactions for `--probe-minutes`, 180) at once when it is created with ≥ `--probe-depth-sol` (120) WSOL, or when its followed WSOL vault reaches that depth. 120, not F7's 150: the trigger sell is the first trade that sees 150, so a switch at 150 comes a minute late (LAB research, watchlist measurement: the F7 watchlist enters at 120 too). Probes are applied within a second (no rate limit): the first F7 trigger comes 0–2 minutes after creation (LAB research smoke test) |
@@ -31,6 +31,19 @@ transactions.
 - If it graduates later anyway, its pool's F7 creator rule falls back to the pool's `coin_creator`. That is a sharing config when the creator moved the fee.
 - The shadow compare names such a case `creator_unknown` (#233), so it is counted, not silent.
 - This is rare: F7's pools are almost all created the day of the create.
+
+**Learned exclusions (`src/exclude.rs`, creation-filters spec v0.2 P1).** With `--new-reversed`, every decoded
+PumpSwap trade's `protocol_fee_recipient` and `buyback_fee_recipient` (`ix_accounts`) score as candidates; the up to 64
+best go into `tx_new_reversed`'s `account_exclude` after the static list. The measuring hour of 2026-10-20: 12 protocol
+and 310 buyback recipients named all 52,787 of its trades on the stream, the 64 most frequent 99.0 %. A candidate is
+never learned when it is (a) a guard account (programs, PumpSwap's global_config and event_authority), (b) a key of a
+creation transaction of this run (static and loaded; a member named by one leaves at once) or (c) in
+`--creation-accounts` (default `<root>/creation_accounts.txt`: every account of the reversed creations of epochs
+1053-1054, written by `creation_accounts.py`). Without a valid file nothing is learned (fail-closed, the static list
+only); `--no-learned-excludes` turns learning off. Scores halve every 6 h; a member is replaced only by a candidate
+scoring twice its own, and leaves after 7 days without a trade. Changes apply once per `--min-update-secs` with a
+`budget` note; the set is kept in `<root>/new_reversed_exclude.json` across restarts, and each segment's
+`_segment.json` has `learned_excludes` (enabled, learned, candidates, creation keys).
 
 **F7 needs creation detection.** 99% of the F7 triggers come in reversed pools created the same day,
 minutes after their creation (LAB research, watchlist measurement). Without `--new-reversed` no new
