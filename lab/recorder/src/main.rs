@@ -574,7 +574,7 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_session, end_on, parse_assume, reserve_and_open, unix, BudgetWriteError, Meter, SegmentWriteError, SessionState, EXIT_SEGMENT};
+    use super::{count_session, creation_warning, end_on, parse_assume, reserve_and_open, unix, BudgetWriteError, Meter, SegmentWriteError, SessionState, EXIT_SEGMENT};
 
     #[test]
     fn the_budget_reservation_is_on_disk_before_the_segments_remove_an_unfinished_directory() {
