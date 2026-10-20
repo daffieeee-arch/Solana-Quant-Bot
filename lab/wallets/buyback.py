@@ -43,6 +43,9 @@ WINDOWS = (("1m", 60_000), ("5m", 300_000), ("15m", 900_000))
 SELF_SHARE = 0.5
 MIN_TRIGGERS = 3
 SEED = 7
+# The token side of a pool leg: the store's token_buy; when it is NULL, the pool's side read by orientation (a token buy is
+# a pool 'buy' in a normal pool and a pool 'sell' of WSOL in a reversed one; LAB review on #485).
+TOKEN_BUY = "COALESCE(p.token_buy, CASE WHEN p.orientation = 'reversed' THEN p.kind = 'sell' ELSE p.kind = 'buy' END)"
 K3 = "family = 'F7' AND segment = 'pool_reversed' AND variant = 'tp4_T600' AND size_sol = 0.5 AND d = 2 AND q = 0.5 AND (overlay IS NULL OR overlay = 'none')"
 
 
@@ -75,16 +78,16 @@ def windows(con, clock):
 def legs_sql(legs="pool"):
     """The trigger leg (the seller's first TOKEN sell in the pool at t: its fee payer and transaction) and every TOKEN buy in the
     pool in (t, t + 15 m] with its class; an equality join on pool with the slot range as a filter (a hash join). Token side
-    through the store's token_buy (in a reversed pool a token buy is a pool 'sell' of WSOL: kind is the pool's side)."""
+    through TOKEN_BUY: the store's token_buy, else kind read by orientation (a reversed pool's token buy is a pool 'sell' of WSOL)."""
     return f"""
       CREATE OR REPLACE TEMP TABLE tleg AS
       SELECT g.pool, g.t, p.fee_payer AS payer, p.tx_index AS tx_t, p.fee_payer IS NOT NULL AS payer_known
       FROM trig2 g JOIN {legs} p ON p.pool = g.pool AND p.slot = g.t
-      WHERE p.kind IN ('buy', 'sell') AND NOT COALESCE(p.token_buy, p.kind = 'buy') AND p.trader = g.seller
+      WHERE p.kind IN ('buy', 'sell') AND NOT {TOKEN_BUY} AND p.trader = g.seller
       QUALIFY row_number() OVER (PARTITION BY g.pool, g.t ORDER BY p.tx_index, p.outer_ix, p.inner_ix) = 1;
       CREATE OR REPLACE TEMP TABLE buys AS
       SELECT g.pool, g.t, p.slot, p.tx_index, COALESCE(p.sol_amount, 0)::BIGINT AS sol, p.fee_payer IS NOT NULL AS payer_known,
-             COALESCE(p.token_buy, p.kind = 'buy') AS is_buy,
+             {TOKEN_BUY} AS is_buy,
              CASE WHEN p.trader = g.seller THEN 'self'
                   WHEN p.fee_payer IS NOT NULL AND (p.fee_payer = l.payer OR p.fee_payer = g.seller) AND p.fee_payer <> p.trader THEN 'linked'
                   WHEN l.payer IS NOT NULL AND p.trader = l.payer AND l.payer <> g.seller THEN 'linked'
@@ -92,7 +95,7 @@ def legs_sql(legs="pool"):
              p.slot <= g.w1 AS in1, p.slot <= g.w5 AS in5, p.slot = g.t AND l.tx_t IS NOT NULL AND p.tx_index = l.tx_t AS rt
       FROM trig2 g JOIN {legs} p ON p.pool = g.pool AND p.slot >= g.t AND p.slot <= g.w15
       LEFT JOIN tleg l ON l.pool = g.pool AND l.t = g.t
-      WHERE p.kind IN ('buy', 'sell') AND (p.slot > g.t OR (l.tx_t IS NOT NULL AND p.tx_index = l.tx_t AND COALESCE(p.token_buy, p.kind = 'buy')))"""
+      WHERE p.kind IN ('buy', 'sell') AND (p.slot > g.t OR (l.tx_t IS NOT NULL AND p.tx_index = l.tx_t AND {TOKEN_BUY}))"""
 
 
 def per_trigger(con):
