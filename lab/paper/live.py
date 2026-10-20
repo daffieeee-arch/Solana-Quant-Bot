@@ -54,6 +54,14 @@ CURVE_DONE_SLOTS = 1_000
 # Tokens learned from create transactions (the recorder's --pump-creates, ~50k a day) are dropped once
 # they are this many days old without a graduation: F7 needs a token's creator only for its pool.
 TOKEN_KEEP_DAYS = 3
+# Known limit (LAB review 2026-10-20, kept as is; M3-12): a token is learned for the journal (_learn_token) at its
+# completion or migration only. A restart past the replay window (paper/restart.py WINDOW_H, 36 h; or after the keeper
+# removed the segment) does not know a token created before the window that did not graduate: its curve rows are dropped
+# and counted (unknown_mints, unknown_mint_rows; the restart's record and the daily report name them), and a pool of it
+# takes its coin creator as F7's creator (engine.py _universe). The uninterrupted run drops such a token after
+# TOKEN_KEEP_DAYS (_prune), so the gap closes three days after the token's creation at the latest. The backtest does the
+# same for a pool without a mints row (93 % of route B's pools, LAB review). tests/test_restart.py
+# test_a_restart_past_the_window_does_not_know_a_token_that_did_not_graduate.
 log = logging.getLogger("paper.live")
 
 

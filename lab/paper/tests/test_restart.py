@@ -180,6 +180,21 @@ def test_a_position_the_replay_cannot_carry_is_closed_at_its_last_mark(tmp_path)
     daily_report(r.journal, xs[0]["day"])
     report = open(os.path.join(r.journal.dir, xs[0]["day"], "report.md")).read()
     assert "## Restarts" in report and "restart_lost 1" in report and "closed at their last mark" in report
+    # a feed without LiveFeed's stats (this test's): no unknown-mint count, no line about it
+    assert rec["unknown_mints"] is None and "unknown mints at the resume" not in report
+
+
+def test_the_daily_report_names_a_restarts_unknown_mints(tmp_path):
+    """The known restart limit (live.py, beside TOKEN_KEEP_DAYS): the restart's record holds LiveFeed's unknown_mints and
+    unknown_mint_rows at the resume, and the day's restart line names them."""
+    j = Journal(str(tmp_path / "j"))
+    j.state(RS.RESTARTS_KEY, json.dumps([{"hwm": 500, "resumed_at": 510, "first_slot": 400, "day": "2026-10-21", "counts": {},
+                                          "compare_6h": {}, "unknown_mints": 3, "unknown_mint_rows": 17}]))
+    lines = RS.restart_lines(j, "2026-10-21")
+    assert "  - unknown mints at the resume: 3 (17 curve rows dropped); among them any token created before the replay " \
+           "window that did not graduate, whose pools take the coin creator as F7's creator (a known limit, live.py)" in lines
+    assert RS.restart_lines(j, "2026-10-22") == []
+    j.close()
 
 
 def test_a_first_start_is_the_same_with_and_without_the_hwm(tmp_path):
@@ -256,6 +271,54 @@ def test_learned_pools_tokens_and_epoch_spans_come_back_after_the_retention(tmp_
     assert g.new_pools == ["P2"] and g.pool("P2") == f.pool("P2")
     # The epoch's clock span starts at the removed segment's first block, as in the run that saw it.
     assert 2 in f.clock.per_epoch and g.clock.per_epoch[2] == f.clock.per_epoch[2]
+    f.close()
+    g.close()
+
+
+def curve_trade(mint, slot):
+    """A pump TradeEvent row with every column the store's curve rows read (backtest.store._curve_trades)."""
+    return {"mint": mint, "slot": slot, "tx_index": 0, "outer_ix": 0, "inner_ix": 0, "parent_ix_disc": "-", "is_buy": True,
+            "token_amount": 1_000, "quote_amount": 7_000, "sol_amount": 7_000, "fee": 0, "creator_fee": 0, "fee_basis_points": 95,
+            "creator_fee_basis_points": 5, "virtual_token_reserves": 10**15, "virtual_quote_reserves": 30 * 10**9,
+            "virtual_sol_reserves": 30 * 10**9, "real_token_reserves": 10**15, "real_quote_reserves": 10**9,
+            "real_sol_reserves": 10**9, "user": "B1", "fee_payer": "B1", "outer_program": "P", "priority_fee": 0, "jito_tip": 0,
+            "tx_fee": 5_000, "mayhem_mode": False}
+
+
+def test_a_restart_past_the_window_does_not_know_a_token_that_did_not_graduate(tmp_path):
+    """The known limit (LAB review 2026-10-20, kept as is, M3-12): live.py learns a token at its completion or migration
+    only. A token created in a segment the restart no longer reads (the keeper, or a replay window of 36 h) that did not
+    graduate is unknown to it: its curve rows are dropped and counted (unknown_mints, unknown_mint_rows), and a pool of
+    it takes its coin creator as F7's creator (engine.py _universe). The uninterrupted run knows the token until _prune
+    drops it (TOKEN_KEEP_DAYS), so the gap closes three days after the token's creation at the latest."""
+    from paper.engine import Engine
+    from paper.live import LiveFeed
+
+    root = str(tmp_path / "rec")
+    seg(root, 0, 1_000_000, {"pump/CreateEvent": [{"mint": "M1", "slot": 1_000_001, "tx_index": 0, "user": "U1",
+                                                   "is_mayhem_mode": False, "quote_mint": WSOL}],
+                             "pump_amm/CreatePoolEvent": [pool_row("P1", "M1", 1_000_005)]})
+    seg(root, 1, 1_001_000, {"pump/TradeEvent": [curve_trade("M1", 1_001_010)]})
+    f = LiveFeed(root, follow=False)
+    list(f.events())
+    learned = f.drain_learned()
+    assert ("token", "M1") not in {(k, key) for k, key, *_ in learned}  # created, not graduated: no learned row
+    assert f.token("M1").creator == "U1" and f.stats["unknown_mints"] == 0
+    j = Journal(str(tmp_path / "j"))
+    for kind, key, seq, slot, info in learned:
+        j.put("learned", kind=kind, key=key, seq=seq, slot=slot, info=info)
+    j.commit()
+    shutil.rmtree(os.path.join(root, "segments", f"{0:09d}"))  # past the window: segment 0 is not read again
+    g = LiveFeed(root, follow=False, learned=j.rows("learned"))
+    list(g.events())
+    assert g.pool("P1") == f.pool("P1")  # the pool comes back from its learned row
+    assert g.token("M1") is None and (g.stats["unknown_mints"], g.stats["unknown_mint_rows"]) == (1, 1)
+    # F7's creator of the pool: the token's creator in the uninterrupted run, the pool's coin creator after the restart
+    creators = []
+    for feed, name in ((f, "ef"), (g, "eg")):
+        eng = Engine(feed, Journal(str(tmp_path / name)), None, ignore_risk=True, n2_k=0, clock=feed.clock, backup=False)
+        creators.append(eng._universe("pool", "P1")[1])
+    assert creators == ["U1", "CC"]
     f.close()
     g.close()
 
