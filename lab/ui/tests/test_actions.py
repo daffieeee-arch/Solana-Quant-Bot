@@ -6,7 +6,9 @@ the request file and the executor's own allowlist; no secret in a file the code 
 Run: python3 lab/ui/tests/test_actions.py (stdlib; the server's Python)
 """
 
+import hashlib
 import importlib.util
+import io
 import json
 import os
 import shutil
@@ -265,6 +267,7 @@ class NasJob(Base):
             if command == "put":
                 job = json.loads(stdin)
                 self.assertEqual((job["id"], job["template_sha256"], job["params"]["variant"]), (rid, "a" * 64, "flow300_H6"))
+                nas["job_sha256"] = hashlib.sha256(stdin).hexdigest()  # the NAS stores the canonical bytes sent
                 return 0, (rid + "\n").encode(), ""
             if command == f"status {rid}":
                 return 0, json.dumps(dict(nas, id=rid)).encode(), ""
@@ -304,6 +307,119 @@ class NasJob(Base):
             return (0, json.dumps({"backtest-f7": "b" * 64}).encode(), "") if command == "sums" else (255, b"", "Connection timed out")
         self.assertEqual(self.disp.run({}, put_fails), [(rid2, "put failed", "Connection timed out")])
         self.assertEqual(self.a.jobs_view()[0]["state"], "queued_here")  # stays queued for the next pass
+
+    def nas_queue(self, lose):
+        """The real forced command (lab/ops/uijobs/ui_queue.py) on a NAS directory, through a connection that loses
+        the answer of the commands in `lose` (each once) after the NAS has done them."""
+        q = load("t_ui_queue", os.path.join(OPS, "uijobs", "ui_queue.py"))
+        q.ROOT = os.path.join(self.tmp, "nas")
+
+        def call(cfg, command, stdin=None, timeout=60):
+            if command == "sums":
+                return 0, json.dumps({"backtest-f7": "a" * 64}).encode(), ""
+            out = io.StringIO()
+            try:
+                q.run(command, io.BytesIO(stdin or b""), out)
+            except ValueError as e:
+                return 2, b"", f"refused: {e}"
+            if command.split()[0] in lose:
+                lose.remove(command.split()[0])
+                return 255, b"", "Connection timed out"
+            return 0, out.getvalue().encode(), ""
+        return q, call
+
+    def test_a_put_whose_answer_was_lost_is_found_never_put_twice(self):
+        """Codex review (finding 4): the NAS stores the job, the answer is lost. The dispatcher asks `status` and
+        finds its own job (same job_sha256): sent, one job on the NAS. If the status is lost as well, the job stays
+        queued and the next put is accepted as the same job (idempotent), still one job on the NAS."""
+        _, rid = self.submit()
+        self.ex.run()
+        q, call = self.nas_queue(["put"])
+        self.assertEqual(self.disp.run({}, call), [(rid, "sent (put's answer lost, found on the NAS)", "")])
+        self.assertEqual(sorted(os.listdir(os.path.join(q.ROOT, "queue"))), [".put.lock", f"ui-{rid}.json"])
+        self.assertEqual(self.disp.run({}, call), [(rid, "queued", "")])  # the status pass: its own job
+        # The NAS answers for a different job under this id: never taken for ours, never fetched; final (#467 review).
+        with open(os.path.join(q.ROOT, "queue", f"ui-{rid}.json"), "ab") as f:
+            f.write(b" ")
+        self.assertEqual(self.disp.run({}, call), [(rid, "refused", "the NAS's job under this id is not the one sent")])
+        self.assertEqual(self.a.jobs_view()[0]["state"], "refused")
+        self.assertFalse(self.a.job_in_flight())  # the queue goes on
+
+    def test_no_consistent_answer_ends_after_max_passes_but_no_answer_is_not_counted(self):
+        """LAB review on #467: an answer that is 'unknown' (or has no job_sha256, or is not JSON) is counted; after
+        MAX_UNCLEAR passes the job is failed and the queue goes on. No answer at all (NAS down) is never counted."""
+        _, rid = self.submit()
+        self.ex.run()
+        q, call = self.nas_queue([])
+        self.assertEqual(self.disp.run({}, call), [(rid, "sent", "")])
+        os.remove(os.path.join(q.ROOT, "queue", f"ui-{rid}.json"))  # the NAS lost it: status says unknown
+        down = lambda cfg, c, stdin=None, timeout=60: (_ for _ in ()).throw(OSError("No route to host"))  # noqa: E731
+        for _ in range(3 * self.disp.MAX_UNCLEAR):
+            self.assertEqual(self.disp.run({}, down)[0][:2], (rid, "status failed"))
+        for k in range(1, self.disp.MAX_UNCLEAR):
+            self.assertEqual(self.disp.run({}, call), [(rid, "bad answer", f"no job_sha256 or an unknown id (state 'unknown') ({k}/{self.disp.MAX_UNCLEAR})")])
+        (last,) = self.disp.run({}, call)
+        self.assertEqual(last[:2], (rid, "failed"))
+        self.assertIn("no consistent answer", last[2])
+        self.assertEqual(self.a.jobs_view()[0]["state"], "failed")
+        self.assertFalse(self.a.job_in_flight())
+
+    def test_a_result_the_nas_refuses_fails_the_job_and_the_queue_goes_on(self):
+        """LAB review on #470: get refused by the NAS (exit 2, e.g. the result over 64 KB) is final; an ssh failure
+        (255) stays an uncounted retry."""
+        _, rid = self.submit()
+        self.ex.run()
+        q, call = self.nas_queue([])
+        self.assertEqual(self.disp.run({}, call), [(rid, "sent", "")])
+        res = os.path.join(q.ROOT, "results", rid)
+        os.makedirs(res)
+        with open(os.path.join(res, "status.json"), "w") as f:
+            json.dump({"id": rid, "state": "done"}, f)
+        with open(os.path.join(res, "result.json"), "w") as f:
+            f.write(json.dumps({"rows": ["x" * 100] * 700}))  # > 64 KB
+
+        def drop_get(cfg, command, stdin=None, timeout=60):
+            return (255, b"", "Connection reset") if command.startswith("get ") else call(cfg, command, stdin, timeout)
+        for _ in range(15):
+            self.assertEqual(self.disp.run({}, drop_get), [(rid, "get failed", "Connection reset")])
+        self.assertEqual(self.disp.run({}, call), [(rid, "failed", "the NAS refused the result: refused: result too large")])
+        self.assertEqual(self.a.jobs_view()[0]["state"], "failed")
+        self.assertFalse(self.a.job_in_flight())
+
+    def test_a_put_the_nas_refused_itself_is_refused_here_and_the_queue_goes_on(self):
+        _, rid = self.submit()
+        self.ex.run()
+
+        def nas(cfg, command, stdin=None, timeout=60):
+            if command == "sums":
+                return 0, json.dumps({"backtest-f7": "a" * 64}).encode(), ""
+            if command == "put":
+                return 2, b"", "refused: job larger than 4096 bytes\n"
+            return 0, json.dumps({"id": rid, "state": "unknown"}).encode(), ""
+        self.assertEqual(self.disp.run({}, nas), [(rid, "refused", "the NAS refused the job: refused: job larger than 4096 bytes")])
+        self.assertEqual(self.a.jobs_view()[0]["state"], "refused")
+        _, rid2 = self.submit()  # the next job is not held up
+        self.ex.run()
+        q, call = self.nas_queue([])
+        self.assertEqual(self.disp.run({}, call), [(rid2, "sent", "")])
+
+    def test_a_lost_put_and_a_lost_status_stay_queued_then_put_again(self):
+        _, rid = self.submit()
+        self.ex.run()
+        q, call = self.nas_queue(["put", "status"])
+        self.assertEqual(self.disp.run({}, call), [(rid, "put failed", "Connection timed out")])
+        self.assertEqual(self.a.jobs_view()[0]["state"], "queued_here")
+        self.assertEqual(self.disp.run({}, call), [(rid, "sent", "")])  # the NAS's put is idempotent
+        self.assertEqual([n for n in os.listdir(os.path.join(q.ROOT, "queue")) if n.startswith("ui-")], [f"ui-{rid}.json"])
+
+    def test_another_job_under_the_id_on_the_nas_is_refused_here(self):
+        _, rid = self.submit()
+        self.ex.run()
+        q, call = self.nas_queue([])
+        other = {"id": rid, "template": "backtest-f7", "template_sha256": "a" * 64, "params": dict(JOB, farm="all")}
+        q.run("put", io.BytesIO(json.dumps(other).encode()), io.StringIO())
+        self.assertEqual(self.disp.run({}, call), [(rid, "refused", "the NAS holds another job under this id")])
+        self.assertEqual(self.a.jobs_view()[0]["state"], "refused")
 
     def test_dispatcher_state_for_the_page(self):
         self.assertEqual(self.a.dispatcher_state()["state"], "off")  # never ran: the NAS side is not installed yet

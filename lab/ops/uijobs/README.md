@@ -9,8 +9,8 @@ The UI's strategy chooser asks for a backtest. The VPS sends **parameters only**
 | File | Where it runs | What it does |
 |---|---|---|
 | `schema.py` | everywhere (stdlib) | The one schema: template, F7 variant (the engine's grids), segment, farm, size, delay, store, whole epochs ≤ 7. **Hold-out 1047–1051 and clean 1055–1063 are never selectable.** `env()` gives the template's `UI_*` values. |
-| `ui_queue.py` | NAS host, as the SSH forced command | `sums` (the pinned templates' sha256, read-only), `put` (a job on stdin → `queue/ui-<id>.json`), `status <id>`, `get <id>` (`result.json`). Nothing else. |
-| `nas_runner.py` | NAS, a service of the app (≤ 3 CPU / 8 GB) | One job at a time, held while `ui-hold` exists. It runs a template only if the job's `template_sha256` is the one in `SHA256SUMS` and the file still hashes to it. The job's values reach the template as environment only. |
+| `ui_queue.py` | NAS host, as the SSH forced command | `sums` (the pinned templates' sha256, read-only), `put` (a job on stdin → `queue/ui-<id>.json`, in canonical form; the same job again is accepted once more without storing anything, another job under a used id is refused), `status <id>` (with the stored job's `job_sha256`), `get <id>` (`result.json`, only once the job is `done`). Nothing else. |
+| `nas_runner.py` | NAS, a service of the app (≤ 3 CPU / 8 GB) | One job at a time (`runner.lock`), held while `ui-hold` exists. It runs a template only if the job's `template_sha256` is the one in `SHA256SUMS` and the file still hashes to it. The job's values reach the template as environment only. A job left in `running/` by a stopped runner is recovered, never run again: it waits while the job's processes (found by `UI_JOB_ID` in their environment, via `/proc`) still run, kills them past the timeout, then gives it the final status already written or `failed` "interrupted". |
 | `templates/backtest-f7.sh` | NAS, via the runner | The tournament for the chosen variant and K3 (`tp4_T600`) on the job's store and epochs, then `result.py`. |
 | `result.py` | NAS (lab venv) | The result **as the canonical tournament report computes it**: `backtest.report.summarize` itself on the run's parts (base costs, the report's day-clustered bootstrap), one row per variant, d and regime, for the variant and for K3. |
 
@@ -66,6 +66,19 @@ The UI's strategy chooser asks for a backtest. The VPS sends **parameters only**
 
    - **Hold UI jobs:** `touch <NAS_LAB>/jobs-ui/ui-hold` (during a hold-out run or an app update). Remove it to go on.
    - Results land in `<NAS_LAB>/jobs-ui/results/<id>/`: `status.json`, `result.json` and `job.log`.
+
+## Retention
+
+Keep `jobs-ui/done/ui-<id>.json` as long as `jobs-ui/results/<id>/`: `status` takes the job's `job_sha256` from that file, and the dispatcher treats an answer without it as unclear (after 10 passes the job is failed). Delete the two together, and only for a job that is final on the VPS (`control/nas-status/<id>.json` done, failed or refused).
+
+## Template checklist (review of a template or of what it runs)
+
+The runner finds a job's processes by `UI_JOB_ID` in their environment (recovery after a stopped runner). So a template and everything it starts:
+- never clears or replaces the environment: no `env -i`, no `exec -c`, no re-exec with a new environment (Python's `subprocess` and `multiprocessing` keep it, which is fine);
+- never daemonises: no `setsid`, `nohup … &`, `disown` or double fork that leaves a process behind; every worker is a child the template waits for;
+- writes `result.json` last, and only when the job succeeded (the runner's `done` needs exit 0 and the file).
+
+Considered, not done: the container's own `cgroup.procs` as a second liveness source. It also lists an operator's `docker exec` shell, which the runner cannot tell from a job's process (and must never kill); a per-job cgroup would need cgroup delegation the app does not have.
 
 ## What stays out
 

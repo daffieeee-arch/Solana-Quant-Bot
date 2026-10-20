@@ -4,10 +4,13 @@
 #
 #   MEMORY=12GB BUCKETS=16 THREADS=6 LAB_SPILL_DIR=/lab/tmp/nas-revival LAB_SPILL_MAX=100GB bash lab/wallets/nas_revival.sh
 #
-# Step 2 + 3 (STEP=markout, short): `detect` on the aggregate (seconds), then `wallets.markout` on the signals (the pool
-# legs of the signal pools around every signal; the big scan is pool_at over the store, bucketed), into $REVIVAL_DIR/markout:
-#   STEP=markout REVIVAL_DIR=$DATA/wallets/revival-v1-370ecb2 LAB_ENGINE=$DATA/backtests/f7rev-1033-1046/engine \
-#     MEMORY=12GB BUCKETS=8 THREADS=6 LAB_SPILL_DIR=/lab/tmp/nas-revival LAB_SPILL_MAX=100GB bash lab/wallets/nas_revival.sh
+# Step 2 + 3 (STEP=markout, short): `detect` on the aggregate (AGG_DIR, default $REVIVAL_DIR: the rolling stats, then one scan
+# of the store's pool legs restricted to the candidate hours for the point-in-time t of every cell), then `wallets.markout`
+# on the signals (the pool legs of the signal pools around every signal; the big scan is pool_at over the store, bucketed),
+# into $REVIVAL_DIR/{detect,markout}. The aggregate of an earlier commit stays valid (its code is unchanged since 370ecb2):
+#   STEP=markout AGG_DIR=$DATA/wallets/revival-v1-370ecb2 REVIVAL_DIR=$DATA/wallets/revival-v2-<commit7> \
+#     LAB_ENGINE=$DATA/backtests/f7rev-1033-1046/engine MEMORY=12GB BUCKETS=8 THREADS=6 \
+#     LAB_SPILL_DIR=/lab/tmp/nas-revival LAB_SPILL_MAX=100GB bash lab/wallets/nas_revival.sh
 #
 # Tunables (env): MEMORY (DuckDB limit), BUCKETS (key-hash buckets; the union is the unbucketed result), THREADS,
 # REVIVAL_DIR (output, default $OUT/revival-v1), REVIVAL_ARGS (e.g. "--from-slot A --to-slot B" for a smoke).
@@ -21,6 +24,7 @@ OUT=${LAB_WALLETS_OUT:-$DATA/wallets}
 STORE=${LAB_STORE:-$DATA/store/dev2.duckdb}
 PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
 RV=${REVIVAL_DIR:-$OUT/revival-v1}
+AGG=${AGG_DIR:-$RV}
 LOG=$RV/log
 
 export PYTHONPATH=$REPO/lab LAB_STORE=$STORE LAB_WALLETS_OUT=$OUT LAB_WALLETS_MEMORY=${MEMORY:-6GB} LAB_WALLETS_THREADS=${THREADS:-4}
@@ -32,13 +36,20 @@ log "start repo=$REPO commit=$(git -C "$REPO" rev-parse --short HEAD) store=$STO
 STEP=${STEP:-aggregate}
 if [ "$STEP" = markout ]; then
   case "${LAB_ENGINE:-}" in */backtest) export LAB_ENGINE=${LAB_ENGINE%/backtest} ;; esac
-  [ -s "$RV/pool_hour.parquet" ] || { log "markout: no aggregate at $RV/pool_hour.parquet"; exit 1; }
-  log "detect on $RV"
-  if nice -n 10 "$PY" -u -m wallets.revival detect --agg "$RV" --out "$RV/detect" --store "$STORE" > "$LOG/detect.log" 2>&1; then
+  [ -s "$AGG/pool_hour.parquet" ] || { log "markout: no aggregate at $AGG/pool_hour.parquet"; exit 1; }
+  log "detect on aggregate $AGG (sha256 $(sha256sum "$AGG/pool_hour.parquet" | cut -c1-16)) into $RV/detect"
+  if nice -n 10 "$PY" -u -m wallets.revival detect --agg "$AGG" --out "$RV/detect" --store "$STORE" > "$LOG/detect.log" 2>&1; then
     log "detect ok: $(tail -1 "$LOG/detect.log")"
   else
     log "detect FAILED (see $LOG/detect.log)"; exit 1
   fi
+  # empty input is RED: the markout step needs candidate hours, their legs and signals (and detect's own consistency check passed)
+  COUNTS=$("$PY" -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['candidate_hours'], d['candidate_legs'], d['signals'])" "$RV/detect/run-detect.json")
+  read -r N_HOURS N_LEGS N_SIG <<< "$COUNTS"
+  if [ "${N_HOURS:-0}" -le 0 ] || [ "${N_LEGS:-0}" -le 0 ] || [ "${N_SIG:-0}" -le 0 ]; then
+    log "RED: empty detect input (candidate_hours=$N_HOURS candidate_legs=$N_LEGS signals=$N_SIG), no markout"; exit 1
+  fi
+  log "detect counts: candidate_hours=$N_HOURS candidate_legs=$N_LEGS signals=$N_SIG"
   if [ -s "$RV/markout/markout-revival.parquet" ]; then log "markout exists, skipped"; exit 0; fi
   log "markout on $RV/detect (engine ${LAB_ENGINE:-?})"
   if nice -n 10 "$PY" -u -m wallets.markout --parts "$RV/detect" --run revival --out "$RV/markout" > "$LOG/markout.log" 2>&1; then
