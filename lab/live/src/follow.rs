@@ -1663,7 +1663,7 @@ pub(crate) mod tests {
     ///   another class: dropped, not unknown) and PN's boost-crank inner buy at 1047 (not counted); its usage and arrivals;
     /// - seg 1 [1100, 1199]: creates PN (sol) and PO (other) at 1100 and MX at 1101, completes M1 at 1150 and migrates it to
     ///   PM; PN's buy at 1110 and MX's trade at 1120 kept, PO's buy at 1130 dropped (another class);
-    /// - seg 2 [1200, 1299]: its complete backfill creates PB (pool_creations, 1180); PB's buy at 1210;
+    /// - seg 2 [1200, 1299]: its complete backfill creates PB (CreatePoolEvent, 1180); PB's buy at 1210;
     /// - seg 3 [1300, 1399]: a running backfill creating PR (not read), so PR's buy at 1310 is unknown; M1 trades at 1115
     ///   (late: 1120 was released) and at 1120 (the last slot released: not late, handed out as a second item of 1120); PB's
     ///   buy at 1210 again (a duplicate of the queued one) and P1's buy at 1320.
