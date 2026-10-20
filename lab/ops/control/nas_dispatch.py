@@ -10,7 +10,8 @@ Each run (lab-nas-dispatch.timer, every 2 minutes; one at a time by flock):
      next pass (the NAS's put is idempotent), another job under the id is refused here;
      A put the NAS refused itself (exit 2: schema, size) with the id unknown there is refused here, final;
   2. a job on its way: `status <id>`, whose job_sha256 must be the one recorded (never another job's result);
-     once done, `get <id>` -> <data>/nas-results/ui/<id>/result.json. Another job_sha256 is final (refused
+     once done, `get <id>` -> <data>/nas-results/ui/<id>/result.json; a get the NAS refuses (exit 2: the result
+     too large or missing) makes the job failed, final. Another job_sha256 is final (refused
      here); an answer without one, 'unknown' or not JSON is counted in the job's status file and after MAX_UNCLEAR
      passes the job is failed ('no consistent answer'), so one bad id never holds the queue for good. No answer at
      all (the NAS or the network down) is not counted: that says nothing about the job.
@@ -131,6 +132,13 @@ def run(cfg, call=ssh):
             state = {"done": "done", "failed": "failed", "refused": "refused", "running": "running", "queued": "queued"}.get(nas.get("state"), st["state"])
             if state == "done":
                 rc, out, err = call(cfg, f"get {rid}")
+                if rc == 2:
+                    # The NAS's forced command refused the result (too large, missing): final, never retried for good
+                    # (LAB review on #470). An ssh failure (255) or a timeout stays an uncounted retry.
+                    reason = f"the NAS refused the result: {err.strip()[:200]}"
+                    _write(os.path.join(st_dir, f"{rid}.json"), dict(st, state="failed", reason=reason, nas=nas, checked_unix=int(time.time())))
+                    done.append((rid, "failed", reason))
+                    continue
                 if rc != 0:
                     done.append((rid, "get failed", err))
                     continue

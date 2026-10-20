@@ -364,6 +364,28 @@ class NasJob(Base):
         self.assertEqual(self.a.jobs_view()[0]["state"], "failed")
         self.assertFalse(self.a.job_in_flight())
 
+    def test_a_result_the_nas_refuses_fails_the_job_and_the_queue_goes_on(self):
+        """LAB review on #470: get refused by the NAS (exit 2, e.g. the result over 64 KB) is final; an ssh failure
+        (255) stays an uncounted retry."""
+        _, rid = self.submit()
+        self.ex.run()
+        q, call = self.nas_queue([])
+        self.assertEqual(self.disp.run({}, call), [(rid, "sent", "")])
+        res = os.path.join(q.ROOT, "results", rid)
+        os.makedirs(res)
+        with open(os.path.join(res, "status.json"), "w") as f:
+            json.dump({"id": rid, "state": "done"}, f)
+        with open(os.path.join(res, "result.json"), "w") as f:
+            f.write(json.dumps({"rows": ["x" * 100] * 700}))  # > 64 KB
+
+        def drop_get(cfg, command, stdin=None, timeout=60):
+            return (255, b"", "Connection reset") if command.startswith("get ") else call(cfg, command, stdin, timeout)
+        for _ in range(15):
+            self.assertEqual(self.disp.run({}, drop_get), [(rid, "get failed", "Connection reset")])
+        self.assertEqual(self.disp.run({}, call), [(rid, "failed", "the NAS refused the result: refused: result too large")])
+        self.assertEqual(self.a.jobs_view()[0]["state"], "failed")
+        self.assertFalse(self.a.job_in_flight())
+
     def test_a_put_the_nas_refused_itself_is_refused_here_and_the_queue_goes_on(self):
         _, rid = self.submit()
         self.ex.run()
