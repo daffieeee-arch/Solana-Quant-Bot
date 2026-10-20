@@ -228,11 +228,12 @@ def groups(con):
     return con.execute("SELECT DISTINCT family, segment, d FROM m WHERE family NOT LIKE 'N2\\_%' ESCAPE '\\' ORDER BY 1, 2, 3").fetchall()
 
 
-def table(con, label, where, boot, blocks=None):
+def table(con, label, where, boot, blocks=None, twin=True):
     """One group's table. The advantage verdict (days 10-18, spec section 5) uses the conservative net
     (dead rows counted at their loss): trigger net trim > 0 with its day CI > 0, and the N2 twin's own
     net trim NOT > 0 with its own CI > 0 on the same horizon (the twins of exactly these triggers, from
-    the paired rows). The paired Δ is shown, not a criterion."""
+    the paired rows). The paired Δ is shown, not a criterion. twin=False skips the N2 columns (a run without
+    twins, such as revival, whose `where` may use columns the pairs table lacks: variants, pool)."""
     blocks = blocks or globals()["blocks"](con)
     L = [f"### {label}\n",
          "| block | h | n | cut | dead | gross median | gross trim (cap 10×) | net median | **net trim** | 95% CI (days) | net trim ex dead | 95% CI ex dead | > 0 | N2 twin net trim (paired) | N2 95% CI | Δ vs N2 | 95% CI | advantage |",
@@ -243,7 +244,7 @@ def table(con, label, where, boot, blocks=None):
             w = f"({where}) AND h = '{h}' AND ({bwhere})"
             g = stats(con, w, "gross", boot)
             n = stats(con, w, "net", boot)
-            p = paired(con, w, "net", boot)
+            p = paired(con, w, "net", boot) if twin else None
             if not n:
                 continue
             trig_ok = n["trim"] > 0 and n["lo"] is not None and n["lo"] > 0
