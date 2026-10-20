@@ -8,8 +8,12 @@ Each run (lab-nas-dispatch.timer, every 2 minutes; one at a time by flock):
      A put without an answer (a timeout, a dropped connection) may still have stored the job: the dispatcher then
      asks `status <id>`; the NAS holding this very job (same job_sha256) counts as sent, an unknown id is put again
      next pass (the NAS's put is idempotent), another job under the id is refused here;
+     A put the NAS refused itself (exit 2: schema, size) with the id unknown there is refused here, final;
   2. a job on its way: `status <id>`, whose job_sha256 must be the one recorded (never another job's result);
-     once done, `get <id>` -> <data>/nas-results/ui/<id>/result.json.
+     once done, `get <id>` -> <data>/nas-results/ui/<id>/result.json. Another job_sha256 is final (refused
+     here); an answer without one, 'unknown' or not JSON is counted in the job's status file and after MAX_UNCLEAR
+     passes the job is failed ('no consistent answer'), so one bad id never holds the queue for good. No answer at
+     all (the NAS or the network down) is not counted: that says nothing about the job.
 
 Settings in ~/.config/solana-lab/nas-ui.env (no secret in the repo; the key file itself stays where it is):
   NAS_UI_HOST=<the NAS's tailnet IP>  NAS_UI_USER=<user>  NAS_UI_KEY=<path of a key only for this dispatcher>
@@ -34,6 +38,7 @@ ENV_FILE = os.environ.get("LAB_NAS_UI_ENV", os.path.expanduser("~/.config/solana
 ID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
 TEMPLATE = "backtest-f7"
 FINAL = ("done", "failed", "refused")
+MAX_UNCLEAR = 10  # status passes (~20 min) without a consistent answer before a job is given up as failed
 
 
 def _schema():
@@ -115,8 +120,14 @@ def run(cfg, call=ssh):
             nas = json.loads(out)
             if not isinstance(nas, dict):
                 raise ValueError("status is not an object")
-            if st.get("job_sha256") and nas.get("job_sha256") != st["job_sha256"]:
-                raise ValueError("the NAS's job under this id is not the one sent")
+            mine, theirs = st.get("job_sha256"), nas.get("job_sha256")
+            if mine and theirs and theirs != mine:
+                reason = "the NAS's job under this id is not the one sent"  # final: never another job's result
+                _write(os.path.join(st_dir, f"{rid}.json"), dict(st, state="refused", reason=reason, nas=nas, checked_unix=int(time.time())))
+                done.append((rid, "refused", reason))
+                continue
+            if nas.get("state") == "unknown" or (mine and not theirs):
+                raise ValueError(f"no job_sha256 or an unknown id (state {nas.get('state')!r})")
             state = {"done": "done", "failed": "failed", "refused": "refused", "running": "running", "queued": "queued"}.get(nas.get("state"), st["state"])
             if state == "done":
                 rc, out, err = call(cfg, f"get {rid}")
@@ -124,10 +135,20 @@ def run(cfg, call=ssh):
                     done.append((rid, "get failed", err))
                     continue
                 _write(os.path.join(RESULTS, rid, "result.json"), json.loads(out))
-        except (ValueError, RecursionError, OSError, subprocess.TimeoutExpired) as e:
-            done.append((rid, "bad answer", str(e)[:200]))
+        except (OSError, subprocess.TimeoutExpired) as e:  # no answer: says nothing about this job, not counted
+            done.append((rid, "status failed", str(e)[:200]))
             continue
-        _write(os.path.join(st_dir, f"{rid}.json"), dict(st, state=state, nas=nas, checked_unix=int(time.time())))
+        except (ValueError, RecursionError) as e:  # an answer, but not a consistent one about our job: counted
+            k = int(st.get("unclear_passes") or 0) + 1
+            if k >= MAX_UNCLEAR:
+                reason = f"no consistent answer from the NAS in {k} passes ({str(e)[:150]})"
+                _write(os.path.join(st_dir, f"{rid}.json"), dict(st, state="failed", reason=reason, unclear_passes=k, checked_unix=int(time.time())))
+                done.append((rid, "failed", reason))
+            else:
+                _write(os.path.join(st_dir, f"{rid}.json"), dict(st, unclear_passes=k, checked_unix=int(time.time())))
+                done.append((rid, "bad answer", f"{str(e)[:200]} ({k}/{MAX_UNCLEAR})"))
+            continue
+        _write(os.path.join(st_dir, f"{rid}.json"), dict(st, state=state, nas=nas, unclear_passes=0, checked_unix=int(time.time())))
         done.append((rid, state, ""))
     # 1. a queued job, only when none is on its way.
     if any((_status(n[:-5]) or {}).get("state") not in FINAL for n in os.listdir(st_dir) if n.endswith(".json")):
@@ -164,6 +185,14 @@ def run(cfg, call=ssh):
         if rc != 0:
             # The NAS may have stored the job before its answer was lost (Codex review): look it up, never guess.
             known = _lookup(cfg, call, rid)
+            if (not known or known.get("state") == "unknown") and rc == 2:
+                # The NAS's forced command refused the job itself (schema, size) and does not hold it: final, the
+                # queue goes on (LAB review on #467). An ssh failure (255) or a timeout stays the lost-answer path.
+                reason = f"the NAS refused the job: {err.strip()[:200]}"
+                _write(os.path.join(st_dir, f"{rid}.json"), {"id": rid, "state": "refused", "reason": reason, "checked_unix": int(time.time())})
+                os.replace(path, os.path.join(q, f".refused-{n}"))
+                done.append((rid, "refused", reason))
+                continue
             if not known or known.get("state") == "unknown":
                 done.append((rid, "put failed", err))
                 break  # try again next pass; the job stays queued and the NAS's put is idempotent
