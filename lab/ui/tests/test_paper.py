@@ -510,6 +510,36 @@ class GroupsUnknown(unittest.TestCase):
         self.assertEqual([g["group"] for g in v["arms"]], ["H"])
 
 
+class Alerts(unittest.TestCase):
+    """Display-only markings from the owner's thresholds: K3's loss today against a share of its daily loss limit,
+    Triton's spend against a share of the cap, minutes without a recorder segment; the thresholds file overrides."""
+
+    def test_markings(self):
+        with tempfile.TemporaryDirectory() as d:
+            risk = os.path.join(d, "risk.yaml")
+            with open(risk, "w") as f:
+                f.write("size_sol: 0.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\n")
+            os.environ["LAB_PAPER_RISK"] = risk
+            old = paper.ALERTS_FILE
+            paper.ALERTS_FILE = os.path.join(d, "alerts.json")
+            try:
+                now = 1_792_497_600
+                j = {"day_card": [{"group": "K3", "net_sol": -0.85}, {"group": "H", "net_sol": -5.0}]}
+                rec = {"sample": False, "cap_gb": 25.0, "spent_gb": 23.0, "stopped": False, "last_segment_unix": now - 400}
+                keys = {a["key"]: a["level"] for a in paper.alerts(j, rec, now)}
+                self.assertEqual(keys, {"daily_loss_K3": "warn", "triton": "warn", "recorder_gap": "alert"})
+                j["day_card"][0]["net_sol"] = -1.0
+                self.assertEqual(paper.alerts(j, dict(rec, spent_gb=1.0, last_segment_unix=now - 10), now)[0]["level"], "alert")
+                self.assertEqual(paper.alerts({"day_card": [{"group": "K3", "net_sol": 0.4}]}, dict(rec, spent_gb=1.0, last_segment_unix=now), now), [])
+                with open(paper.ALERTS_FILE, "w") as f:
+                    json.dump({"recorder_gap_min": 10, "triton_share": 0.95}, f)
+                self.assertEqual({a["key"] for a in paper.alerts({"day_card": []}, rec, now)}, set())  # 400 s < 10 min, 23/25 < 95 %
+                self.assertEqual(paper.alerts(None, dict(rec, sample=True), now), [])  # the sample recorder never alarms
+            finally:
+                paper.ALERTS_FILE = old
+                del os.environ["LAB_PAPER_RISK"]
+
+
 class Recorder(unittest.TestCase):
     def test_sample_is_marked_and_summed_per_stream(self):
         os.environ["LAB_RECORDER_ROOT"] = "/nonexistent"

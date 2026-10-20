@@ -1068,10 +1068,55 @@ def _group_wallet(name, variants, conf, exits, opens, journal, day, clock):
             "max_open_positions": (risk or {}).get("max_open_positions"), "size_sol": (risk or {}).get("size_sol")}
 
 
+ALERTS_FILE = os.path.join(DATA, "control", "alerts.json")  # the owner's thresholds (backlog 6); defaults below
+
+
+def _nl(x, d=None):
+    """A number as the page writes it: a decimal comma (3 decimals: 1,550; none needed: 1)."""
+    return (f"{x:.{d}f}" if d is not None else f"{x:g}").replace(".", ",")
+
+
+def alerts(journal, recorder, now):
+    """Markings for the page (backlog 6), display only: no push, no action. Thresholds from <data>/control/alerts.json
+    ({"daily_loss_share": 0.8, "triton_share": 0.9, "recorder_gap_min": 5}; these are the defaults): K3's and each
+    group's realised loss today against that share of its daily loss limit (the day card), Triton's spend today
+    against that share of the cap, and no recorder segment for that many minutes while it should be streaming."""
+    cfg = {"daily_loss_share": 0.8, "triton_share": 0.9, "recorder_gap_min": 5}
+    try:
+        with open(ALERTS_FILE) as f:
+            got = json.load(f)
+        cfg.update({k: float(v) for k, v in got.items() if k in cfg and isinstance(v, (int, float)) and 0 < v < 1e6})
+    except (OSError, ValueError, AttributeError):
+        pass
+    out = []
+    if journal:
+        state_groups = {c["group"]: c for c in journal.get("day_card") or []}
+        limits = {"K3": risk_limits()}
+        for g, c in state_groups.items():
+            lim = (limits.get(g) or {}).get("daily_loss_limit_sol") if g == "K3" else None
+            if lim and c["net_sol"] < 0 and -c["net_sol"] >= cfg["daily_loss_share"] * lim:
+                hit = -c["net_sol"] >= lim
+                out.append({"key": f"daily_loss_{g}", "level": "alert" if hit else "warn",
+                            "text": f"{g}: verlies vandaag {_nl(-c['net_sol'], 3)} SOL van de daglimiet {_nl(lim)} SOL"
+                                    + (" — bereikt, de bot opent vandaag niets meer" if hit else "")})
+    if recorder and not recorder.get("sample"):
+        if recorder.get("cap_gb") and recorder.get("spent_gb") is not None and recorder["spent_gb"] >= cfg["triton_share"] * recorder["cap_gb"]:
+            hit = recorder.get("stopped") or recorder["spent_gb"] >= recorder["cap_gb"]
+            out.append({"key": "triton", "level": "alert" if hit else "warn",
+                        "text": f"Triton: {_nl(recorder['spent_gb'], 1)} van {_nl(recorder['cap_gb'])} GB vandaag" + (" — gestopt" if hit else "")})
+        last = recorder.get("last_segment_unix")
+        if last and now - last > cfg["recorder_gap_min"] * 60 and not recorder.get("stopped"):
+            out.append({"key": "recorder_gap", "level": "alert",
+                        "text": f"Recorder: al {int((now - last) // 60)} minuten geen nieuw segment"})
+    return out
+
+
 def view(now=None):
     now = int(now if now is not None else time.time())
     path = journal_path()
-    return {"journal": journal_view(path, now) if path else None, "recorder": recorder_view(now), "now_unix": now}
+    j = journal_view(path, now) if path else None
+    rec = recorder_view(now)
+    return {"journal": j, "recorder": rec, "alerts": alerts(j, rec, now), "now_unix": now}
 
 
 def change_token():

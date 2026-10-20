@@ -335,6 +335,10 @@ export default function Paper() {
     <div className="grid gap-3.5">
       <div className="flex flex-wrap gap-2">
         <span className="px-2.5 py-1.5 rounded-lg bg-warn-soft border border-warn-line text-warn text-[11px] font-bold">Paper trading: er wordt niets verstuurd, geen echt geld.</span>
+        {(data.alerts ?? []).map((al) => (
+          <span key={al.key} role="status" className={cn("px-2.5 py-1.5 rounded-lg border text-[11px] font-bold",
+            al.level === "alert" ? "bg-sell-soft border-sell-soft text-sell" : "bg-warn-soft border-warn-line text-warn")}>{al.level === "alert" ? "⚠ " : ""}{al.text}</span>
+        ))}
         {j?.groups_inferred && <span className="px-2.5 py-1.5 rounded-lg bg-warn-soft border border-warn-line text-warn text-[11px] font-semibold">Groepen staan niet in dit journaal: K3 en H zijn afgeleid uit de variantnamen (…_H6 = groep H).</span>}
         {j?.test_run && <span className="px-2.5 py-1.5 rounded-lg bg-accent-soft text-accent-fg text-[11px] font-semibold">Test, geen paper trading: {j.source.feed === "replay" ? "replay" : j.source.feed} van {j.journal}. Geen oordeel.</span>}
       </div>
