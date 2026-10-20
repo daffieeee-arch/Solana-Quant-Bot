@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 
 # lab/ui/paper.py by its path, as the server loads it: the name 'paper' is lab/paper's package (OneProcess).
@@ -362,6 +363,83 @@ class DecisionBoundary(unittest.TestCase):
             self.assertIn("### What the verdict rests on", md)
 
 
+class TokenNames(unittest.TestCase):
+    """Names come from the data we hold, in layers: the paper run's store (pools -> mint, mints' name), the journal's
+    learned pools, the recorder's segments (pump CreateEvent, token_meta, pool_creations); a key found nowhere keeps
+    its mint if known and is looked up again later, reading newer segments only. No outside service."""
+
+    def test_layers_and_retry(self):
+        import duckdb
+        sol = paper.SOL_MINT
+        with tempfile.TemporaryDirectory() as d:
+            store = os.path.join(d, "fwd.duckdb")
+            con = duckdb.connect(store)
+            con.execute("CREATE TABLE pools (pool VARCHAR, mint VARCHAR)")
+            con.execute("CREATE TABLE mints (mint VARCHAR, name VARCHAR, symbol VARCHAR)")
+            con.execute("INSERT INTO pools VALUES ('PoolStore', 'MintStore'), ('PoolGap', 'MintGap')")
+            con.execute("INSERT INTO mints VALUES ('MintStore', 'Store <b>Coin</b>', 'STO')")
+            con.close()
+            jdir = os.path.join(d, "paper-k3", "journal")
+            os.makedirs(jdir)
+            db = sqlite3.connect(os.path.join(jdir, "journal.sqlite"))
+            db.execute("CREATE TABLE state (k TEXT PRIMARY KEY, v TEXT)")
+            db.execute("CREATE TABLE learned (kind TEXT, key TEXT, seq INTEGER, slot INTEGER, info TEXT, PRIMARY KEY (kind, key))")
+            db.execute("INSERT INTO state VALUES ('farmer_seed', ?)", [json.dumps({"store": store})])
+            db.execute("INSERT INTO learned VALUES ('pool', 'PoolLearned', 3, 1, ?)",
+                       [json.dumps(["sol", "normal", "PoolLearned", "MintLive", "normal", "sol", False, "c", 1])])
+            db.commit()
+            db.close()
+            root = os.path.join(d, "recorder")
+
+            def segment(seq, tables):
+                sd = os.path.join(root, "segments", f"{seq:09d}")
+                for sub, (cols, rows) in tables.items():
+                    os.makedirs(os.path.join(sd, sub))
+                    values = ", ".join("(" + ", ".join(f"'{v}'" for v in r) + ")" for r in rows)
+                    duckdb.sql(f"COPY (SELECT * FROM (VALUES {values}) t({cols})) TO '{os.path.join(sd, sub, 'part-00000.parquet')}' (FORMAT parquet)")
+                with open(os.path.join(sd, "_segment.json"), "w") as f:
+                    json.dump({"seq": seq, "first_slot": 470_000_000 + seq, "last_slot": 470_000_000 + seq, "complete": True,
+                               "written_unix": int(time.time()) - 100 + seq, "usage": []}, f)
+            segment(1, {"pump/CreateEvent": ("mint, name, symbol", [("MintLive", "Live Coin", "LIVE")]),
+                        "pool_creations": ("pool, base_mint, quote_mint", [("PoolRev", sol, "MintRev")]),
+                        "token_meta": ("mint, name, symbol", [("MintRev", "Reversed Coin", "REV")])})
+            with open(os.path.join(root, "budget.json"), "w") as f:
+                json.dump({"day": 0, "spent_bytes": 0, "cap_bytes": 1}, f)
+            env = {"LAB_PAPER_JOURNAL": jdir, "LAB_RECORDER_ROOT": root}
+            os.environ.update(env)
+            dev, paper._dev_names = paper._dev_names, lambda keys: {}  # no development data here
+            try:
+                keys = ["PoolStore", "PoolLearned", "PoolRev", "PoolGap", "Unknown1111"]
+                n = paper.token_names(keys)
+                self.assertEqual(n["PoolStore"], {"mint": "MintStore", "symbol": "STO", "name": "Store <b>Coin</b>"})  # raw text: the page escapes
+                self.assertEqual((n["PoolLearned"]["symbol"], n["PoolLearned"]["mint"]), ("LIVE", "MintLive"))
+                self.assertEqual((n["PoolRev"]["symbol"], n["PoolRev"]["mint"]), ("REV", "MintRev"))  # base WSOL: the quote is the token
+                self.assertEqual(n["PoolGap"], {"mint": "MintGap"})  # a mint, no name: the page shows its short address
+                self.assertEqual(n["Unknown1111"], {})
+                # The gap token's create arrives in a newer segment: after NAME_RETRY it is found, reading that one only.
+                segment(2, {"pump/CreateEvent": ("mint, name, symbol", [("MintGap", "Gap Coin", "GAP")])})
+                self.assertEqual(paper.token_names(["PoolGap"])["PoolGap"], {"mint": "MintGap"})  # not yet: retry later
+                paper._name_miss["PoolGap"] = (0, paper._name_miss["PoolGap"][1])
+                self.assertEqual(paper.token_names(["PoolGap"])["PoolGap"]["symbol"], "GAP")
+                self.assertEqual(paper._name_seq.get("Unknown1111"), 1)  # searched up to segment 1
+            finally:
+                paper._dev_names = dev
+                for k in env:
+                    del os.environ[k]
+                for k in ("PoolStore", "PoolLearned", "PoolRev", "PoolGap", "Unknown1111"):
+                    paper._names.pop(k, None)
+                    paper._name_miss.pop(k, None)
+                    paper._name_seq.pop(k, None)
+
+    def test_the_page_never_injects_html(self):
+        web = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web", "src")
+        for dirpath, _, files in os.walk(web):
+            for f in files:
+                if f.endswith((".tsx", ".ts")):
+                    with open(os.path.join(dirpath, f)) as fh:
+                        self.assertNotIn("dangerouslySetInnerHTML", fh.read(), f)  # token names are user-chosen text
+
+
 class GroupPositions(unittest.TestCase):
     """Group H's own open positions and the day's exits appear apart from K3's (arm_positions, each with its group);
     K3's list, totals and stop rule stay K3's only."""
@@ -542,6 +620,53 @@ class WalletAndTriton(unittest.TestCase):
             self.assertEqual(paper.live_pool_candles(pool, [470_000_015], True, now=t0), [])
         finally:
             del os.environ["LAB_RECORDER_ROOT"]
+
+    def test_wallet_has_each_groups_own_wallet_and_risk(self):
+        """K3's wallet.json and H's wallet-h.json side by side, each with the risk file the journal records for its
+        group (state 'groups', absolute paths next to the configs), H's trades its own variants only; a paper
+        transaction without a signature has none (not the text 'None')."""
+        jmod, _ = lab_paper()
+        sol = 1_000_000_000
+        with tempfile.TemporaryDirectory() as d:
+            risk = {}
+            for name, limit in (("risk.yaml", 1.0), ("risk-h.yaml", 0.25)):
+                risk[name] = os.path.join(d, name)
+                with open(risk[name], "w") as f:
+                    f.write(f"size_sol: 0.5\nmax_open_positions: 5\ndaily_loss_limit_sol: {limit}\nkill_switch: {'true' if limit < 1 else 'false'}\n")
+            j = jmod.Journal(os.path.join(d, "paper-k3", "journal"))
+            j.state("groups", json.dumps({"K3": {"primary": True, "variants": ["tp4_T600"], "risk": risk["risk.yaml"], "wallet": "wallet.json"},
+                                          "H": {"primary": False, "variants": ["flow300_H6"], "risk": risk["risk-h.yaml"], "wallet": "wallet-h.json"}}))
+            j.state("feed", json.dumps({"kind": "live"}))
+            t = 460_000_000
+            for variant, pnl in (("tp4_T600", 20_000_000), ("flow300_H6", -300_000_000), ("flow300_H6", 100_000_000)):
+                t += 100
+                j.put("orders", family="F7", variant=variant, key=f"P{t}", t=t, day="2026-10-20", entry_slot=t + 3, size=sol // 2, status="filled")
+                j.put("exits", family="F7", variant=variant, key=f"P{t}", t=t, day="2026-10-20", entry_slot=t + 3, exit_slot=t + 50,
+                      exit_reason="time", tokens=5, cost=sol // 2, proceeds=sol // 2 + pnl, pnl=pnl, ret=pnl / (sol / 2), exit_attempts=1)
+            j.put("positions", family="F7", variant="flow300_H6", key="Popen", t=t + 1, entry_slot=t + 4, cost=sol // 2, tokens=7, status="open")
+            j.put("heartbeat", minute=29_874_960, day="2026-10-20", last_slot=t + 900, events=3, open_positions=1, gap_slots=0, note="")
+            j.commit()
+            for name, bal in (("wallet.json", 10.02), ("wallet-h.json", 9.3)):
+                with open(os.path.join(j.dir, name), "w") as f:
+                    json.dump({"mode": "paper", "address": None, "slot": t + 900, "time_unix": None, "balance_lamports": int(bal * sol),
+                               "txs": [{"signature": None, "slot": t + 50, "kind": "sell", "mint": "P1", "amount_lamports": 1}]}, f)
+            path = os.path.join(j.dir, "journal.sqlite")
+            j.close()
+            os.environ["LAB_PAPER_JOURNAL"] = path
+            try:
+                w = paper.wallet_view(1_792_497_600)  # 2026-10-20 12:00 UTC
+            finally:
+                del os.environ["LAB_PAPER_JOURNAL"]
+        p, (h,) = w["paper"], w["groups"]
+        self.assertEqual((p["risk_file"], p["daily_loss_limit_sol"], p["kill_switch"]), ("risk.yaml", 1.0, False))
+        self.assertAlmostEqual(p["realised_sol"], 0.02)  # K3's trade only
+        self.assertEqual((w["onchain"]["balance_sol"], w["onchain"]["txs"][0]["signature"]), (10.02, None))
+        self.assertEqual((h["group"], h["wallet_file"], h["risk_file"], h["daily_loss_limit_sol"], h["kill_switch"]),
+                         ("H", "wallet-h.json", "risk-h.yaml", 0.25, True))
+        self.assertEqual((h["trades"], h["open_positions"], h["in_positions_sol"]), (2, 1, 0.5))
+        self.assertAlmostEqual(h["today_net_sol"], -0.2)
+        self.assertEqual(h["wallet"]["balance_sol"], 9.3)
+        self.assertIsNotNone(h["wallet"]["txs"][0]["time_unix"])  # the slot's time from the heartbeat
 
     def test_triton_forecast_from_the_first_recorded_minute(self):
         """A recorder that starts mid-month: the forecast is the spend so far plus the rate since its first minute

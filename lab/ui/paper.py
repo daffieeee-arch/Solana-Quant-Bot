@@ -40,6 +40,7 @@ USD_PER_GB, BUDGET_USD = 0.08, 2.0  # recorder defaults (--usd-per-gb, --budget-
 POSITIONS_SHOWN = 300
 SLOT_COLS = ("t", "entry_slot", "exit_slot", "exit_decision_slot", "slot", "last_slot")
 _segments = {}  # _segment.json path -> its summary (complete segments do not change); None: not shown
+SOL_MINT = "So11111111111111111111111111111111111111112"
 _names = {}  # journal key (mint or pool) -> {"mint", "symbol", "name"}; names do not change
 
 
@@ -83,32 +84,182 @@ def recorder_root():
     return (root, False) if os.path.isfile(os.path.join(root, "budget.json")) else (SAMPLE_RECORDER, True)
 
 
+NAME_RETRY = 120  # seconds before a key without a name is looked up again (a live token's create may still come)
+NAMES_MAX = 50_000  # bound of the name caches
+_name_miss = {}  # key -> (unix of the last lookup without a symbol, what it did find: mint or {})
+_name_seq = {}  # key -> the newest recorder segment already searched for it (later lookups read newer ones only)
+
+
 def token_names(keys):
-    """Symbol and name per journal key: a curve key is the mint, a pool key is looked up in the dev store's pools.
-    Read-only DuckDB on analytics.duckdb and the store; keys found nowhere (tokens newer than the dev data) keep
-    no name, and the page shows the address. Cached per process."""
-    todo = [k for k in set(keys) if k and k not in _names]
+    """Symbol and name per journal key (a curve key is the mint, a pool key is mapped to its mint), from the data
+    we hold, never an outside service:
+    1. the development data: analytics token_summary and the dev store's pools;
+    2. the paper run's store (the journal's state farmer_seed `store`, e.g. fwd1053-1054): pools -> mint, mints'
+       name and symbol (pump.fun CreateEvent);
+    3. backtest.token_meta's build when it exists (<data>/token_meta/token_meta.parquet);
+    4. live, newer than any store: the journal's `learned` pools (pool -> mint) and the recorder's segments of the
+       last 3 days (pump/CreateEvent with --pump-creates and token_meta for Metaplex / Token-2022 creates: name and
+       symbol; pool_creations and CreatePoolEvent: pool -> mint), and the owner-approved RPC route's rows
+       (<recorder>/rpc/token_meta, backtest.token_meta_rpc) when it runs.
+    A key found nowhere (e.g. a token created between the store's end and the recorder's start) keeps its mint if
+    known and no name; the page shows the shortened address. Names are user-chosen text: the page escapes them.
+    Read-only, DuckDB in memory at 256 MB and one thread. Found names are cached; misses are retried after
+    NAME_RETRY seconds, reading only segments newer than the last search."""
+    now = time.time()
+    todo = [k for k in set(keys) if k and k not in _names and now - _name_miss.get(k, (0, {}))[0] >= NAME_RETRY]
     if todo:
-        import duckdb
-        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "analytics"))
-        import labstore
-        con = duckdb.connect(":memory:", config={"memory_limit": "256MB", "threads": 1})
+        found = _dev_names(todo)
+        rest = [k for k in todo if not (found.get(k) or {}).get("symbol")]
+        if rest:
+            for k, v in _live_names(rest, {k: (found.get(k) or {}).get("mint") for k in rest}).items():
+                found[k] = {**(found.get(k) or {}), **{a: b for a, b in v.items() if b}}
+        if len(_names) > NAMES_MAX:
+            _names.clear()
+        if len(_name_miss) > NAMES_MAX:
+            _name_miss.clear()
+            _name_seq.clear()
+        for k in todo:
+            v = found.get(k) or {}
+            if v.get("symbol") or v.get("name"):
+                _names[k] = v
+                _name_miss.pop(k, None)
+                _name_seq.pop(k, None)
+            else:
+                _name_miss[k] = (now, {"mint": v["mint"]} if v.get("mint") else {})
+    return {k: _names.get(k) or _name_miss.get(k, (0, {}))[1] for k in keys}
+
+
+def _dev_names(keys):
+    """Layer 1: the development data (analytics token_summary, the dev store's pools)."""
+    import duckdb
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "analytics"))
+    import labstore
+    out = {}
+    con = duckdb.connect(":memory:", config={"memory_limit": "256MB", "threads": 1})
+    try:
+        con.execute("SET enable_progress_bar=false")
+        con.execute(f"ATTACH '{os.path.join(DATA, 'analytics', 'analytics.duckdb')}' AS a (READ_ONLY)")
+        labstore.attach(con, DATA)
+        con.execute("CREATE TEMP TABLE k (key VARCHAR)")
+        con.executemany("INSERT INTO k VALUES (?)", [[x] for x in keys])
+        for key, mint, sym, name in con.execute("""
+                SELECT k.key, coalesce(t1.mint, p.mint), coalesce(t1.symbol, t2.symbol), coalesce(t1.name, t2.name)
+                FROM k LEFT JOIN a.token_summary t1 ON t1.mint = k.key
+                LEFT JOIN dev.pools p ON p.pool = k.key LEFT JOIN a.token_summary t2 ON t2.mint = p.mint""").fetchall():
+            out[key] = {"mint": mint, "symbol": sym, "name": name}
+    except (duckdb.Error, SystemExit):
+        pass
+    finally:
+        con.close()
+    return out
+
+
+def _live_names(keys, mints):
+    """Layers 2-4 for keys the development data does not name. mints: key -> mint already known (or None)."""
+    import duckdb
+    mint_of = {k: m or None for k, m in mints.items()}
+    store, learned = None, {}
+    path = journal_path()
+    if path:
+        j = Journal(path)
         try:
-            con.execute("SET enable_progress_bar=false")
-            con.execute(f"ATTACH '{os.path.join(DATA, 'analytics', 'analytics.duckdb')}' AS a (READ_ONLY)")
-            labstore.attach(con, DATA)
-            con.execute("CREATE TEMP TABLE k (key VARCHAR)")
-            con.executemany("INSERT INTO k VALUES (?)", [[x] for x in todo])
-            for key, mint, sym, name in con.execute("""
-                    SELECT k.key, coalesce(t1.mint, p.mint), coalesce(t1.symbol, t2.symbol), coalesce(t1.name, t2.name)
-                    FROM k LEFT JOIN a.token_summary t1 ON t1.mint = k.key
-                    LEFT JOIN dev.pools p ON p.pool = k.key LEFT JOIN a.token_summary t2 ON t2.mint = p.mint""").fetchall():
-                _names[key] = {"mint": mint, "symbol": sym, "name": name}
-        except (duckdb.Error, SystemExit):
-            return {k: _names.get(k, {}) for k in keys}
+            state = {r["k"]: r["v"] for r in j.rows("state", "k = 'farmer_seed'")}
+            try:
+                store = json.loads(state.get("farmer_seed") or "{}").get("store")
+            except (ValueError, AttributeError):
+                store = None
+            want = [k for k in keys if not mint_of.get(k)]
+            if want and "learned" in j.tables:
+                for r in j.db.execute(f"SELECT key, info FROM learned WHERE kind = 'pool' AND key IN ({','.join('?' * len(want))})", want):
+                    try:
+                        info = json.loads(r[1])
+                        if len(info) > 3 and isinstance(info[3], str):
+                            learned[r[0]] = info[3]  # [class, orientation, pool, mint, ...] (feed.PoolInfo)
+                    except (ValueError, TypeError):
+                        pass
         finally:
-            con.close()
-    return {k: _names.get(k, {}) for k in keys}
+            j.close()
+    for k, m in learned.items():
+        mint_of[k] = mint_of.get(k) or m
+    out = {k: {} for k in keys}
+    con = duckdb.connect(":memory:", config={"memory_limit": "256MB", "threads": 1})
+    try:
+        con.execute("SET enable_progress_bar=false")
+        if isinstance(store, str) and store.endswith(".duckdb") and os.path.isfile(store):
+            try:
+                con.execute(f"ATTACH '{store}' AS s (READ_ONLY)")
+                want = [k for k in keys if not mint_of.get(k)]
+                if want:
+                    for pool, mint in con.execute("SELECT pool, mint FROM s.pools WHERE list_contains(?, pool)", [want]).fetchall():
+                        mint_of[pool] = mint
+                ms = sorted({mint_of.get(k) or k for k in keys})
+                for mint, sym, name in con.execute("SELECT mint, symbol, name FROM s.mints WHERE list_contains(?, mint)", [ms]).fetchall():
+                    for k in keys:
+                        if (mint_of.get(k) or k) == mint:
+                            out[k] = {"mint": mint, "symbol": sym, "name": name}
+            except duckdb.Error:
+                pass  # e.g. the store is being rebuilt: the next layer still runs
+        rest = [k for k in keys if not out[k].get("symbol")]
+        if rest and os.path.isfile(os.path.join(DATA, TOKEN_META)):
+            _name_rows(con, rest, mint_of, out, [os.path.join(DATA, TOKEN_META)])
+        rest = [k for k in keys if not out[k].get("symbol")]
+        if rest:
+            _segment_names(con, rest, mint_of, out)
+    except duckdb.Error:
+        pass
+    finally:
+        con.close()
+    for k in keys:
+        if mint_of.get(k) and not out[k].get("mint"):
+            out[k]["mint"] = mint_of[k]
+    return out
+
+
+def _name_rows(con, keys, mint_of, out, files):
+    """Names from parquet files with token_meta's columns (mint, name, symbol): pump.fun's CreateEvent, the
+    extractor's or recorder's token_meta (Metaplex and Token-2022 creates), the RPC route's rows; first non-empty."""
+    if not files:
+        return
+    ms = sorted({mint_of.get(k) or k for k in keys})
+    rows = con.execute("""SELECT mint, any_value(symbol) FILTER (WHERE coalesce(symbol, '') <> ''),
+                                 any_value(name) FILTER (WHERE coalesce(name, '') <> '')
+                          FROM read_parquet(?, union_by_name = true) WHERE list_contains(?, mint) GROUP BY mint""", [files, ms]).fetchall()
+    for mint, sym, name in rows:
+        if not (sym or name):
+            continue
+        for k in keys:
+            if (mint_of.get(k) or k) == mint and not out[k].get("symbol"):
+                out[k] = {"mint": mint, "symbol": sym, "name": name}
+
+
+TOKEN_META = "token_meta/token_meta.parquet"  # backtest.token_meta's build, if made (<data>/token_meta/)
+
+
+def _segment_names(con, keys, mint_of, out):
+    """Layer 3: the recorder's segments of the last 3 days, only those newer than the last search for these keys."""
+    root, sample = recorder_root()
+    if sample:
+        return
+    segs = _segments_since(root, time.time() - 3 * 86_400)
+    if not segs:
+        return
+    since = min(_name_seq.get(k, -1) for k in keys)
+    dirs = [x["dir"] for x in segs if (x["seq"] or 0) > since]
+    if not dirs:
+        return
+    files = lambda sub: [f for d in dirs for f in glob.glob(os.path.join(d, sub, "*.parquet"))]  # noqa: E731
+    pools = [k for k in keys if not mint_of.get(k)]
+    if pools:
+        for sub, sql in (("pool_creations", "SELECT pool, base_mint, quote_mint FROM read_parquet(?, union_by_name = true) WHERE list_contains(?, pool)"),
+                         ("pump_amm/CreatePoolEvent", "SELECT pool, base_mint, quote_mint FROM read_parquet(?, union_by_name = true) WHERE list_contains(?, pool)")):
+            fs = files(sub)
+            if fs:
+                for pool, base, quote in con.execute(sql, [fs, pools]).fetchall():
+                    mint_of[pool] = mint_of.get(pool) or (quote if base == SOL_MINT else base)
+    _name_rows(con, keys, mint_of, out, files("pump/CreateEvent") + files("token_meta")
+               + glob.glob(os.path.join(root, "rpc", "token_meta", "*.parquet")))
+    for k in keys:  # searched up to here: a later lookup reads newer segments only
+        _name_seq[k] = segs[0]["seq"] or 0
 
 
 def slot_clock(beats):
@@ -539,7 +690,6 @@ def recorder_view(now):
 
 LIVE_PAD = 9_000  # slots (~1 h) of live price around a paper position's trades
 LIVE_MAX_FILES = 800  # at most this many segment files per chart (about 6 hours of one-minute segments)
-SOL_MINT = "So11111111111111111111111111111111111111112"
 _live_candles = {}  # (pool, lo, hi, newest segment) -> candles; small and bounded (LIVE_CACHE)
 LIVE_CACHE = 16
 
@@ -683,14 +833,17 @@ def triton_view(now):
     }
 
 
-RISK_DEFAULT = "/home/chupa/Solana-project/worktrees/lab-paper-live/lab/paper/risk.yaml"  # the paper engine's checkout
+RISK_DEFAULT = "/home/chupa/Solana-project/worktrees/paper-run/lab/paper/risk.yaml"  # the run checkout (runbook §3)
 SAMPLE_WALLET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "paper_sample", "wallet.json")
 ADDRESS_RE = __import__("re").compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
 
 
-def risk_limits():
-    """The paper engine's owner-only limits (lab/paper/risk.yaml: flat 'key: value' lines). None if not found."""
-    path = os.environ.get("LAB_PAPER_RISK") or RISK_DEFAULT
+def risk_limits(path=None):
+    """The paper engine's owner-only limits (lab/paper/risk.yaml: flat 'key: value' lines). None if not found.
+    path: a group's risk file as the journal records it (state 'groups', `risk`: absolute, next to its config);
+    else LAB_PAPER_RISK or the run checkout's risk.yaml."""
+    ok = isinstance(path, str) and os.path.isabs(path) and path.endswith(".yaml")
+    path = path if ok else os.environ.get("LAB_PAPER_RISK") or RISK_DEFAULT
     try:
         with open(path) as f:
             text = f.read()
@@ -708,10 +861,17 @@ def risk_limits():
     return out
 
 
-def _wallet_state(journal):
-    """The live engine's <journal>/wallet.json (format in lab/ui/web/README.md), else the marked sample."""
-    path = os.environ.get("LAB_WALLET_STATE") or (os.path.join(os.path.dirname(journal), "wallet.json") if journal else "")
+def _wallet_state(journal, name="wallet.json", sample_ok=True, clock=None):
+    """The live engine's <journal>/<name> (wallet.json for K3, a further group's own file such as wallet-h.json;
+    format in lab/ui/web/README.md), else the marked sample (sample_ok) or None. clock: slot -> unix for the paper
+    wallet's transactions, which carry no time of their own."""
+    if os.path.basename(name) != name or not name.endswith(".json"):
+        return None
+    env = os.environ.get("LAB_WALLET_STATE") if name == "wallet.json" else None
+    path = env or (os.path.join(os.path.dirname(journal), name) if journal else "")
     sample = not (path and os.path.isfile(path))
+    if sample and not sample_ok:
+        return None
     try:
         with open(SAMPLE_WALLET if sample else path) as f:
             w = json.load(f)
@@ -722,7 +882,9 @@ def _wallet_state(journal):
     for t in (w.get("txs") or [])[:50]:
         if not isinstance(t, dict) or (isinstance(t.get("slot"), int) and HOLDOUT[0] <= t["slot"] < HOLDOUT[1]):
             continue
-        txs.append({"signature": str(t.get("signature", ""))[:100], "slot": num(t.get("slot")), "time_unix": num(t.get("time_unix")),
+        sig = t.get("signature")
+        txs.append({"signature": sig[:100] if isinstance(sig, str) and sig else None, "slot": num(t.get("slot")),
+                    "time_unix": num(t.get("time_unix")) or (clock(t["slot"]) if clock and isinstance(t.get("slot"), int) else None),
                     "kind": str(t.get("kind", ""))[:10], "mint": t.get("mint") if isinstance(t.get("mint"), str) else None,
                     "symbol": str(t.get("symbol") or "")[:20] or None, "amount_sol": (num(t.get("amount_lamports")) or 0) / 1e9,
                     "fee_sol": (num(t.get("fee_lamports")) or 0) / 1e9, "tip_sol": (num(t.get("tip_lamports")) or 0) / 1e9,
@@ -740,7 +902,8 @@ def _wallet_state(journal):
             t["mint"] = n["mint"]
     return {"sample": sample, "mode": "paper" if paper_mode else "onchain",
             "address": None if paper_mode else (w.get("address") if isinstance(w.get("address"), str) and ADDRESS_RE.match(w["address"]) else None),
-            "slot": num(w.get("slot")), "time_unix": num(w.get("time_unix")), "balance_sol": bal / 1e9 if bal is not None else None,
+            "slot": num(w.get("slot")), "time_unix": num(w.get("time_unix")) or (clock(w["slot"]) if clock and num(w.get("slot")) else None),
+            "balance_sol": bal / 1e9 if bal is not None else None,
             "note": str(w.get("note") or "")[:200] or None, "txs": txs}
 
 
@@ -774,7 +937,8 @@ def wallet_view(now):
         finally:
             j.close()
         clock = slot_clock(beats)
-        primary, _ = stoprule.parse_groups(state.get(stoprule.GROUPS_KEY))
+        primary, further = stoprule.parse_groups(state.get(stoprule.GROUPS_KEY))
+        settings = _group_settings(state)
         # The bot's wallet is the primary group's (K3); the arms (H) keep their own paper wallet.
         own = lambda r: not r["family"].startswith("N2_") and (primary is None or r["variant"] in primary)  # noqa: E731
         traded = [x for x in exits if own(x)]
@@ -783,7 +947,7 @@ def wallet_view(now):
         day = today if today in days or not days else days[-1]
         t_day = [x for x in traded if x["day"] == day]
         failed = [x for x in t_day if not x["tokens"]]
-        risk = risk_limits() or {}
+        risk = risk_limits(next((g["risk"] for g in settings.values() if g.get("primary")), None)) or {}
         exit_of = {(x["family"], x["variant"], x["key"], x["t"]): x for x in traded}
         order_of = {(o["family"], o["variant"], o["key"], o["t"]): o for o in orders if own(o)}
         txs = []
@@ -823,8 +987,41 @@ def wallet_view(now):
                  "today_net_sol": today_net, "failed_today": len(failed), "failed_cost_sol": -sum(x["pnl"] or 0 for x in failed) / 1e9,
                  "daily_loss_limit_sol": risk.get("daily_loss_limit_sol"), "risk_found": bool(risk),
                  "kill_switch": risk.get("kill_switch"), "max_open_positions": risk.get("max_open_positions"),
-                 "size_sol": risk.get("size_sol"), "txs": txs}
-    return {"paper": paper, "onchain": _wallet_state(path), "address": configured_address(), "now_unix": int(now)}
+                 "size_sol": risk.get("size_sol"), "risk_file": os.path.basename(risk["path"]) if risk else None, "txs": txs}
+        groups = [_group_wallet(name, set(variants), settings.get(name, {}), exits, opens, path, day, clock)
+                  for name, variants in sorted(further.items())]
+    else:
+        groups, clock = [], None
+    return {"paper": paper, "onchain": _wallet_state(path, clock=clock), "groups": groups, "address": configured_address(),
+            "now_unix": int(now)}
+
+
+def _group_settings(state):
+    """The journal's groups (state 'groups', engine.groups_state): name -> {primary, variants, risk, wallet}."""
+    try:
+        gs = json.loads(state.get(stoprule.GROUPS_KEY) or "{}")
+    except ValueError:
+        return {}
+    return {str(k): v for k, v in gs.items() if isinstance(v, dict)} if isinstance(gs, dict) else {}
+
+
+def _group_wallet(name, variants, conf, exits, opens, journal, day, clock):
+    """A further group's (H) paper wallet beside K3's: its own file (wallet-h.json), its own risk file and daily
+    loss, as the engine keeps them per group; its trades are its variants' (no N2: the arms have no shadow)."""
+    mine = lambda r: not r["family"].startswith("N2_") and r["variant"] in variants  # noqa: E731
+    traded = [x for x in exits if mine(x)]
+    t_day = [x for x in traded if x["day"] == day]
+    failed = [x for x in t_day if not x["tokens"]]
+    risk = risk_limits(conf.get("risk")) if conf.get("risk") else None
+    return {"group": name, "variants": sorted(variants),
+            "wallet": _wallet_state(journal, conf.get("wallet") or "", sample_ok=False, clock=clock),
+            "wallet_file": conf.get("wallet"), "trades": sum(1 for x in traded if x["tokens"]),
+            "realised_sol": sum(x["pnl"] or 0 for x in traded) / 1e9, "today_net_sol": sum(x["pnl"] or 0 for x in t_day) / 1e9,
+            "failed_today": len(failed), "open_positions": sum(1 for p in opens if mine(p)),
+            "in_positions_sol": sum(p["cost"] or 0 for p in opens if mine(p)) / 1e9,
+            "risk_found": bool(risk), "risk_file": os.path.basename(risk["path"]) if risk else None,
+            "daily_loss_limit_sol": (risk or {}).get("daily_loss_limit_sol"), "kill_switch": (risk or {}).get("kill_switch"),
+            "max_open_positions": (risk or {}).get("max_open_positions"), "size_sol": (risk or {}).get("size_sol")}
 
 
 def view(now=None):
