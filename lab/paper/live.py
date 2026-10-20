@@ -333,6 +333,10 @@ class LiveFeed(Feed):
         # What this feed learns that a restart needs (the journal's 'learned' rows, drain_learned): new pools,
         # graduated tokens and the first block of each epoch (the clock's span). seq: the segment it came from.
         self.learned, self.seq = [], None
+        # Pools whose probe backfill reached past Triton's replay window (creation-filters spec v0.2 §4 option A): their
+        # farmer history starts at the probe, so the engine counts their farm window incomplete for a day (engine.py
+        # _farm_window_complete). Learned once each ('late_probe' rows), kept over a restart.
+        self.late_probe_pools = set()
         if learned:
             self._load_learned(learned)
 
@@ -417,6 +421,8 @@ class LiveFeed(Feed):
                 self.tokens[info[0]] = TokenInfo(*info)
             elif r["kind"] == "epoch":
                 self.epoch_span.setdefault(int(r["key"]), [tuple(info), tuple(info)])
+            elif r["kind"] == "late_probe":
+                self.late_probe_pools.add(r["key"])
             elif r["kind"] == "pool" and r["key"] not in self.pool_class and (first is None or r["seq"] is None
                                                                              or r["seq"] < first):
                 cls, orient, *pool = info
@@ -601,6 +607,10 @@ class LiveFeed(Feed):
             self.stats["late_probes"] += len(late)
             rows.append({"stream": "late_probe", "bytes": 0, "messages": len(late),
                          "note": "backfill past the replay window: " + " ".join(late)})
+            for pool in late:  # §4 option A: the pool in the learned info, once
+                if pool and pool not in self.late_probe_pools:
+                    self.late_probe_pools.add(pool)
+                    self._learn("late_probe", pool, meta.get("first_slot"), {})
         return [dict(r, seq=seq) for r in rows]
 
     def _unknown_pools(self, c, seq):

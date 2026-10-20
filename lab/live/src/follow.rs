@@ -399,6 +399,9 @@ pub struct Follow {
     unknown_mints: HashSet<Option<String>>,
     /// live.py `no_creation_seen`: pools only a pool_creations / pool_accounts row named, counted once (capped).
     no_creation_seen: HashSet<String>,
+    /// live.py `late_probe_pools`: pools whose probe backfill reached past the replay window, each learned once
+    /// ('late_probe' rows; creation-filters spec v0.2 §4 option A).
+    late_probe_pools: HashSet<String>,
     /// Kept and dropped rows per table (legs_read.rs `Counts`; a row dropped as unknown is counted there too).
     pub counts: Counts,
     next_seq: u64,
@@ -470,7 +473,7 @@ impl Follow {
         Ok((Follow {
             root: root.to_owned(), adm, tokens, fixed_h24: h24.filter(|&h| h != 0), ctx: HashMap::new(), ms_window: VecDeque::new(),
             epoch_span: HashMap::new(), per_epoch: BTreeMap::new(), stats: Stats::default(), unknown_pools: HashSet::new(),
-            unknown_mints: HashSet::new(), no_creation_seen: HashSet::new(), counts: Counts::default(), next_seq: 0, heap: BTreeMap::new(), queued: HashSet::new(),
+            unknown_mints: HashSet::new(), no_creation_seen: HashSet::new(), late_probe_pools: HashSet::new(), counts: Counts::default(), next_seq: 0, heap: BTreeMap::new(), queued: HashSet::new(),
             out_keys: HashSet::new(), last_out: None, top: None, tie: 0, done: false, cap: UNKNOWN_CAP, seen_keys: HashMap::new(),
             seen_order: VecDeque::new(), seen_hi: 0, farm_keys: HashMap::new(), backfill_pending: Vec::new(), backfill_counts: Counts::default(),
             pool_slots: snap.pool_slots, seed, farm_seed: None, seeded: HashSet::new(), mem_log: false, farmers: FarmerFlags::default(),
@@ -809,7 +812,7 @@ impl Follow {
     /// live.py `_segment_notes` (creation-filters spec v0.2 M1, M4, S3): the segment's own usage rows after the
     /// recorder's, Python's text: pools named without a creation, the filter without creation detection (new_reversed
     /// false), without probes (tx_probes dropped), and probes whose backfill reached past Triton's replay window.
-    fn segment_notes(&mut self, seq: u64, meta: &Value, no_creation: u64) -> Vec<Value> {
+    fn segment_notes(&mut self, seq: u64, first: u64, meta: &Value, no_creation: u64) -> (Vec<Value>, Vec<Learned>) {
         let mut rows = Vec::new();
         if no_creation > 0 {
             rows.push(json!({"stream": "pools_seen_without_creation", "bytes": 0, "messages": no_creation,
@@ -835,12 +838,19 @@ impl Follow {
             .map(|b| b["pool"].as_str().unwrap_or("").to_owned())
             .collect();
         late.sort();
+        let mut learned = Vec::new();
         if !late.is_empty() {
             self.stats.late_probes += late.len() as u64;
             rows.push(json!({"stream": "late_probe", "bytes": 0, "messages": late.len(),
                              "note": format!("backfill past the replay window: {}", late.join(" ")), "seq": seq}));
+            // §4 option A: the pool in the learned info, once (live.py `_learn("late_probe", pool, first_slot, {})`)
+            for pool in late {
+                if !pool.is_empty() && self.late_probe_pools.insert(pool.clone()) {
+                    learned.push(Learned { kind: "late_probe", key: pool, seq, slot: Some(first), info: "{}".to_owned() });
+                }
+            }
         }
-        rows
+        (rows, learned)
     }
 
     /// One segment (module doc, steps 1-5).
@@ -970,7 +980,9 @@ impl Follow {
             }
             v => bail!("{}/_segment.json: usage {v} is no list", s.dir.display()),
         }
-        out.usage.extend(self.segment_notes(s.seq, &s.meta, no_creation));
+        let (notes, late) = self.segment_notes(s.seq, s.first, &s.meta, no_creation);
+        out.usage.extend(notes);
+        out.learned.extend(late);
         self.stats.segments += 1;
         // bounded memory in a long live run: the prune at the last event's slot, with this segment's h24
         if self.stats.segments % PRUNE_EVERY == 0 {
@@ -2209,7 +2221,8 @@ pub(crate) mod tests {
         // Creation-filters spec v0.2 M1, M4, S3 (live.py `_no_creation`, `_segment_notes`, test_live.py's twins): PQ, only
         // in pool_creations (twice), is not learned and counts once; P1 is the snapshot's (not counted). Segment 0's filter
         // has no creation detection and dropped tx_probes, and one backfill reached past the replay window (PB; PA failed
-        // otherwise): a usage row each, after the recorder's own, in Python's text.
+        // otherwise): a usage row each, after the recorder's own, in Python's text. PB is learned as a late probe once
+        // (§4 option A, live.py `late_probe_pools`): segment 1's second late backfill of it adds a usage row, no learned row.
         let root = tmp("follow-no-creation");
         fs::create_dir_all(root.join("snap")).unwrap();
         export(&root.join("snap"));
@@ -2218,20 +2231,24 @@ pub(crate) mod tests {
                                {"pool": "PA", "status": "failed", "rows": 0, "error": "connect: timed out"}]);
         let d0 = seg(&root, 0, 1000, 1099, json!({"filter": filt, "backfills": backfills, "usage": [{"minute": 7, "stream": "tx_probes", "bytes": 5}]}));
         pool_creations(&d0, &[(1010, "PQ", WSOL, "MQ"), (1020, "P1", WSOL, "MX")]);
-        let d1 = seg(&root, 1, 1100, 1199, json!({}));
+        let d1 = seg(&root, 1, 1100, 1199, json!({"backfills": [{"pool": "PB", "status": "failed", "rows": 0, "error": "not available"}]}));
         pool_creations(&d1, &[(1110, "PQ", WSOL, "MQ")]);
         let mut f = open(&root, Some(500));
-        let usage: Vec<String> = trace(&mut f).into_iter().filter(|l| l.starts_with("usage")).collect();
+        let lines = trace(&mut f);
+        let usage: Vec<&String> = lines.iter().filter(|l| l.starts_with("usage")).collect();
+        let late: Vec<&String> = lines.iter().filter(|l| l.starts_with("learned late_probe")).collect();
+        assert_eq!(late, ["learned late_probe\tPB\t0\t1000\t{}"]);
         assert_eq!(usage, [
             r#"usage {"bytes": 5, "minute": 7, "seq": 0, "stream": "tx_probes"}"#,
             r#"usage {"bytes": 0, "messages": 1, "note": "pools named only by pool_creations / pool_accounts: not learned", "seq": 0, "stream": "pools_seen_without_creation"}"#,
             r#"usage {"bytes": 0, "messages": 1, "note": "segment 0: new reversed pools not detected (dropped: pool_creations, tx_probes, tx_new_reversed)", "seq": 0, "stream": "creation_detection_off"}"#,
             r#"usage {"bytes": 0, "messages": 1, "note": "segment 0: tx_probes dropped by a downscale", "seq": 0, "stream": "probes_off"}"#,
             r#"usage {"bytes": 0, "messages": 1, "note": "backfill past the replay window: PB", "seq": 0, "stream": "late_probe"}"#,
+            r#"usage {"bytes": 0, "messages": 1, "note": "backfill past the replay window: PB", "seq": 1, "stream": "late_probe"}"#,
         ]);
         assert!(!f.adm.known_pool("PQ") && f.adm.known_pool("P1"));
         let st = &f.stats;
-        assert_eq!((st.pools_seen_without_creation, st.creation_detection_off_segments, st.probes_off_segments, st.late_probes), (1, 1, 1, 1));
+        assert_eq!((st.pools_seen_without_creation, st.creation_detection_off_segments, st.probes_off_segments, st.late_probes), (1, 1, 1, 2));
         fs::remove_dir_all(&root).unwrap();
     }
 

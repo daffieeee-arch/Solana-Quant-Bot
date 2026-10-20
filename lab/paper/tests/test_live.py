@@ -188,7 +188,8 @@ def test_the_segment_notes_name_creation_detection_probes_and_late_probes(tmp_pa
                                                                         "message: \"broadcast from 5 is not available, last available: 9\""},
                  {"pool": "PA", "status": "failed", "rows": 0, "error": "connect: timed out"},
                  {"pool": "PC", "status": "complete", "rows": 3}]},
-             {"filter": {"tx_pools": 3, "tx_probes": 9}}]
+             {"filter": {"tx_pools": 3, "tx_probes": 9}},
+             {"backfills": [{"pool": "PB", "status": "failed", "rows": 0, "error": "not available"}]}]
     for seq, extra in enumerate(metas):
         d = tmp_path / "segments" / f"{seq:09d}"
         d.mkdir(parents=True)
@@ -198,10 +199,19 @@ def test_the_segment_notes_name_creation_detection_probes_and_late_probes(tmp_pa
     list(feed.events())
     usage = [(u["stream"], u["messages"] if "messages" in u else None, u["seq"]) for u in feed.drain_usage()]
     assert usage == [("tx_probes", None, 0), ("creation_detection_off", 1, 0), ("probes_off", 1, 0), ("late_probe", 1, 0),
-                     ("tx_probes", None, 1)]
+                     ("tx_probes", None, 1), ("tx_probes", None, 2), ("late_probe", 1, 2)]
     assert {k: feed.stats[k] for k in ("creation_detection_off_segments", "probes_off_segments", "late_probes")} == \
-        {"creation_detection_off_segments": 1, "probes_off_segments": 1, "late_probes": 1}
+        {"creation_detection_off_segments": 1, "probes_off_segments": 1, "late_probes": 2}
+    # §4 option A: the pool in the learned info, once (PB's second late backfill learns nothing new); the engine reads
+    # late_probe_pools for its farm window (engine.py _farm_window_complete, m3_live_cases.late_probe_window)
+    learned = [r for r in feed.drain_learned() if r[0] == "late_probe"]
+    assert learned == [("late_probe", "PB", 0, 100, "{}")] and feed.late_probe_pools == {"PB"}
     feed.close()
+    # a restart knows it from the journal's learned rows
+    again = LiveFeed(str(tmp_path), follow=False, h24=1000, memory="200MB",
+                     learned=[{"kind": k, "key": key, "seq": seq, "slot": slot, "info": info} for k, key, seq, slot, info in learned])
+    assert again.late_probe_pools == {"PB"}
+    again.close()
 
 
 def test_a_token_created_live_keeps_its_creator_and_old_ones_go(tmp_path):

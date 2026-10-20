@@ -58,7 +58,8 @@ SAME = {"pool_learned_mid_run": (False, False, True), "graduation_learned_after_
         "completion_learned_too_late": (True, False, True), "clock_learned_mid_run": (False, False, True),
         "window_rule_live": (True, True, False), "backfill_as_history": (False, True, False),
         "backfill_of_an_unknown_pool": (False, False, False), "flag_fix_reaches_the_farm_label": (False, False, False),
-        "latency_of_a_live_signal": (True, True, False), "a_forgotten_token_gives_its_pool_the_coin_creator": (False, False, True)}
+        "latency_of_a_live_signal": (True, True, False), "a_forgotten_token_gives_its_pool_the_coin_creator": (False, False, True),
+        "late_probe_window": (False, True, False)}
 
 
 @pytest.mark.parametrize("name", list(CASES))
@@ -102,6 +103,8 @@ def test_the_files_format():
                 assert list(x) == ["at_slot", "pool"] and list(x["pool"]) == list(case["pools"][0] if case["pools"] else x["pool"]), name
             elif "forget_token" in x:
                 assert list(x) == ["at_slot", "forget_token"] and x["forget_token"] in {t["mint"] for t in case["tokens"]}, name
+            elif "late_probe" in x:
+                assert list(x) == ["at_slot", "late_probe"] and x["late_probe"] in {p["pool"] for p in case["pools"]}, name
             elif "flag_fix" in x:
                 f = x["flag_fix"]
                 assert list(x) == ["at_slot", "flag_fix"] and list(f) == ["pool", "order", "farmer"], name

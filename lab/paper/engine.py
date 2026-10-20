@@ -41,7 +41,7 @@ from backtest import replay
 from backtest import venues as V
 from backtest.costs import Scenario, settle
 from backtest.replay import _hist_state, _insertion_index
-from backtest.store import load_defaults
+from backtest.store import DAY_MS, load_defaults
 from backtest.strategies import (
     F6_FARM_MS,
     F6_FARM_SHARE,
@@ -799,14 +799,21 @@ class Engine:
     def _farm_window_complete(self, pool, t):
         """1 when the pool's trades over the farm label's hour [t - 1 h, t) are all in the feed: a feed of every
         pool (replay) from an hour before t on; live, a pool seen for an hour, or followed since its creation
-        (a backfill from the creation slot, or first seen within SINCE_CREATION_MS of it); else 0."""
+        (a backfill from the creation slot, or first seen within SINCE_CREATION_MS of it); else 0. A late probe
+        (creation-filters spec v0.2 §4 option A: its backfill reached past Triton's replay window, so its farmer history
+        starts at the probe; LiveFeed's late_probe_pools) without a backfill counts 0 until it was seen for 24 h, the
+        farmer flags' own window."""
         hour = self.clock.slots(F6_FARM_MS, t)
         if getattr(self.feed, "all_pools", False):
             return int(self.first_slot is not None and t - self.first_slot >= hour)
         seen = self.pool_seen.get(pool)
         if seen is None:
             return 0
-        if t - seen >= hour or pool in self.backfilled:
+        if pool in self.backfilled:
+            return 1
+        if pool in getattr(self.feed, "late_probe_pools", ()):
+            return int(t - seen >= self.clock.slots(DAY_MS, t))
+        if t - seen >= hour:
             return 1
         info = self.feed.pool(pool)
         created = getattr(info, "create_slot", None)
