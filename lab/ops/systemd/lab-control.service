@@ -1,0 +1,16 @@
+# lab-control: validates and executes the interactive UI's request files (lab/ops/control/executor.py), writes
+# results and the audit log. Started by lab-control.path; one run handles every queued request, then exits.
+[Unit]
+Description=Solana lab: the interactive UI's request executor
+Documentation=file:%h/Solana-project/worktrees/lab-ui-deploy/lab/ops/control/README.md
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/Solana-project/worktrees/lab-ui-deploy
+Environment=LAB_DATA_ROOT=%h/Solana-project/data-old-faithful-one/lab
+ExecStart=%h/.local/share/solana-quant/toolchains/columnar-query-313-duckdb155/bin/python -I lab/ops/control/executor.py
+MemoryMax=256M
+CPUQuota=50%
+TasksMax=16
+NoNewPrivileges=yes
+TimeoutStartSec=120

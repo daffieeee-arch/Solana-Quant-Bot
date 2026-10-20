@@ -31,8 +31,10 @@ class Api(unittest.TestCase):
         with open(os.path.join(cls.static.name, "index.html"), "w") as f:
             f.write("<!doctype html><title>t</title>")
         cls.port = free_port()
+        cls.control = tempfile.TemporaryDirectory()  # the action layer's control and state: never the real ones here
+        env = dict(os.environ, LAB_CONTROL=os.path.join(cls.control.name, "control"), LAB_UI_STATE=os.path.join(cls.control.name, "state"))
         cls.proc = subprocess.Popen([sys.executable, SERVER, "--port", str(cls.port), "--static", cls.static.name],
-                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
         for _ in range(50):
             try:
                 socket.create_connection(("127.0.0.1", cls.port), timeout=0.2).close()
@@ -45,6 +47,7 @@ class Api(unittest.TestCase):
         cls.proc.terminate()
         cls.proc.wait(5)
         cls.static.cleanup()
+        cls.control.cleanup()
 
     def req(self, path, method="GET"):
         r = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", method=method)
@@ -53,6 +56,32 @@ class Api(unittest.TestCase):
                 return resp.status, dict(resp.headers), resp.read()
         except urllib.error.HTTPError as e:
             return e.code, dict(e.headers), e.read()
+
+    def post(self, path, body=b"{}", headers=None):
+        r = urllib.request.Request(f"http://127.0.0.1:{self.port}{path}", data=body, method="POST", headers=headers or {})
+        try:
+            with urllib.request.urlopen(r, timeout=30) as resp:
+                return resp.status, dict(resp.headers), resp.read()
+        except urllib.error.HTTPError as e:
+            return e.code, dict(e.headers), e.read()
+
+    def test_actions_are_closed_without_pairing_and_csrf(self):
+        """B0: the read-only API is unchanged; every other POST is 405; an action POST needs JSON, X-Lab-Action, the
+        served Origin and Host, a tailnet node and a session (from 127.0.0.1 there is no node: refused)."""
+        origin = f"http://127.0.0.1:{self.port}"
+        good = {"Content-Type": "application/json", "X-Lab-Action": "1", "Origin": origin}
+        self.assertEqual(self.post("/api/paper")[0], 405)
+        self.assertEqual(self.post("/api/action/other", headers=good)[0], 405)
+        self.assertEqual(self.post("/api/action/prepare", b"a=1", dict(good, **{"Content-Type": "application/x-www-form-urlencoded"}))[0], 415)
+        self.assertEqual(self.post("/api/action/prepare", headers={k: v for k, v in good.items() if k != "X-Lab-Action"})[0], 403)
+        self.assertEqual(self.post("/api/action/prepare", headers=dict(good, Origin="http://evil.example"))[0], 403)
+        status, headers, _ = self.post("/api/action/pair", b'{"code": "X"}', good)
+        self.assertIn(status, (403, 503))  # no tailnet node behind 127.0.0.1 (or no tailscaled): closed either way
+        self.assertNotIn("Set-Cookie", headers)
+        self.assertIn(self.req("/api/action/session")[0], (401, 403, 503))
+        self.assertIn(self.req("/api/action/log")[0], (401, 403, 503))
+        with open(os.path.join(self.control.name, "control", "audit", os.listdir(os.path.join(self.control.name, "control", "audit"))[0])) as f:
+            self.assertIn('"event": "refused"', f.read())
 
     def get(self, path):
         status, _, body = self.req(path)
