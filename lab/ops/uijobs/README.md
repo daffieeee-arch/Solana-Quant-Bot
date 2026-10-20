@@ -12,7 +12,7 @@ The UI's strategy chooser asks for a backtest. The VPS sends **parameters only**
 | `ui_queue.py` | NAS host, as the SSH forced command | `sums` (the pinned templates' sha256, read-only), `put` (a job on stdin → `queue/ui-<id>.json`), `status <id>`, `get <id>` (`result.json`). Nothing else. |
 | `nas_runner.py` | NAS, a service of the app (≤ 3 CPU / 8 GB) | One job at a time, held while `ui-hold` exists. It runs a template only if the job's `template_sha256` is the one in `SHA256SUMS` and the file still hashes to it. The job's values reach the template as environment only. |
 | `templates/backtest-f7.sh` | NAS, via the runner | The tournament for the chosen variant and K3 (`tp4_T600`) on the job's store and epochs, then `result.py`. |
-| `result.py` | NAS (lab venv) | The base-scenario result: net P&L per trade and Σ per day, each with the 10,000-draw day bootstrap of `paper/stoprule.py`, for the variant and for K3. |
+| `result.py` | NAS (lab venv) | The result **as the canonical tournament report computes it**: `backtest.report.summarize` itself on the run's parts (base costs, the report's day-clustered bootstrap), one row per variant, d and regime, for the variant and for K3. |
 
 ## Install (the coordinator, after review)
 
@@ -82,9 +82,4 @@ The UI's strategy chooser asks for a backtest. The VPS sends **parameters only**
 - that the forced command writes only queue files and reads only results;
 - the runner: it is held by `ui-hold`, refuses a sha that is not pinned or a changed template, and passes no other environment (a secret in its own environment does not reach the template).
 
-`result.py` was smoke-tested on `backtests/long-dev-1033-1046-fc4173c`:
-
-| Variant | Net per trade | 95% interval | Run time |
-|---|---|---|---|
-| flow300_H6, organic | +0.051 SOL | [0.026, 0.078] | 1.6 s |
-| K3 (tp4_T600) | +0.0058 SOL | [0.0034, 0.0076] | — |
+`result.py` reproduces the report exactly: `test_result_rows_are_the_tournament_reports` compares every K3 and flow300_H6 row of `long-dev-1033-1046-fc4173c/summary.parquet` (farm all and organic) with its output.
