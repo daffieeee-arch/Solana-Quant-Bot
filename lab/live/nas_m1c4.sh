@@ -57,7 +57,8 @@
 #   STEP=engine-only (the lab Python 3.13 runner, its 24G; M3-04): paper.shadow --engine-only on fwd1053-1054 with job
 #                91's flags, through a root of only that store's 4 chunks ($DATA/events/v1/chunks-fwd1053-1054, long_root
 #                with arguments): recorder A's segments and recorder B's (b2's engine-only filter), B's rows checked within
-#                A's, both volumes in GB/day and the transactions per stream into job.log. ~13 h; EO_HOURS (default 20).
+#                A's, both volumes in GB/day and the transactions per stream into job.log. The whole store: > 20 h (~23.6 s
+#                a segment); EO_TO=<slot> ends the window there (from the store's start), EO_HOURS (default 20).
 #   STEP=m2      (the lab Python 3.13 runner; C4-3, M2 in replay): on fwd1053-1054 [LO, HI) the legs parity (the whole
 #                store), then the signals parity and RC4 (lab-live paper against paper.engine, the paper start's files,
 #                config mode) side by side, each with its GREEN measure line in job.log.
@@ -71,7 +72,8 @@
 #   STEP=long-b LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                      (lab runner, 24G; short: ~15-30 min, heap ~7 GB)
 #   STEP=long-shadow LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                 (lab runner, 24G; long: 36-43 h)
 #   STEP=long-a LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                      (lab runner; short: after long-shadow)
-#   STEP=engine-only LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                 (lab runner, 24G; long: ~13 h)
+#   STEP=engine-only LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh                 (lab runner, 24G; long: > 20 h)
+#   STEP=engine-only EO_TO=455328000 LAB_PY=/lab/venv/bin/python bash lab/live/nas_m1c4.sh (epoch 1053 only: ~10 h)
 #
 # Every step writes to $DATA/backtests/live-m1c4-<commit7>/.
 set -euo pipefail
@@ -275,8 +277,9 @@ if [ "$STEP" = engine-only ]; then
   # M3-04 (research/m3-design-2026-10-19.md): paper.shadow --engine-only on fwd1053-1054 with job 91's flags (the whole
   # store, --seed 1053, K3 0.04:600 and the H arms, --memory 1GB), its chunks through a root of only that store's 4 chunks
   # (long_root, checked against the store's chunk_list): recorder A's segments as job 91's, recorder B's (b2's
-  # engine-only filter) beside them, B's rows checked within A's and both volumes. Expect ~13 h; EO_HOURS (default 20)
-  # ends it before the next job. The measure lines go to job.log. LAB_DUCKDB_TMP: the B-within-A check's EXCEPT ALL over
+  # engine-only filter) beside them, B's rows checked within A's and both volumes. The whole store took more than 20 h
+  # (99zzm2: ~23.6 s a segment, 3,145 segments); EO_TO (an end slot, exclusive) bounds the window from the store's own
+  # start, so the warm-up and the seed stay the whole run's; EO_HOURS (default 20) ends it before the next job. The measure lines go to job.log. LAB_DUCKDB_TMP: the B-within-A check's EXCEPT ALL over
   # all of A's rows (--memory 1GB) spills into EO_SPILL, not the checkout.
   EO_ROOT=${EO_ROOT:-$DATA/events/v1/chunks-fwd1053-1054}
   EO_OUT=${EO_OUT:-$OUT/engine-only}
@@ -284,11 +287,11 @@ if [ "$STEP" = engine-only ]; then
   long_root $LO $HI 4 "$EO_ROOT" "$OUT/eo/snap/meta.json"
   [ ! -e "$EO_OUT" ] || { log "engine-only: $EO_OUT exists (left as it is): move it away first"; exit 1; }
   mkdir -p "${EO_SPILL:=/lab/tmp/shadow-b}"
-  log "engine-only: paper.shadow --engine-only into $EO_OUT (fwd1053-1054, the whole store), at most ${EO_HOURS:-20} h"
+  log "engine-only: paper.shadow --engine-only into $EO_OUT (fwd1053-1054, slots [$LO, ${EO_TO:-$HI})), at most ${EO_HOURS:-20} h"
   rc=0
   LAB_ENGINE_COMMIT=$COMMIT LAB_SPILL_DIR=$EO_SPILL LAB_SPILL_MAX=16GB LAB_DUCKDB_TMP=$EO_SPILL nice -n 10 timeout "${EO_HOURS:-20}h" "$PY" -m paper.shadow \
     --store "$STORE" --chunks "$EO_ROOT" --out "$EO_OUT" --memory 1GB --seed 1053 --variants 0.04:600 \
-    --groups "$REPO/lab/paper/h-arms-2026-10-16.yaml" --engine-only > "$OUT/engine-only.log" 2>&1 || rc=$?
+    --groups "$REPO/lab/paper/h-arms-2026-10-16.yaml" --engine-only ${EO_TO:+--to "$EO_TO"} > "$OUT/engine-only.log" 2>&1 || rc=$?
   tail -5 "$OUT/engine-only.log" | tee -a "$OUT/job.log"
   sum=0
   "$PY" - "$EO_OUT/compare.json" > "$OUT/engine-only-summary.log" 2>&1 <<'EOF' || sum=$?
