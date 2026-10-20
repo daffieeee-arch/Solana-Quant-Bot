@@ -19,7 +19,10 @@ key-hash bucket of the pool (LAB_MARKOUT_BUCKETS-style, `--buckets`), the union 
 result; one bucket on the VPS smoke, 8-16 on the NAS. Slots stay before the hold-out (common.guard).
 
 The NAS script skips the aggregate when pool_hour.parquet exists (resumable), so a run on a new commit needs a fresh
-REVIVAL_DIR. Steps 2 and 3 (`detect`: sleeping pools and revivals on the aggregate; markout on the signals) come after this job.
+REVIVAL_DIR. Step 2, `detect` (VPS, on the aggregate): the sleeping pools and the revival signals of the 18 cells, as a parts-like
+signals.parquet for `wallets.markout` (step 3, a NAS job when the signals are many).
+
+  python -m wallets.revival detect --agg <aggregate dir> --out <dir> [--first-day 2026-09-21] [--last-day D]
 """
 import argparse
 import json
@@ -136,17 +139,109 @@ def aggregate(out_dir, lo=None, hi=None, buckets=1, store=None):
     return info
 
 
+# --- step 2: sleeping pools and revivals on the aggregate (VPS) -------------------------------------------------
+
+SLEEP_S = (1, 5)         # SOL per traded hour: the 7-day median at or below S (spec §2)
+SLEEP_QUIET = 0.8        # share of the 168 hours without a trade, at least
+REVIVE_T = (5, 10, 20)   # unique traders in the revival hour, at least
+REVIVE_P90_X = 10        # hour volume at least 10 x the 7-day p90 (and at least D)
+WEEK_S = 7 * 86400
+AGE_DAYS = 10
+FIRST_DAY = "2026-09-21"  # pools from before the window are >= 10 days old by construction from day 10 (spec: age note)
+MS_PER_SLOT = 267.3       # REF_MS: the 10-day age of an in-window pool in slots (approximation; the store's regimes are 266-317 ms)
+
+
+def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None):
+    """Signals of the 18 cells (S x D x T) from pool_hour.parquet: per pool and hour the trailing 7-day stats over the hours
+    before it (median and p90 of the SOL volume over the traded hours, the number of traded hours); sleeping = median <= S
+    (no traded hour counts as sleeping too) and >= 80 % of the 168 hours without a trade; a revival hour = sleeping before it,
+    volume >= max(D, 10 x p90), >= T unique traders, and the D threshold reached in the hour; signal slot t = the first slot at
+    which the hour's cumulative volume reached D (point in time; traders up to that leg are reported as traders_at_t: the spec's
+    shift of t to the first slot with >= T traders needs the legs and is left to the markout step's caller). Age: a pool from
+    before the window from FIRST_DAY on, an in-window pool from create_slot + 10 days; no mayhem pools. One signal per pool,
+    day and cell (the earliest hour). Writes signals.parquet in the parts' column layout (family REV, variant = the cell,
+    venue pool, segment by orientation, farm organic / flagged by the hour's farmer share >= 0.5) plus run-detect.json."""
+    con = connect(store or STORE, memory=os.environ.get("LAB_WALLETS_MEMORY", "1GB"), threads=int(os.environ.get("LAB_WALLETS_THREADS", "2")))
+    os.makedirs(out_dir, exist_ok=True)
+    ph, po = os.path.join(agg_dir, "pool_hour.parquet"), os.path.join(agg_dir, "pools.parquet")
+    # the aggregate's pools.parquet has no mint; the signals carry it for markout (the store's pools table, read-only)
+    con.execute("CREATE OR REPLACE TEMP TABLE pm AS SELECT pool, mint FROM pools")
+    hour_min = con.execute(f"SELECT min(hour) FROM read_parquet('{ph}')").fetchone()[0]
+    age_slots = int(round(AGE_DAYS * 86400 * 1000 / MS_PER_SLOT))
+    progress("start", note=f"aggregate {agg_dir}, first day {first_day}, history from {hour_min}")
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE roll AS
+      SELECT h.*, p.orientation, pm.mint, p.created_in_period, p.create_slot, p.mayhem,
+             CAST(DATE '1970-01-01' + CAST(h.hour // 86400 AS INTEGER) AS VARCHAR) AS day,
+             count(*) OVER w AS hours_traded_7d, quantile_cont(h.sol_volume, 0.5) OVER w AS med_7d, quantile_cont(h.sol_volume, 0.9) OVER w AS p90_7d
+      FROM read_parquet('{ph}') h JOIN read_parquet('{po}') p USING (pool) LEFT JOIN pm USING (pool)
+      WHERE NOT p.mayhem
+      WINDOW w AS (PARTITION BY h.pool ORDER BY h.hour RANGE BETWEEN {WEEK_S} PRECEDING AND 1 PRECEDING)""")
+    progress("rolling 7-day stats", _count(con, "roll"))
+    cells = [(S, D, T) for S in SLEEP_S for D in THRESHOLDS for T in REVIVE_T]
+    sel = []
+    for S, D, T in cells:
+        sel.append(f"""
+          SELECT 'S{S}_D{D}_T{T}' AS variant, {S} AS s_sol, {D} AS d_sol, {T} AS t_min, pool, mint, orientation, day, hour, t{D}_slot AS t, t{D}_tx AS t_tx,
+                 t{D}_traders AS traders_at_t, t{D}_depth AS depth_at_t, sol_volume, traders, buyers, net_inflow, trades,
+                 farmer_trades::DOUBLE / trades AS farmer_share, med_7d, p90_7d, hours_traded_7d, end_depth
+          FROM roll
+          WHERE hour >= {hour_min} + {WEEK_S}
+            AND (hours_traded_7d = 0 OR med_7d <= {S * SOL})
+            AND (168 - hours_traded_7d) >= {SLEEP_QUIET} * 168
+            AND sol_volume >= GREATEST({D * SOL}, {REVIVE_P90_X} * COALESCE(p90_7d, 0))
+            AND traders >= {T} AND t{D}_slot IS NOT NULL
+            AND ((NOT created_in_period AND day >= '{first_day}') OR (create_slot IS NOT NULL AND t{D}_slot >= create_slot + {age_slots}))
+            {f"AND day <= '{last_day}'" if last_day else ""}""")
+    con.execute(f"""
+      CREATE OR REPLACE TEMP TABLE sig AS
+      SELECT * EXCLUDE (rn) FROM (SELECT *, row_number() OVER (PARTITION BY variant, pool, day ORDER BY hour) AS rn FROM ({' UNION ALL '.join(sel)})) WHERE rn = 1""")
+    n = _count(con, "sig")
+    progress("signals", n, f"{len(cells)} cells")
+    out = os.path.join(out_dir, "signals.parquet")
+    con.execute(f"""
+      COPY (SELECT 'REV' AS family, variant, mint, t, 'pool' AS venue, pool, orientation,
+                   CASE WHEN orientation = 'reversed' THEN 'pool_reversed' ELSE 'pool_normal' END AS segment,
+                   CASE WHEN farmer_share >= 0.5 THEN 'flagged' ELSE 'organic' END AS farm, day, 0.5 AS size_sol,
+                   NULL::VARCHAR AS ref_mint, NULL::BIGINT AS ref_t, NULL::VARCHAR AS trigger_trader,
+                   s_sol, d_sol, t_min, hour, t_tx, traders_at_t, depth_at_t, sol_volume, traders, buyers, net_inflow, trades, farmer_share,
+                   med_7d, p90_7d, hours_traded_7d, end_depth
+            FROM sig ORDER BY variant, pool, t) TO '{out}' (FORMAT parquet, COMPRESSION zstd)""")
+    per_cell = {r[0]: {"signals": r[1], "pools": r[2], "days": r[3], "reversed": r[4], "traders_at_t_ge_T": r[5]}
+                for r in con.execute("SELECT variant, count(*), count(DISTINCT pool), count(DISTINCT day), sum((orientation = 'reversed')::INT), "
+                                     "sum((traders_at_t >= t_min)::INT) FROM sig GROUP BY 1 ORDER BY 1").fetchall()}
+    sleeping = {str(S): dict(con.execute(f"""SELECT day, count(DISTINCT pool) FROM roll WHERE hour >= {hour_min} + {WEEK_S} AND (hours_traded_7d = 0 OR med_7d <= {S * SOL})
+                                            AND (168 - hours_traded_7d) >= {SLEEP_QUIET} * 168 AND day >= '{first_day}' GROUP BY 1 ORDER BY 1""").fetchall()) for S in SLEEP_S}
+    info = {"step": "detect", "aggregate": agg_dir, "store": store or STORE, "first_day": first_day, "last_day": last_day, "history_from_hour": hour_min,
+            "cells": len(cells), "sleep_s_sol": list(SLEEP_S), "thresholds_sol": list(THRESHOLDS), "revive_t": list(REVIVE_T),
+            "revive_p90_x": REVIVE_P90_X, "sleep_quiet_share": SLEEP_QUIET, "age_days": AGE_DAYS, "age_slots_in_window": age_slots,
+            "signals": n, "per_cell": per_cell, "sleeping_pools_per_day_with_trades": sleeping,
+            "commit": git_commit(), "seconds": round(sum(PHASES.values()), 1), "phases_seconds": PHASES}
+    with open(os.path.join(out_dir, "run-detect.json"), "w") as f:
+        json.dump(info, f, indent=1)
+    progress("written", n, out)
+    con.close()
+    return info
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("step", choices=["aggregate"])
+    ap.add_argument("step", choices=["aggregate", "detect"])
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "revival-v1"))
     ap.add_argument("--from-slot", type=int)
     ap.add_argument("--to-slot", type=int)
     ap.add_argument("--buckets", type=int, default=int(os.environ.get("LAB_MARKOUT_BUCKETS", "1")))
     ap.add_argument("--store")
+    ap.add_argument("--agg", help="detect: the aggregate directory (default --out)")
+    ap.add_argument("--first-day", default=FIRST_DAY)
+    ap.add_argument("--last-day")
     a = ap.parse_args()
     if a.buckets < 1:
         raise SystemExit("--buckets must be >= 1")
+    if a.step == "detect":
+        info = detect(a.agg or a.out, a.out, a.first_day, a.last_day, a.store)
+        print(json.dumps({k: info[k] for k in ("signals", "cells", "seconds")}))
+        return
     info = aggregate(a.out, a.from_slot, a.to_slot, a.buckets, a.store)
     print(json.dumps({k: info[k] for k in ("rows", "pools_with_trades", "trades", "sol_volume", "hours_reaching", "seconds")}))
 
