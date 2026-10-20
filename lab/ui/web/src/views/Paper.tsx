@@ -225,14 +225,15 @@ function PositionRow({ p, lastSlot }: { p: PaperPosition; lastSlot: number | nul
   return (
     <div className="flex items-center gap-3 p-3 rounded-[14px] bg-surface border border-line min-w-0">
       <span className="w-9 h-9 rounded-full inline-flex items-center justify-center text-xs font-extrabold text-on-accent shrink-0" style={{ background: avatar(p.key) }} aria-hidden="true">
-        {(sym || p.key).slice(0, 2).toUpperCase()}
+        {(sym || p.mint || p.key).slice(0, 2).toUpperCase()}
       </span>
       <div className="flex flex-col gap-0.5 grow min-w-0">
         <div className="flex flex-wrap gap-x-1.5 gap-y-0.5 items-center min-w-0">
-          <span className="font-bold text-sm truncate max-w-full" title={name || p.key}>{sym || shortAddr(p.key)}</span>
+          <span className="font-bold text-sm truncate max-w-full" title={p.mint ?? p.key}>{sym || shortAddr(p.mint ?? p.key)}</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded-md bg-surface-2 text-fg-2 font-bold">{kind}</span>
           {p.farm && p.farm !== "n/a" && <span className={cn("text-[10px] px-1.5 py-0.5 rounded-md font-bold", p.farm === "organic" ? "bg-buy-soft text-buy" : "bg-warn-soft text-warn")}>{p.farm === "organic" ? "organisch" : "farming"}</span>}
         </div>
+        {name && <span className="text-[11px] text-fg-2 truncate -mt-0.5" title={p.mint ?? p.key}>{name}</span>}
         <span className="text-[11px] text-muted truncate">
           <span className="num">{p.cost_sol == null ? "–" : p.cost_sol.toLocaleString("nl-NL", { minimumFractionDigits: 2 })} SOL{slots != null ? ` · ${n0(slots)} slots` : ""} · {p.variant.split("_")[0]}</span>
           {" · "}<DexLink mint={p.mint ?? p.key}>Dex ↗</DexLink>
@@ -274,14 +275,14 @@ function PositionsTable({ rows, sel, onSel }: { rows: PaperPosition[]; sel: stri
         </thead>
         <tbody>
           {rows.map((p) => {
-            const ret = retOf(p), sym = label(p.symbol, 16) || shortAddr(p.key), on = sel === p.key;
+            const ret = retOf(p), sym = label(p.symbol, 16) || shortAddr(p.mint ?? p.key), name = label(p.name, 32), on = sel === p.key;
             return (
               <tr key={`${p.family}|${p.key}|${p.entry_slot}`} onClick={() => onSel(p.key)} aria-selected={on}
                 className={cn("border-b border-[#161D2A] cursor-pointer hover:bg-surface-2/50", on && "bg-accent-soft")}>
                 <td className="px-2 py-2.5">
                   <span className="inline-flex items-center gap-2.5">
-                    <span className="w-[26px] h-[26px] rounded-full inline-flex items-center justify-center text-[10px] font-extrabold text-on-accent" style={{ background: avatar(p.key) }} aria-hidden="true">{(sym || p.key).slice(0, 2).toUpperCase()}</span>
-                    <span className="font-bold" title={label(p.name, 40) || p.key}>{sym}</span>
+                    <span className="w-[26px] h-[26px] rounded-full inline-flex items-center justify-center text-[10px] font-extrabold text-on-accent" style={{ background: avatar(p.key) }} aria-hidden="true">{(sym || p.mint || p.key).slice(0, 2).toUpperCase()}</span>
+                    <span className="flex flex-col min-w-0" title={p.mint ?? p.key}><span className="font-bold">{sym}</span>{name && <span className="text-[11px] text-muted truncate max-w-[180px]">{name}</span>}</span>
                   </span>
                 </td>
                 <td className="px-2 py-2.5 text-fg-2">{p.family} {p.variant}</td>

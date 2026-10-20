@@ -54,7 +54,8 @@ export default function PaperChart({ k, height = 320, compact = false }: { k: st
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex flex-col gap-0.5 min-w-0">
             <div className="flex gap-2 items-center flex-wrap">
-              <span className="font-extrabold text-lg" title={label(d.name, 40) || undefined}>{sym} / SOL</span>
+              <span className="font-extrabold text-lg" title={d.mint ?? d.key}>{sym} / SOL</span>
+              {label(d.name, 40) && <span className="text-sm text-fg-2 truncate max-w-[220px]" title={d.mint ?? d.key}>{label(d.name, 40)}</span>}
               <span className="text-[11px] px-[7px] py-[3px] rounded-md bg-surface-2 text-fg-2 font-bold">{kind}</span>
               <DexLink mint={d.mint ?? d.key}>Dex ↗</DexLink>
               <SolscanLink mint={d.mint ?? d.key} />
