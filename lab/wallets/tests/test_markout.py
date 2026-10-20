@@ -29,14 +29,15 @@ def _cfg(tmp_path):
     return str(p)
 
 
-def _store(path):
+def _store(path, shift=0):
+    """shift: every slot moved by this many slots (a whole number of epochs for the clean-lock test past the hold-out)."""
     con = duckdb.connect(str(path))
     con.execute("CREATE TABLE meta (json VARCHAR)")
-    con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"slot_start": SLOT0, "slot_end_exclusive": SLOT0 + 432_000,
-                                                            "ms_per_slot": {str(SLOT0 // 432_000): 400.0}})])
+    con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"slot_start": SLOT0 + shift, "slot_end_exclusive": SLOT0 + shift + 432_000,
+                                                            "ms_per_slot": {str((SLOT0 + shift) // 432_000): 400.0}})])
     con.execute("CREATE TABLE pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR, mint VARCHAR, create_slot BIGINT)")
     con.execute("INSERT INTO pools VALUES ('P', 'sol', 'normal', 'MP', ?), ('R', 'reversed', 'reversed', 'MR', ?), ('PC', 'sol', 'normal', 'C', ?)",
-                [A - 500, B - 500, D + 120])
+                [A - 500 + shift, B - 500 + shift, D + 120 + shift])
     con.execute("CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, b BIGINT, e BIGINT, "
                 "vault BIGINT, vq BIGINT, base BIGINT, e_delta BIGINT, quote_user BIGINT, lp_bps BIGINT, protocol_bps BIGINT, creator_bps BIGINT, cashback_bps BIGINT, trader VARCHAR, "
                 "token_buy BOOLEAN, sol_amount BIGINT, sol_depth BIGINT)")
@@ -55,19 +56,20 @@ def _store(path):
         # migration pool PC of curve token C, first leg at D + 120 (pre b 2e14, e 85 SOL): post b 1.9e14, e 90
         ("buy", "PC", D + 120, 1, 0, 0, 2 * 10**14, 85 * SOL, 85 * SOL, 0, 10**13, 5 * SOL, 5 * SOL, 20, 5, 0, 0),
     ]
+    rows = [r[:2] + (r[2] + shift,) + r[3:] for r in rows]
     con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)", rows)
     con.execute("CREATE TABLE curve (mint VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, vt BIGINT, vq BIGINT, rt BIGINT, rq BIGINT, "
                 "fee_bps BIGINT, creator_bps BIGINT)")
-    con.executemany("INSERT INTO curve VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?, 95, 30)", [
+    con.executemany("INSERT INTO curve VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?, 95, 30)", [(r[0], r[1] + shift) + r[2:] for r in [
         ("C", D, 3, 10**15, 31 * SOL, 79 * 10**13, 1 * SOL),          # post-trade state
         ("C", D + 4, 1, 98 * 10**13, 316 * SOL // 10, 77 * 10**13, 2 * SOL),
         ("C", D + 100, 1, 21 * 10**13, 150 * SOL, 0, 85 * SOL),        # the curve completes (rt = 0)
         ("E", D, 1, 10**15, 31 * SOL, 79 * 10**13, 1 * SOL),
-        ("E", D + 10, 1, 21 * 10**13, 150 * SOL, 0, 85 * SOL)])        # completes too, but never gets a pool
+        ("E", D + 10, 1, 21 * 10**13, 150 * SOL, 0, 85 * SOL)]])        # completes too, but never gets a pool
     con.close()
 
 
-def _parts(path):
+def _parts(path, shift=0):
     rows = [{"family": "F7", "variant": v, "segment": "pool_normal", "venue": "pool", "orientation": "normal", "mint": "MP", "pool": "P",
              "t": A, "day": "2026-09-11", "farm": "organic", "ref_mint": None, "ref_t": None} for v in ("tp4_T600", "tp6_T600")]
     rows.append({"family": "F7", "variant": "tp4_T600", "segment": "pool_reversed", "venue": "pool", "orientation": "reversed", "mint": "MR",
@@ -78,6 +80,10 @@ def _parts(path):
                  "t": D, "day": "2026-09-11", "farm": "n/a", "ref_mint": None, "ref_t": None})
     rows.append({"family": "N2_F7", "variant": "tp4_T600", "segment": "pool_normal", "venue": "pool", "orientation": "normal", "mint": "MP",
                  "pool": "P", "t": A + 2, "day": "2026-09-11", "farm": "n/a", "ref_mint": "MR", "ref_t": B})
+    for r in rows:
+        r["t"] += shift
+        if r["ref_t"] is not None:
+            r["ref_t"] += shift
     os.makedirs(path)
     pq.write_table(pa.Table.from_pylist(rows), os.path.join(path, "part-0.parquet"))
 
@@ -155,6 +161,103 @@ def test_buckets_do_not_change_the_markouts(tmp_path, monkeypatch, capfd):
 def test_guard_refuses_the_holdout(tmp_path):
     with pytest.raises(ValueError):
         markout.guard(markout.__dict__["guard"].__globals__["HOLDOUT_START"] + 1)
+
+
+CLEAN_SHIFT = 455_760_000 - SLOT0  # 22 epochs: the mini store then starts at the clean window's first slot, past the hold-out
+
+
+def _clean_run(tmp_path):
+    """E20's shape: <run>/parts, <run>/config.json, <run>/engine (the snapshot: this engine's backtest/ + COMMIT), the store next
+    to its clean.lock (the keys backtest.clean_test writes)."""
+    run = tmp_path / "clean-run"
+    _parts(run / "parts", CLEAN_SHIFT)
+    (run / "config.json").write_text('{"engine_commit": "abc1234def", "delay_ms": 600}')
+    (run / "engine").mkdir()
+    os.symlink(os.path.join(ENGINE, "backtest"), run / "engine" / "backtest")
+    (run / "engine" / "COMMIT").write_text("abc1234def0000\n")
+    (tmp_path / "store").mkdir()
+    store = tmp_path / "store" / "clean.duckdb"
+    _store(store, CLEAN_SHIFT)
+    lock = tmp_path / "store" / "clean.lock"
+    lock.write_text(json.dumps({"store": str(store), "store_sha256": markout._sha256(str(store)), "test_run": str(run),
+                                "test_config_sha256": markout._sha256(str(run / "config.json")), "engine_commit": "abc1234def",
+                                "trading_days": 7, "matrix_run": str(run) + "-matrix", "locked_at_unix": 1}))
+    return run, store, lock
+
+
+def test_clean_lock_admits_only_the_locked_run(tmp_path, monkeypatch):
+    run, store, lock = _clean_run(tmp_path)
+    cfg = _cfg(tmp_path)
+    parts, out = str(run / "parts"), str(tmp_path / "out")
+    # past the hold-out without the lock: the guard refuses, with or without a window
+    with pytest.raises(ValueError, match="hold-out"):
+        markout.run(parts, "c", out, store=str(store), cfg_path=cfg)
+    with pytest.raises(ValueError, match="hold-out"):
+        markout.run(parts, "c", out, lo=SLOT0 + CLEAN_SHIFT, hi=SLOT0 + CLEAN_SHIFT + 5000, store=str(store), cfg_path=cfg)
+    # the locked run: admitted; the store and the engine snapshot come from the lock
+    monkeypatch.delenv("LAB_ENGINE", raising=False)
+    info = markout.run(parts, "c", out, cfg_path=cfg, clean=str(lock))
+    assert info["rows"] > 0 and info["signals"] == 5 and info["store"] == str(store)
+    assert info["clean_lock"]["engine_commit"] == "abc1234def" and os.environ["LAB_ENGINE"] == str(run / "engine")
+    assert os.path.exists(os.path.join(out, "markout-c.parquet"))
+    # and a run on the same signals from before the hold-out gives the same markouts (the shift changes nothing)
+    _store(tmp_path / "dev.duckdb")
+    _parts(tmp_path / "dev-parts")
+    monkeypatch.setenv("LAB_ENGINE", ENGINE)
+    markout.run(str(tmp_path / "dev-parts"), "dev", out, store=str(tmp_path / "dev.duckdb"), cfg_path=cfg)
+    con = duckdb.connect()
+    same, n = con.execute(f"""SELECT count(*) FILTER (WHERE (a.gross, a.net, a.cut) IS NOT DISTINCT FROM (b.gross, b.net, b.cut)), count(*)
+        FROM read_parquet('{out}/markout-c.parquet') a JOIN read_parquet('{out}/markout-dev.parquet') b
+        ON a.family = b.family AND a.mint = b.mint AND a.t = b.t + {CLEAN_SHIFT} AND a.d = b.d AND a.h = b.h""").fetchone()
+    assert n == info["rows"] and same == n
+
+
+def test_clean_lock_refuses_anything_else(tmp_path, monkeypatch):
+    run, store, lock = _clean_run(tmp_path)
+    cfg = _cfg(tmp_path)
+    parts, out = str(run / "parts"), str(tmp_path / "out")
+    monkeypatch.delenv("LAB_ENGINE", raising=False)
+    held = json.loads(lock.read_text())
+
+    def relock(**changes):
+        p = tmp_path / "other.lock"
+        p.write_text(json.dumps(held | changes))
+        return str(p)
+
+    # a sub-window, other parts (a copy of the same rows elsewhere), another LAB_ENGINE
+    with pytest.raises(ValueError, match="from-slot"):
+        markout.run(parts, "c", out, lo=SLOT0 + CLEAN_SHIFT, cfg_path=cfg, clean=str(lock))
+    _parts(tmp_path / "copy-parts", CLEAN_SHIFT)
+    with pytest.raises(ValueError, match="admits only"):
+        markout.run(str(tmp_path / "copy-parts"), "c", out, cfg_path=cfg, clean=str(lock))
+    monkeypatch.setenv("LAB_ENGINE", ENGINE)
+    with pytest.raises(ValueError, match="LAB_ENGINE"):
+        markout.run(parts, "c", out, cfg_path=cfg, clean=str(lock))
+    monkeypatch.delenv("LAB_ENGINE")
+    # a lock that names another store, another store sha, another config sha, another engine commit, no trading days, a missing key
+    with pytest.raises(ValueError, match="no store"):
+        markout.run(parts, "c", out, cfg_path=cfg, clean=relock(store=str(tmp_path / "nope.duckdb")))
+    with pytest.raises(ValueError, match="sha256"):
+        markout.run(parts, "c", out, cfg_path=cfg, clean=relock(store_sha256="0" * 64))
+    with pytest.raises(ValueError, match="config.json"):
+        markout.run(parts, "c", out, cfg_path=cfg, clean=relock(test_config_sha256="0" * 64))
+    with pytest.raises(ValueError, match="engine snapshot"):
+        markout.run(parts, "c", out, cfg_path=cfg, clean=relock(engine_commit="fffffff"))
+    with pytest.raises(ValueError, match="trading days"):
+        markout.run(parts, "c", out, cfg_path=cfg, clean=relock(trading_days=0))
+    with pytest.raises(ValueError, match="lacks"):
+        markout.run(parts, "c", out, cfg_path=cfg, clean=relock_missing(tmp_path, held))
+    # a tampered config.json or store after the lock
+    (run / "config.json").write_text('{"engine_commit": "abc1234def", "delay_ms": 601}')
+    with pytest.raises(ValueError, match="config.json"):
+        markout.run(parts, "c", out, cfg_path=cfg, clean=str(lock))
+    assert not os.path.exists(os.path.join(out, "markout-c.parquet"))
+
+
+def relock_missing(tmp_path, held):
+    p = tmp_path / "missing.lock"
+    p.write_text(json.dumps({k: v for k, v in held.items() if k != "store_sha256"}))
+    return str(p)
 
 
 if __name__ == "__main__":
@@ -245,3 +348,20 @@ def test_tx_level_entries(tmp_path):
     h1 = {r["d"]: r["target"] for r in R if r["h"] == "1s"}
     assert h1[2001] == A + 1 + 3 and h1[1000] == A + 3 and h1[1] == A + 1 + 3 and h1[0] == A + 3
     assert all(r["capped"] == ent[r["d"]]["capped"] for r in R)               # the horizon rows carry the entry's flag
+
+
+def test_delay_ms_adds_the_clock_delay(tmp_path, monkeypatch):
+    """--delay-ms: the slot delay of that many ms per epoch through the Clock beside DELAYS (400 ms on the mini store: 1,300 ms
+    = 3 slots), listed per epoch in the run JSON, with the parts' sha256s."""
+    _store(tmp_path / "s.duckdb")
+    _parts(tmp_path / "parts")
+    monkeypatch.setenv("LAB_ENGINE", ENGINE)
+    info = markout.run(str(tmp_path / "parts"), "dm", str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), cfg_path=_cfg(tmp_path), delay_ms=1300)
+    assert info["delay_ms"] == 1300 and info["delay_slots_per_epoch"] == {str(SLOT0 // 432_000): 3} and info["delays"] == [1, 2]
+    assert list(info["parts_sha256"]) == ["part-0.parquet"] and len(info["parts_sha256"]["part-0.parquet"]) == 64
+    con = duckdb.connect()
+    ds = [r[0] for r in con.execute(f"SELECT DISTINCT d FROM read_parquet('{tmp_path}/out/markout-dm.parquet') ORDER BY 1").fetchall()]
+    assert ds == [1, 2, 3]
+    # d 3 rows: the entry at t + 3, one per signal and horizon, same count as d 2
+    n2, n3 = con.execute(f"SELECT count(*) FILTER (WHERE d = 2), count(*) FILTER (WHERE d = 3) FROM read_parquet('{tmp_path}/out/markout-dm.parquet')").fetchone()
+    assert n2 == n3 > 0
