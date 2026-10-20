@@ -162,3 +162,46 @@ def test_a_trade_on_a_pruned_archived_pool_restores_it(tmp_path):
     w.minute(1012, 5_400)
     assert "P" in w.wl.pools and w.wl.restored_total == 1 and w.wl.state["P"].organic is True
 
+
+
+class TwoPools(Pools):
+    """P (reversed, deep and organic: f7_rev) and S (sol/normal, created live at slot 150: M1 for its first hours)."""
+
+    def __init__(self):
+        super().__init__()
+        self.pools["S"] = PoolInfo("S", "MS", "normal", "sol", False, None, 150)
+        self.new_pools = ["S"]
+
+
+def test_without_m1_the_list_keeps_its_f7_rev_pools_only(tmp_path):
+    """--watchlist-no-m1 (paper.engine watchlist_rules): no pool is tagged m1, and the f7_rev pools are the default's;
+    the default rules are unchanged (None: wallets.watchlist.Rules())."""
+    from paper.engine import watchlist_rules
+    from wallets import watchlist as W
+
+    assert watchlist_rules() is None and watchlist_rules(False) is None
+    assert watchlist_rules(True) == W.Rules(m1_max_age_minutes=-1)
+    assert {k: v for k, v in vars(watchlist_rules(True)).items() if k != "m1_max_age_minutes"} == \
+        {k: v for k, v in vars(W.Rules()).items() if k != "m1_max_age_minutes"}
+    out = {}
+    for name, rules in (("default", watchlist_rules(False)), ("no_m1", watchlist_rules(True))):
+        (tmp_path / name).mkdir()
+        w = LiveWatchlist(TwoPools(), str(tmp_path / name), rules=rules)
+        w.slot(100, 1000)
+        w.trades("P", 1000, [leg(100, 3, 130)])
+        w.slot(150, 1000)
+        out[name] = [w.minute(1001, 300)]
+        w.slot(400, 1001)
+        w.trades("P", 1001, [leg(400, 1, 125)])
+        out[name].append(w.minute(1002, 500))
+    assert out["default"] == [{"P": ("f7_rev",), "S": ("m1",)}] * 2
+    assert out["no_m1"] == [{"P": ("f7_rev",)}] * 2
+
+
+@pytest.mark.parametrize("argv", [[], ["--live", "/x", "--no-watchlist"]])
+def test_the_no_m1_flag_needs_the_live_watchlist(tmp_path, argv):
+    from paper.engine import main
+
+    with pytest.raises(SystemExit) as e:
+        main(["--journal", str(tmp_path / "j"), "--watchlist-no-m1"] + argv)
+    assert e.value.code == 2
