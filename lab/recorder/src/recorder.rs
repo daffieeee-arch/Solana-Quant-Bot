@@ -16,7 +16,7 @@ use std::sync::Arc;
 use yellowstone_grpc_proto::prelude::{
     subscribe_update::UpdateOneof, CommitmentLevel, SlotStatus, SubscribeRequest, SubscribeRequestFilterSlots,
     SubscribeRequestFilterTransactions, SubscribeUpdate, SubscribeUpdateAccount,
-    SubscribeUpdateBlockFooter, SubscribeUpdateBlockMeta,
+    SubscribeUpdateBlockFooter, SubscribeUpdateBlockMeta, SubscribeUpdateTransactionInfo,
 };
 use yellowstone_grpc_proto::prost::Message as _;
 
@@ -102,6 +102,59 @@ pub enum Action {
     Stop(String),
 }
 
+/// The most frequent keys of each kind a segment's noise summary names.
+const NOISE_TOP: usize = 32;
+/// Distinct keys counted per kind and segment at most; past it a new key is only counted as dropped.
+const NOISE_MAX_KEYS: usize = 200_000;
+
+/// Creation-filters spec v0.2 P2 step A, a diagnostic only: the account keys of the `tx_new_reversed` transactions that
+/// decode no event and no anomaly (74 % of the measuring hour's), static keys and loaded addresses apart, each key once
+/// per transaction. Per segment into `_segment.json` `new_reversed_noise`; step B's exclusions follow from it by the
+/// spec's fixed rules (>= 5 % of the noise, in no creation, no guard account), after review.
+#[derive(Default)]
+struct Noise {
+    txs: u64,
+    statics: HashMap<String, u64>,
+    loaded: HashMap<String, u64>,
+    dropped: u64,
+}
+
+impl Noise {
+    fn add(&mut self, info: &SubscribeUpdateTransactionInfo) {
+        self.txs += 1;
+        let statics: HashSet<&[u8]> =
+            info.transaction.as_ref().and_then(|t| t.message.as_ref()).map(|m| m.account_keys.iter().map(Vec::as_slice).collect()).unwrap_or_default();
+        let loaded: HashSet<&[u8]> = info
+            .meta
+            .as_ref()
+            .map(|m| m.loaded_writable_addresses.iter().chain(&m.loaded_readonly_addresses).map(Vec::as_slice).collect())
+            .unwrap_or_default();
+        for (keys, counts) in [(statics, &mut self.statics), (loaded, &mut self.loaded)] {
+            for k in keys {
+                let k = b58(k);
+                if let Some(n) = counts.get_mut(&k) {
+                    *n += 1;
+                } else if counts.len() < NOISE_MAX_KEYS {
+                    counts.insert(k, 1);
+                } else {
+                    self.dropped += 1;
+                }
+            }
+        }
+    }
+
+    /// The segment's summary (the most frequent keys first, then by address); the counts start again.
+    fn take(&mut self) -> Value {
+        let top = |m: HashMap<String, u64>| -> Vec<Value> {
+            let mut v: Vec<(String, u64)> = m.into_iter().collect();
+            v.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            v.into_iter().take(NOISE_TOP).map(|(k, n)| json!([k, n])).collect()
+        };
+        let n = std::mem::take(self);
+        json!({"transactions": n.txs, "static": top(n.statics), "loaded": top(n.loaded), "keys_dropped": n.dropped})
+    }
+}
+
 #[derive(Default)]
 struct Stats {
     failed_dropped: u64,
@@ -147,6 +200,7 @@ pub struct Recorder {
     extra_dirty: bool,
     /// Probes or new vaults expired: resubscribe with the rate limit.
     extra_stale: bool,
+    noise: Noise,
 }
 
 fn val<'a>(r: &'a Row, name: &str) -> Option<&'a Val> {
@@ -217,6 +271,7 @@ impl Recorder {
             backfill_requests: Vec::new(),
             extra_dirty: false,
             extra_stale: false,
+            noise: Noise::default(),
             cfg,
         }
     }
@@ -367,6 +422,7 @@ impl Recorder {
 
     pub fn on_update(&mut self, u: SubscribeUpdate, now_ns: u64) -> Result<()> {
         let stream = stream_of(&u).to_owned();
+        let new_reversed = u.filters.iter().any(|f| f == "tx_new_reversed");
         self.meter.add(&stream, u.encoded_len())?;
         let created_ns = u
             .created_at
@@ -379,6 +435,9 @@ impl Recorder {
                     Ok(Converted::Tx(tx)) => {
                         let mut rows = self.plugin.rows_for(&tx);
                         let now = now_ns / 1_000_000_000;
+                        if new_reversed && !rows.iter().any(|r| r.table.starts_with("pump/") || r.table.starts_with("pump_amm/") || &*r.table == "anomalies") {
+                            self.noise.add(info);
+                        }
                         for r in rows.iter().filter(|r| &*r.table == "pump_amm/CreatePoolEvent") {
                             self.on_creation(r, now);
                         }
@@ -593,6 +652,7 @@ impl Recorder {
         m.insert("usage".into(), Value::Array(self.meter.take_usage()));
         m.insert("budget".into(), self.meter.state());
         m.insert("filter".into(), self.active.summary());
+        m.insert("new_reversed_noise".into(), self.noise.take());
         m.insert("reconnects".into(), Value::Array(std::mem::take(&mut self.reconnects)));
         m.insert(
             "totals".into(),
@@ -779,6 +839,45 @@ mod tests {
 
     fn update(filter: &str, u: UpdateOneof) -> SubscribeUpdate {
         SubscribeUpdate { filters: vec![filter.to_owned()], update_oneof: Some(u), created_at: None }
+    }
+
+    #[test]
+    fn the_noise_diagnostic_counts_only_tx_new_reversed_transactions_without_an_event() {
+        // creation-filters spec v0.2 P2 step A: an event-free transaction on tx_new_reversed counts its keys, static and
+        // loaded apart; one with an anomaly (sample's unknown event) or on another stream does not
+        let root = tmp("rec-noise");
+        let mut r = recorder(&root, 25_000_000_000, 1);
+        let quiet = |index| {
+            let mut info = sample(1000, index, true, false);
+            info.meta.as_mut().unwrap().inner_instructions.clear();
+            info
+        };
+        let on = |filters: &[&str], info| SubscribeUpdate {
+            filters: filters.iter().map(|f| (*f).to_owned()).collect(),
+            update_oneof: Some(UpdateOneof::Transaction(SubscribeUpdateTransaction { transaction: Some(info), slot: 1000, bank_id: 0 })),
+            created_at: None,
+        };
+        r.on_update(on(&["tx_new_reversed"], quiet(0)), 1).unwrap();
+        r.on_update(on(&["tx_pools", "tx_new_reversed"], quiet(1)), 1).unwrap(); // both filters: still tx_new_reversed's
+        r.on_update(on(&["tx_new_reversed"], sample(1000, 2, true, false)), 1).unwrap(); // an anomaly row: no noise
+        r.on_update(on(&["tx_pools"], quiet(3)), 1).unwrap(); // another stream only
+        for u in [meta(1000), confirmed(1000), confirmed(1001)] {
+            r.on_update(u, 1).unwrap();
+        }
+        r.on_tick(T0 + 1, None).unwrap();
+        let n = segment_meta(&root, 0)["new_reversed_noise"].clone();
+        let mut statics: Vec<String> = [fake_key(1), fake_key(2), bs58::decode("ComputeBudget111111111111111111111111111111").into_vec().unwrap()]
+            .iter().map(|k| b58(k)).collect();
+        statics.sort();
+        assert_eq!(n, json!({"transactions": 2, "static": statics.iter().map(|k| json!([k, 2])).collect::<Vec<_>>(),
+                             "loaded": [[crate::watch::PUMP_AMM, 2]], "keys_dropped": 0}));
+        // the next segment starts at zero
+        for u in [meta(1002), confirmed(1002), confirmed(1003)] {
+            r.on_update(u, 1).unwrap();
+        }
+        r.on_tick(T0 + 2, None).unwrap();
+        assert_eq!(segment_meta(&root, 1)["new_reversed_noise"]["transactions"], 0);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     fn tx(slot: u64, index: u64) -> SubscribeUpdate {
