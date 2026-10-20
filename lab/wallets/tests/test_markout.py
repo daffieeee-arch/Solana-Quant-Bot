@@ -35,9 +35,10 @@ def _store(path, shift=0):
     con.execute("CREATE TABLE meta (json VARCHAR)")
     con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"slot_start": SLOT0 + shift, "slot_end_exclusive": SLOT0 + shift + 432_000,
                                                             "ms_per_slot": {str((SLOT0 + shift) // 432_000): 400.0}})])
-    con.execute("CREATE TABLE pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR, mint VARCHAR, create_slot BIGINT)")
-    con.execute("INSERT INTO pools VALUES ('P', 'sol', 'normal', 'MP', ?), ('R', 'reversed', 'reversed', 'MR', ?), ('PC', 'sol', 'normal', 'C', ?)",
-                [A - 500 + shift, B - 500 + shift, D + 120 + shift])
+    # coin_creator: P and PC share a creator (PC is the creator's second pool), R's creator is the system program (unknown)
+    con.execute("CREATE TABLE pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR, mint VARCHAR, create_slot BIGINT, coin_creator VARCHAR)")
+    con.execute("INSERT INTO pools VALUES ('P', 'sol', 'normal', 'MP', ?, 'CR'), ('R', 'reversed', 'reversed', 'MR', ?, ?), ('PC', 'sol', 'normal', 'C', ?, 'CR')",
+                [A - 500 + shift, B - 500 + shift, markout.SYSTEM_PROGRAM, D + 120 + shift])
     con.execute("CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, b BIGINT, e BIGINT, "
                 "vault BIGINT, vq BIGINT, base BIGINT, e_delta BIGINT, quote_user BIGINT, lp_bps BIGINT, protocol_bps BIGINT, creator_bps BIGINT, cashback_bps BIGINT, trader VARCHAR, "
                 "token_buy BOOLEAN, sol_amount BIGINT, sol_depth BIGINT)")
@@ -141,6 +142,18 @@ def test_markouts_on_the_mini_store(tmp_path, capfd):
     # N2 keeps its reference to the trigger
     n2 = next(r for r in R if r["family"] == "N2_F7" and r["h"] == "")
     assert n2["ref_mint"] == "MR" and n2["ref_t"] == B and n2["farm"] == "n/a"
+    # the entry state's SOL side and fee tier (E49): normal pool P = real quote vault e (105 SOL after the trade in A), 20 + 5 bps;
+    # reversed pool R = the WSOL base b (110 SOL), 25 + 5 bps; curve C = the real quote rq (1 SOL after D), 95 + 30 bps;
+    # the horizon rows carry the entry's values (the 1 min row of P after the boost and the withdraw still says 105 SOL)
+    assert p["depth_entry"] == 105 * SOL and p["fee_bps"] == 25 and m1m["depth_entry"] == 105 * SOL and m1m["fee_bps"] == 25
+    assert r0["depth_entry"] == 110 * SOL and r0["fee_bps"] == 30 and r1["depth_entry"] == 110 * SOL
+    assert c0["depth_entry"] == 1 * SOL and c0["fee_bps"] == 125 and c1m["depth_entry"] == 1 * SOL
+    assert e10["depth_entry"] == 1 * SOL  # E's entry had a market; the horizon without one keeps the entry's values
+    # creator_prior_pools: the creator's earlier pools in the store at the pool's creation (P first → 0, PC second → 1), the
+    # system program → -1, a curve signal → NULL
+    assert p["creator_prior_pools"] == 0 and r0["creator_prior_pools"] == -1 and c0["creator_prior_pools"] is None
+    pc = next(r for r in R if r["pool"] == "PC") if any(r["pool"] == "PC" for r in R) else None
+    assert pc is None or pc["creator_prior_pools"] == 1
 
 
 def test_buckets_do_not_change_the_markouts(tmp_path, monkeypatch, capfd):

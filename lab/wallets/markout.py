@@ -171,9 +171,34 @@ def load_signals(con, parts_dir, families=None, lo=None, hi=None, clock=None):
                    CASE WHEN venue = 'curve' THEN mint ELSE pool END AS key
             FROM read_parquet({lit}, union_by_name = true) WHERE {' AND '.join(where)}
             GROUP BY family, segment, venue, orientation, mint, pool, t)""")
+    creator_prior_pools(con)
     n = _count(con, "sig")
     progress("signals", n, f"from {len(files)} parts")
     return n
+
+
+SYSTEM_PROGRAM = "11111111111111111111111111111111"
+
+
+def creator_prior_pools(con):
+    """sig.creator_prior_pools: the number of earlier pools of the signal pool's coin_creator within the store (the
+    point-in-time creator class of clean_reports / E41: 0 = first pool, 1-9, 10-99, >= 100), -1 when the creator is the
+    system program (unknown), NULL for a curve signal, a pool outside the store's pools table or a store without
+    coin_creator. Descriptive only: a signal column copied to every markout row."""
+    con.execute("ALTER TABLE sig ADD COLUMN creator_prior_pools INTEGER")
+    try:
+        cols = [r[0] for r in con.execute("DESCRIBE pools").fetchall()]
+    except duckdb.Error:
+        return
+    if "coin_creator" not in cols or "create_slot" not in cols:
+        return
+    con.execute(f"""
+      UPDATE sig SET creator_prior_pools = c.n FROM (
+        WITH po AS (SELECT p.pool, p.coin_creator, p.create_slot FROM pools p SEMI JOIN (SELECT DISTINCT pool FROM sig WHERE pool IS NOT NULL) k ON k.pool = p.pool)
+        SELECT po.pool, CASE WHEN po.coin_creator = '{SYSTEM_PROGRAM}' THEN -1 ELSE count(q.pool) END AS n
+        FROM po LEFT JOIN pools q ON q.coin_creator = po.coin_creator AND q.create_slot < po.create_slot AND po.coin_creator <> '{SYSTEM_PROGRAM}'
+        GROUP BY po.pool, po.coin_creator) c
+      WHERE sig.pool = c.pool""")
 
 
 # --- venue states at the end of each slot ------------------------------------------------------------
@@ -567,6 +592,21 @@ def buy(venue, orientation, r, size):
     return None if f is None else f.tokens
 
 
+def entry_state(venue, orientation, r):
+    """(depth_entry, fee_bps) of the state that fills our entry: the SOL side of the venue in lamports (reversed pool: b, the
+    WSOL base; normal pool: the real quote vault e - virt; curve: the real quote rq) and the venue's total fee in bps
+    (pool: lp + protocol + creator + cashback; curve: fee + creator); (None, None) without a market. The horizon rows
+    carry the entry's values, like impact."""
+    v = resolve(venue, orientation, r)
+    if v is None:
+        return None, None
+    kind, ori, st = v
+    if kind == "curve":
+        return int(st["rq"] or 0), int(st["c_fee_bps"] or 0) + int(st["c_creator_bps"] or 0)
+    fee = int(st["lp_bps"] or 0) + int(st["protocol_bps"] or 0) + int(st["creator_bps"] or 0) + int(st["cashback_bps"] or 0)
+    return (int(st["b"]) if ori == "reversed" else int(st["e"]) - int(st["virt"] or 0)), fee
+
+
 def sell(venue, orientation, r, tokens):
     """Quote received for `tokens` at state r (capped at what the venue can pay); None when there is no market."""
     v = resolve(venue, orientation, r)
@@ -585,8 +625,8 @@ def sell(venue, orientation, r, tokens):
 PROGRESS_ROWS = 500_000
 
 
-MK_COLS = ("sid", "d", "h", "h_ms", "target", "cut", "mid", "gross", "net", "impact", "capped")
-MK_TYPES = (pa.int64(), pa.int32(), pa.string(), pa.int64(), pa.int64(), pa.bool_(), pa.float64(), pa.float64(), pa.float64(), pa.float64(), pa.bool_())
+MK_COLS = ("sid", "d", "h", "h_ms", "target", "cut", "mid", "gross", "net", "impact", "capped", "depth_entry", "fee_bps")
+MK_TYPES = (pa.int64(), pa.int32(), pa.string(), pa.int64(), pa.int64(), pa.bool_(), pa.float64(), pa.float64(), pa.float64(), pa.float64(), pa.bool_(), pa.int64(), pa.int32())
 FLUSH_ROWS = 1_000_000
 
 
@@ -635,17 +675,18 @@ def round_trips(con, per_order, mk_path, size=SIZE):
             tokens = buy(venue, ori, r, size) if m is not None else None
             impact = (size / tokens) / m - 1 if tokens and m else None  # price paid per token over the mid
             capped = r.get("capped")
-            entry = {k: (m, tokens, impact, capped)}  # the rows come ordered by (sid, d, h_ms): only the current entry is needed
-            out.append((r["sid"], r["d"], "", 0, r["target"], bool(r["cut"]), m, None, None, impact, capped))
+            depth, fee_bps = entry_state(venue, ori, r) if m is not None else (None, None)
+            entry = {k: (m, tokens, impact, capped, depth, fee_bps)}  # the rows come ordered by (sid, d, h_ms): only the current entry is needed
+            out.append((r["sid"], r["d"], "", 0, r["target"], bool(r["cut"]), m, None, None, impact, capped, depth, fee_bps))
             continue
-        m0, tokens, impact, capped = entry.get(k, (None, None, None, None))
+        m0, tokens, impact, capped, depth, fee_bps = entry.get(k, (None, None, None, None, None, None))
         gross = None if m is None or not m0 else m / m0 - 1
         net = None
         if tokens and m is not None:
             back = sell(venue, ori, r, tokens)
             if back is not None:
                 net = back / (size + 2 * per_order) - 1
-        out.append((r["sid"], r["d"], r["h"], r["h_ms"], r["target"], bool(r["cut"]), m, gross, net, impact, capped))
+        out.append((r["sid"], r["d"], r["h"], r["h_ms"], r["target"], bool(r["cut"]), m, gross, net, impact, capped, depth, fee_bps))
     _flush(writer, out)
     writer.close()
     el = time.time() - t_loop
@@ -748,7 +789,7 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     con.execute(f"""
       COPY (
         SELECT s.family, s.segment, s.venue, s.orientation, s.mint, s.pool, s.t, s.day, s.ms_per_slot, s.regime, s.farm, s.ref_mint, s.ref_t, s.variants,
-               m.d, m.h, m.h_ms, m.target, m.cut, m.mid, m.gross, m.net, m.impact, m.capped
+               m.d, m.h, m.h_ms, m.target, m.cut, m.mid, m.gross, m.net, m.impact, m.capped, m.depth_entry, m.fee_bps, s.creator_prior_pools
         FROM mk m JOIN sig s ON s.sid = m.sid ORDER BY s.family, s.segment, s.mint, s.t, m.d, m.h_ms
       ) TO '{out_path}' (FORMAT PARQUET)""")  # streamed by DuckDB: the full table is never an Arrow table in Python
     progress("parquet written", n_rows)
