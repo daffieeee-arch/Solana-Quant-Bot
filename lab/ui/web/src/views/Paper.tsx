@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import { Badge, DexLink, Loading, SolscanLink } from "../components/ui";
 import { Button } from "../components/Button";
 import PaperChart from "../components/PaperChart";
+import EventTicker from "../components/EventTicker";
 import { Change, Num } from "../components/Num";
 import { Segmented } from "../components/Segmented";
 import { usePaper } from "../live";
@@ -415,6 +416,7 @@ export default function Paper() {
           </div>
 
           <div className="grid gap-3.5 lg:grid-cols-3 lg:items-start">
+            <EventTicker />
             <Assessment j={j} />
             <Details j={j} r={r} now={data.now_unix} />
           </div>

@@ -575,6 +575,71 @@ def journal_view(path, now):
             "holdout_rows_dropped": j.dropped}
 
 
+EVENTS_SHOWN = 100
+
+
+def events_view(now=None, limit=EVENTS_SHOWN):
+    """The live event ticker (backlog 1): the newest signals (entered or skipped, with why), entries (filled or
+    failed) and exits of the bot's own variants (no N2 shadow), newest first, each with its group, token, slot,
+    time and the values behind the decision: the F7 trigger's depth, venue and farm label, the farm history and
+    window, the measured latency against d, the skip reason; for an exit its reason, return and P&L. Read-only;
+    per table only the newest rows (ORDER BY ... LIMIT), so the page stays light on a long journal."""
+    path = journal_path()
+    if not path:
+        return {"events": [], "journal": None}
+    j = Journal(path)
+    try:
+        def newest(table, order, where="family NOT LIKE 'N2_%'"):
+            if table not in j.tables:
+                return []
+            cur = j.db.execute(f"SELECT * FROM {table} WHERE {where} ORDER BY {order} DESC LIMIT ?", (limit,))
+            names = [c[0] for c in cur.description]
+            return [d for d in (dict(zip(names, r)) for r in cur.fetchall()) if not in_holdout(d)]
+        signals = (newest("signals", "t", "family NOT LIKE 'N2_%' AND status = 'skipped'")
+                   + newest("signals", "t", "family NOT LIKE 'N2_%' AND status <> 'skipped'"))
+        orders = newest("orders", "entry_slot")
+        exits = newest("exits", "exit_slot", "family NOT LIKE 'N2_%' AND tokens > 0")
+        beats = j.rows("heartbeat", "note = '' OR note IS NULL")
+        state = {r["k"]: r["v"] for r in j.rows("state")}
+        variants_in = {r["variant"] for r in signals + orders + exits}
+    finally:
+        j.close()
+    state, inferred = infer_groups(state, [{"family": "F7", "variant": v} for v in variants_in])
+    primary, further = stoprule.parse_groups(state.get(stoprule.GROUPS_KEY))
+    arm_of = {v: g for g, vs in further.items() for v in vs}
+    group = lambda v: arm_of.get(v) or ("K3" if primary is None or v in primary else None)  # noqa: E731
+    clock = slot_clock(beats)
+    out = []
+    for s in signals:
+        out.append({"kind": "signal", "status": s["status"], "reason": s.get("reason"), "slot": s["t"],
+                    "variant": s["variant"], "key": s["key"], "group": group(s["variant"]), "venue": s.get("venue"),
+                    "orientation": s.get("orientation"), "depth": s.get("depth"), "farm": s.get("farm"),
+                    "farm_complete": s.get("farm_complete"), "farm_window_complete": s.get("farm_window_complete"),
+                    "latency_ms": s.get("latency_ms"), "d_ms": s.get("d_ms")})
+    for o in orders:
+        if o["status"] == "skipped":
+            continue  # a signal skipped at entry: its signal row says why
+        out.append({"kind": "entry", "status": o["status"], "reason": o.get("reason"), "slot": o["entry_slot"],
+                    "variant": o["variant"], "key": o["key"], "group": group(o["variant"]), "size_sol": (o.get("size") or 0) / 1e9,
+                    "delay_slots": (o["entry_slot"] - o["t"]) if o.get("entry_slot") and o.get("t") else None})
+    for x in exits:
+        out.append({"kind": "exit", "status": "closed", "reason": x["exit_reason"], "slot": x["exit_slot"],
+                    "variant": x["variant"], "key": x["key"], "group": group(x["variant"]), "ret": x.get("ret"),
+                    "pnl_sol": (x.get("pnl") or 0) / 1e9,
+                    "held_slots": x["exit_slot"] - x["entry_slot"] if x.get("exit_slot") and x.get("entry_slot") else None})
+    # Up to `limit` trade events and up to `limit` skipped signals: a run of skips never hides the trades.
+    out = sorted((e for e in out if e["slot"] is not None), key=lambda e: e["slot"], reverse=True)
+    skip = lambda e: e["kind"] == "signal" and e["status"] == "skipped"  # noqa: E731
+    out = sorted([e for e in out if not skip(e)][:limit] + [e for e in out if skip(e)][:limit], key=lambda e: e["slot"], reverse=True)
+    names = token_names([e["key"] for e in out])
+    for e in out:
+        e["time_unix"] = clock(e["slot"])
+        n = names.get(e["key"], {})
+        e.update(mint=n.get("mint"), symbol=n.get("symbol"), name=n.get("name"))
+    return {"events": out, "journal": os.path.basename(os.path.dirname(os.path.dirname(path))), "groups_inferred": inferred,
+            "now_unix": int(now if now is not None else time.time())}
+
+
 def arm_groups(exits, positions, further, day):
     """Further groups (H), per variant: a measurement, no test (paper.report.arm_lines). Up to `day`."""
     out = []

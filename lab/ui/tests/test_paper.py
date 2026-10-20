@@ -504,6 +504,52 @@ class GroupsUnknown(unittest.TestCase):
         self.assertEqual([g["group"] for g in v["arms"]], ["H"])
 
 
+class EventTicker(unittest.TestCase):
+    """The live event ticker (paper.events_view): the bot's newest signals with why, entries and exits, newest first,
+    each with its group; no N2 shadow; a run of skipped signals never hides the trades."""
+
+    def test_events_with_why(self):
+        jmod, _ = lab_paper()
+        sol = 1_000_000_000
+        with tempfile.TemporaryDirectory() as d:
+            j = jmod.Journal(os.path.join(d, "paper-k3", "journal"))
+            j.state("groups", json.dumps({"K3": {"primary": True, "variants": ["tp4_T600"]}, "H": {"primary": False, "variants": ["flow300_H6"]}}))
+            t = 470_000_000
+            j.put("signals", family="F7", variant="tp4_T600", key="PA", t=t, day="2026-10-20", venue="pool", orientation="reversed",
+                  depth=150 * sol, trigger_trader="w", status="entered", reason=None, farm="organic", farm_complete=1)
+            j.put("orders", family="F7", variant="tp4_T600", key="PA", t=t, day="2026-10-20", entry_slot=t + 3, size=sol // 2, status="filled")
+            j.put("exits", family="F7", variant="tp4_T600", key="PA", t=t, day="2026-10-20", entry_slot=t + 3, exit_slot=t + 50,
+                  exit_reason="take_profit", tokens=5, cost=sol // 2, proceeds=sol // 2 + 20_000_000, pnl=20_000_000, ret=0.04, exit_attempts=1)
+            j.put("orders", family="F7", variant="flow300_H6", key="PB", t=t + 1, day="2026-10-20", entry_slot=t + 4, size=sol // 2,
+                  status="entry_failed", reason="entry_slippage")
+            j.put("signals", family="N2_F7", variant="tp4_T600", key="PN", t=t + 2, day="2026-10-20", venue="pool", orientation="reversed",
+                  depth=1, trigger_trader=None, status="entered", reason=None, farm="organic")
+            for i in range(150):  # a long run of skips after the trades
+                j.put("signals", family="F7", variant="flow300_H6", key=f"S{i}", t=t + 100 + i, day="2026-10-20", venue="pool",
+                      orientation="reversed", depth=1, trigger_trader="w", status="skipped", reason="daily loss limit", farm="organic")
+            j.put("heartbeat", minute=29_874_960, day="2026-10-20", last_slot=t + 900, events=3, open_positions=0, gap_slots=0, note="")
+            j.commit()
+            path = os.path.join(j.dir, "journal.sqlite")
+            j.close()
+            os.environ["LAB_PAPER_JOURNAL"] = path
+            try:
+                v = paper.events_view(1_792_497_600)
+            finally:
+                del os.environ["LAB_PAPER_JOURNAL"]
+        ev = v["events"]
+        self.assertEqual(sum(e["status"] == "skipped" for e in ev), 100)  # capped; the trades stay
+        trades = [(e["kind"], e["status"], e["group"]) for e in ev if e["status"] != "skipped"]
+        self.assertEqual(trades, [("exit", "closed", "K3"), ("entry", "entry_failed", "H"), ("entry", "filled", "K3"), ("signal", "entered", "K3")])
+        self.assertFalse([e for e in ev if e["key"] == "PN"])  # no N2 shadow
+        x = next(e for e in ev if e["kind"] == "exit")
+        self.assertEqual((x["reason"], x["ret"], x["held_slots"]), ("take_profit", 0.04, 47))
+        self.assertAlmostEqual(x["pnl_sol"], 0.02)
+        s = next(e for e in ev if e["kind"] == "signal" and e["status"] == "entered")
+        self.assertEqual((s["depth"], s["farm"], s["farm_complete"]), (150 * sol, "organic", 1))
+        self.assertEqual(next(e for e in ev if e["status"] == "skipped")["reason"], "daily loss limit")
+        self.assertEqual([e["slot"] for e in ev], sorted((e["slot"] for e in ev), reverse=True))
+
+
 class Recorder(unittest.TestCase):
     def test_sample_is_marked_and_summed_per_stream(self):
         os.environ["LAB_RECORDER_ROOT"] = "/nonexistent"

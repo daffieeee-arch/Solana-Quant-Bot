@@ -489,6 +489,11 @@ def api_paper_chart(q):
     return out
 
 
+def api_paper_events(q):
+    """The live event ticker: the bot's newest signals, entries and exits with why (paper.events_view)."""
+    return paper.events_view()
+
+
 def api_paper_trades(q):
     """The paper bot's entries and exits on one token, for its token page: the mint itself (curve trades) and
     every pool of that mint in the development store (pool trades)."""
@@ -534,7 +539,7 @@ ROUTES = {"/api/meta": api_meta, "/api/overview": api_overview, "/api/tokens": a
           "/api/token": api_token, "/api/ticker": api_ticker, "/api/strategies": api_strategies,
           "/api/strategy_curve": api_strategy_curve, "/api/candles": api_candles, "/api/cases": api_cases,
           "/api/paper": api_paper,
-          "/api/strategy_overview": api_strategy_overview, "/api/paper_chart": api_paper_chart,
+          "/api/strategy_overview": api_strategy_overview, "/api/paper_chart": api_paper_chart, "/api/paper_events": api_paper_events,
           "/api/paper_trades": api_paper_trades,
           "/api/wallet": api_wallet, "/api/triton": api_triton}
 
