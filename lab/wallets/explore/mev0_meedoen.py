@@ -15,7 +15,9 @@ con = duckdb.connect()
 con.execute(f"SET memory_limit='1400MB'; SET threads=2; SET temp_directory='{TMP}'")
 con.execute(f"CREATE TABLE arbs AS SELECT *, net <= abs(legs_sol) AS explained FROM read_parquet(['{D}/arbs-1040.parquet','{D}/arbs-1045.parquet']) WHERE closed_loop")
 con.execute(f"CREATE TABLE att AS SELECT * FROM read_parquet(['{D}/attempts-1040.parquet','{D}/attempts-1045.parquet'])")
-con.execute(f"CREATE TABLE sg AS SELECT * FROM read_parquet(['{D}/signers-1040.parquet','{D}/signers-1045.parquet'])")
+# signers-<epoch> has one row per fee_payer per epoch: take the earliest first day per payer, else the join doubles arbs
+con.execute(f"CREATE TABLE sg AS SELECT fee_payer, min(first_day) AS first_day, max(last_day) AS last_day, sum(txs) AS txs "
+            f"FROM read_parquet(['{D}/signers-1040.parquet','{D}/signers-1045.parquet']) GROUP BY 1")
 con.execute(f"CREATE TABLE days AS SELECT * FROM read_parquet(['{D}/days-1040.parquet','{D}/days-1045.parquet'])")
 P = lambda title, q: print(f"== {title}\n" + con.execute(q).df().to_string() + "\n")  # noqa: E731
 
@@ -33,7 +35,7 @@ P("(1b) same-slot backruns: block-position distance and tipping", """
  SELECT day, count(*) n, round(quantile_cont(dist_tx,0.5),1) med_dtx, round(quantile_cont(dist_tx,0.9),1) p90_dtx,
    round(avg((jito_tip>0)::INT),3) tipped, round(avg((priority_fee>0)::INT),3) prio FROM arbs WHERE backrun AND explained AND dist_slots=0 GROUP BY 1 ORDER BY 1""")
 con.execute("CREATE TABLE top AS SELECT fee_payer FROM arbs WHERE day='2026-09-29' AND explained AND reachable GROUP BY 1 ORDER BY sum(net) DESC LIMIT 3")
-P("(1c) top-3 payers vs newcomers, 09-29 explained backruns", """
+P("(1c) top-3 payers (ranked on reachable explained net) vs newcomers, 09-29 explained backruns, all distances", """
  SELECT CASE WHEN a.fee_payer IN (SELECT fee_payer FROM top) THEN 'top3' WHEN sg.first_day >= '2026-09-28' THEN 'newcomer' ELSE 'other' END grp,
    count(*) n, round(sum(a.net)/1e9,2) net_sol, round(quantile_cont(a.dist_slots,0.5),1) med_slots, round(avg((a.jito_tip>0)::INT),3) tipped,
    round(quantile_cont(a.jito_tip,0.5)/1e9,6) med_tip, round(quantile_cont(a.priority_fee,0.5)/1e9,6) med_prio
@@ -67,7 +69,7 @@ P("(4) reachable explained backruns 09-29: arbs per trigger", """
 P("(4b) cumulative share of explained backrun net (09-29) by distance in slots", """
  SELECT dist_slots, count(*) n, round(sum(net)/1e9,2) net_sol, round(sum(sum(net)) OVER (ORDER BY dist_slots)/sum(sum(net)) OVER (),3) cum_share
  FROM arbs WHERE day='2026-09-29' AND explained AND backrun GROUP BY 1 ORDER BY 1 LIMIT 12""")
-P("(4c) competing same-slot backruns on one trigger: tip vs block position", """
+P("(4c) competing same-slot backruns on one trigger (all five days): tip vs block position", """
  WITH g AS (SELECT prior_slot, prior_tx, tx_index, jito_tip, priority_fee, count(*) OVER (PARTITION BY prior_slot, prior_tx) n
    FROM arbs WHERE explained AND backrun AND dist_slots=0)
  SELECT count(*) n_arbs, count(DISTINCT (prior_slot, prior_tx)) triggers, round(avg((jito_tip>0)::INT),3) tipped,

@@ -7,7 +7,7 @@ LAB research, 2026-10-20. Vraag (owner via de coördinator, 19 okt): wat zou een
 ## 0. Samenvatting
 
 - **Het geld zit in hetzelfde slot als de kans** (feit): van de 630 + 20 + 27 = 677 SOL netto van verklaarde backruns op 29 sep landt **93 %** in het slot van de trigger-trade zelf, 3 % in het volgende slot en 4 % op ≥ 2 slots. Wie niet in hetzelfde slot kan landen (geen bundel, geen colocatie) vist in een vijver van ≈ 47 SOL per dag, gedeeld door ≈ 200 fee-payers.
-- **De top-3 verdient 63 % van de backrun-winst met weinig fooien** (feit): 8.996 arbs, 842 SOL, 9 % met een Jito-tip, mediane priority fee 0,000174 SOL; de 87.412 arbs van nieuwkomers (eerste dag ≥ 28 sep) brengen samen 256 SOL met 59 % getipt (mediane tip 1.000 lamports). Fooien kopen hier geen positie: tussen concurrerende same-slot-backruns op dezelfde trigger is er geen verband tussen tip of priority fee en de blokpositie (n 144, correlatie −0,04 / −0,13).
+- **De top-3 verdient 62 % van de backrun-winst met weinig fooien** (feit, 29 sep, alle afstanden; top-3 gerangschikt op *bereikbare* verklaarde netto): 4.498 arbs, 421 SOL, 9 % met een Jito-tip, mediane priority fee 0,000174 SOL; gerangschikt op alle afstanden is het 4.166 arbs en 441 SOL (65 %, LAB review). De 11.693 arbs van nieuwkomers (eerste dag ≥ 28 sep) brengen samen 15,6 SOL met 50 % getipt (mediane tip 0). Fooien kopen hier geen positie: tussen concurrerende same-slot-backruns op dezelfde trigger is er over alle vijf dagen geen verband tussen tip of priority fee en de blokpositie (n 144 arbs op 72 triggers, correlatie −0,04 / −0,13).
 - **Kosten per gelande arb zijn klein, mislukte pogingen zijn de regel** (feit): fooien 7 % en fees 26 % van de bruto winst; de mediane verklaarde arb levert netto 0,00001 SOL; 4,7 miljoen mislukte pogingen op 29 sep (131 SOL, 99 % van winnaars), mediane mislukkingsgraad van een winnaar 83 %; 218 van de 326 winnaars blijven na die kosten positief.
 - **Wat een nieuwkomer zonder same-slot-landing kan verwachten** (modelaanname, band): hooguit enkele SOL per dag bruto bij een proportioneel aandeel in de ≥ 1-slot-pot, vóór mislukte pogingen en vóór de onbekende landingskans; realistisch < 1 SOL per dag. Dat is geen bedrijfsmodel, en same-slot meedoen valt buiten de huidige kaders (Triton-only, paper-only, geen keys/signing/sending): het zou een apart owner-besluit vragen over searcher-infra, bundels (Jito) en colocatie.
 - **Onbekend uit OF1:** colocatie, SWQoS/stake-gewogen toegang, private orderflow en bundel-lidmaatschap, en de pogingen die nooit zijn geland (OF1 toont alleen gelande, al dan niet mislukte, transacties).
@@ -37,12 +37,12 @@ Verklaarde backruns (een arb direct na andermans trigger-trade ≥ 1 SOL of ≥ 
 
 Bereikbare verklaarde kansen op 29 sep (23.192): netto p50 0,00001 SOL, p90 0,0005, p99 0,008, max 1,42; totaal 48,6 SOL; de 188 kansen ≥ 0,01 SOL dragen 44,5 SOL. De markt van "bereikbaar" is dus een handvol kansen per dag van 0,01–1,4 SOL.
 
-Top-3 tegen nieuwkomers (29 sep, verklaarde backruns, alle afstanden):
+Top-3 tegen nieuwkomers (29 sep, verklaarde backruns, alle afstanden; top-3 = de drie fee-payers met de hoogste *bereikbare* verklaarde netto; nieuwkomer = eerste dag van de fee-payer in beide epochs ≥ 28 sep, ontdubbeld over de epochs; de drie groepen tellen op tot de 91.910 backruns en 677 SOL van §1):
 
 | groep | arbs | netto | mediane afstand | getipt | mediane tip | mediane priority fee |
 |---|---|---|---|---|---|---|
-| top-3 fee-payers | 8.996 | 841,6 SOL | 0 slots | 9 % | 0 | 0,000174 SOL |
-| nieuwkomers (eerste dag ≥ 28 sep) | 87.412 | 256,4 | 0 slots | 59 % | 0,000001 | 0 |
+| top-3 fee-payers | 4.498 | 420,8 SOL | 0 slots | 9 % | 0 | 0,000174 SOL |
+| nieuwkomers (eerste dag ≥ 28 sep) | 11.693 | 15,6 | 0 slots | 50 % | 0 | 0 |
 | overige | 75.719 | 240,8 | 0 slots | 61 % | 0,000001 | 0 |
 
 ## 3. Mislukte pogingen (feit, bovengrens: v3-punt 1 van de spec)
@@ -56,7 +56,7 @@ Per winnaar op 29 sep (326 winnaars met verklaarde arbs): 212 hebben mislukte po
 
 ## 4. Wat een deelnemer nodig heeft en wat het oplevert (modelaanname, band)
 
-- **Reactietijd.** Same-slot landen (93 % van het geld) vereist dat de order in hetzelfde blok als de trigger wordt opgenomen: een bundel of een pad naar de leader dat sneller is dan de blokbouw (colocatie, SWQoS). Dat is de infrastructuur van de top-3, die met 9 % fooien en mediaan 0,000174 SOL priority fee wint; de blokpositie wordt niet door de fooi bepaald (§1). Een VPS die op `processed` leest en dan verstuurt, landt op zijn vroegst in slot + 1 (de M-a-aanname voor K3) en concurreert om 3–4 % van het geld.
+- **Reactietijd.** Same-slot landen (93 % van het geld) vereist dat de order in hetzelfde blok als de trigger wordt opgenomen: een bundel of een pad naar de leader dat sneller is dan de blokbouw (colocatie, SWQoS). Dat is de infrastructuur van de top-3, die met 9 % fooien en mediaan 0,000174 SOL priority fee wint; de blokpositie wordt niet door de fooi bepaald (§0, alle vijf dagen). Een VPS die op `processed` leest en dan verstuurt, landt op zijn vroegst in slot + 1 (de M-a-aanname voor K3) en concurreert om 3–4 % van het geld.
 - **Fooibudget.** Bij een same-slot-pad zijn fooien 7 % en fees 26 % van bruto: een budget van ≈ 0,3 × bruto. Zonder same-slot-pad koopt een fooi niets (§2).
 - **Verwachting voor een nieuwkomer zonder same-slot-pad** (band): de ≥ 1-slot-pot op de enige volle dag is 19,6 + 27,2 = 46,8 SOL, verdeeld over ≈ 200 fee-payers; proportioneel ≈ 0,2 SOL per dag; de bovengrens (alle 188 bereikbare kansen ≥ 0,01 SOL winnen) 44,5 SOL per dag, onbereikbaar zonder de landingskans te kennen. Daar gaan de mislukte pogingen af (83 % mislukt bij 0,000007 SOL per stuk is klein) en de niet-gelande pogingen die OF1 niet toont (onbekend). **Band: 0 … enkele SOL per dag, waarschijnlijk < 1.**
 - **Niet uit OF1 te halen:** colocatie en leader-afstand, SWQoS, private orderflow, bundel-lidmaatschap (OF1 heeft geen bundel-ID), en de pogingen die de leader nooit opnam. Die bepalen juist wie same-slot wint.
