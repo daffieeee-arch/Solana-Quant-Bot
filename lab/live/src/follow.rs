@@ -1863,8 +1863,10 @@ mod tests {
         let lines: Vec<Value> = log.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
         assert_eq!((lines.len(), &lines[0]["at"], &lines[0]["segments"], &lines[0]["events"]), (1, &json!("end"), &json!(4), &json!(7)));
         let mems = lines[0]["mems"].as_object().unwrap();
+        // M3-10 added farmer_hist, farmer_hist_trades, recorded and seed_left (spec v0.2 §2, §3)
         assert_eq!(mems.keys().map(String::as_str).collect::<Vec<_>>(),
-                   ["backfill_pending", "clock", "farm_keys", "heap", "interned_keys", "pool_ctx", "seeded_pools", "seen_keys", "tokens", "unknown_sets"]);
+                   ["backfill_pending", "clock", "farm_keys", "farmer_hist", "farmer_hist_trades", "heap", "interned_keys", "pool_ctx", "recorded",
+                    "seed_left", "seeded_pools", "seen_keys", "tokens", "unknown_sets"]);
         assert_eq!((&mems["farm_keys"][0], &mems["tokens"][0], &mems["heap"][0], &mems["seeded_pools"][0]), (&json!(9), &json!(1), &json!(0), &json!(1)));
         assert!(mems["seen_keys"][0].as_u64() > Some(0) && mems["interned_keys"][1].as_u64() > Some(0));
         assert_eq!(v["lab_live"]["mem_max"]["farm_keys"], mems["farm_keys"]);
