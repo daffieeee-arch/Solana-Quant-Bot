@@ -362,6 +362,38 @@ class DecisionBoundary(unittest.TestCase):
             self.assertIn("### What the verdict rests on", md)
 
 
+class GroupPositions(unittest.TestCase):
+    """Group H's own open positions and the day's exits appear apart from K3's (arm_positions, each with its group);
+    K3's list, totals and stop rule stay K3's only."""
+
+    def test_arm_positions_are_listed_per_group(self):
+        jmod, _ = lab_paper()
+        sol = 1_000_000_000
+        with tempfile.TemporaryDirectory() as d:
+            j = jmod.Journal(os.path.join(d, "paper-k3", "journal"))
+            j.state("groups", json.dumps({"K3": {"primary": True, "variants": ["tp4_T600"]}, "H": {"primary": False, "variants": ["flow300_H6"]}}))
+            j.state("feed", json.dumps({"kind": "live"}))
+            t = 460_000_000
+            for variant, pnl in (("tp4_T600", 20_000_000), ("flow300_H6", -100_000_000)):
+                t += 100
+                j.put("signals", family="F7", variant=variant, key=f"P{t}", t=t, day="2026-10-20", venue="pool", orientation="reversed",
+                      depth=0, trigger_trader="w", status="entered")
+                j.put("exits", family="F7", variant=variant, key=f"P{t}", t=t, day="2026-10-20", entry_slot=t + 3, exit_slot=t + 50,
+                      exit_reason="time", tokens=5, cost=sol // 2, proceeds=sol // 2 + pnl, pnl=pnl, ret=pnl / (sol / 2), exit_attempts=1)
+            j.put("positions", family="F7", variant="flow300_H6", key="Popen", t=t + 1, entry_slot=t + 4, cost=sol // 2, tokens=7, status="open")
+            j.put("heartbeat", minute=29_874_960, day="2026-10-20", last_slot=t + 900, events=3, open_positions=1, gap_slots=0, note="")
+            j.commit()
+            path = os.path.join(j.dir, "journal.sqlite")
+            j.close()
+            v = paper.journal_view(path, now=1_792_497_600)  # 2026-10-20 12:00 UTC
+        self.assertEqual([p["variant"] for p in v["positions"]], ["tp4_T600"])
+        self.assertEqual(v["totals"]["trades"], 1)
+        h = v["arm_positions"]
+        self.assertEqual([(p["group"], p["status"], p["key"]) for p in h], [("H", "open", "Popen"), ("H", "time", "P460000200")])
+        self.assertAlmostEqual(h[1]["pnl_sol"], -0.1)
+        self.assertEqual(h[1]["venue"], "pool")
+
+
 class Recorder(unittest.TestCase):
     def test_sample_is_marked_and_summed_per_stream(self):
         os.environ["LAB_RECORDER_ROOT"] = "/nonexistent"

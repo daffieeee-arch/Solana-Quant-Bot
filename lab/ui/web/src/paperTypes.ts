@@ -32,6 +32,8 @@ export interface PaperJournal {
   capital: { start_sol: number; max_positions: number; final_sol: number; max_drawdown: number; taken: number; skipped: number; curve: number[] };
   n2: { family: string; variant: string; has_shadow: boolean; own_sol_per_trade: number | null; n2_sol_per_trade: number | null; diff_all: number | null; diff_today: number | null; n2_trades: number }[];
   arms: { group: string; variants: (PaperGroup & { variant: string; today_sol: number })[] }[];
+  // Further groups' (H) open positions and the day's exits (lab/ui/paper.py journal_view), each with its group.
+  arm_positions: (PaperPosition & { group: string })[];
   holdout_rows_dropped: number;
 }
 // stoprule.decide: a verdict from MIN_TRADES filled trades and MIN_DAYS_CI trading days (owner, 2026-10-16).
