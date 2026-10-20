@@ -180,6 +180,29 @@ def _assessment_sol(a):
     return dict(a, basis=b)
 
 
+ARM_SUFFIX = __import__("re").compile(r"_(H)\d+$")  # a further group's variant name: flow300_H6 is group H's
+
+
+def infer_groups(state, exits):
+    """A journal without the state 'groups' (from before the engine wrote it, or a test harness's) that holds
+    further-group variants (names ending in _H<n>): the groups inferred from the names, so those arms are not
+    counted as K3 (the main group is every other non-N2 variant). Returns (state, inferred); the page says so.
+    A journal with 'groups' or without such variants is returned unchanged."""
+    if state.get(stoprule.GROUPS_KEY):
+        return state, False
+    variants = {x["variant"] for x in exits if not x["family"].startswith("N2_")}
+    arms = defaultdict(list)
+    for v in sorted(variants):
+        m = ARM_SUFFIX.search(v)
+        if m:
+            arms[m.group(1)].append(v)
+    if not arms:
+        return state, False
+    groups = {"main": {"primary": True, "variants": sorted(variants - {v for vs in arms.values() for v in vs})},
+              **{g: {"primary": False, "variants": vs} for g, vs in arms.items()}}
+    return dict(state, **{stoprule.GROUPS_KEY: json.dumps(groups)}), True
+
+
 def stop_rule(exits, orders, state, day, live_rows=False):
     """The stop-rule counter and its trades on `day`, as the daily report counts and decides (paper/stoprule.py).
     live_rows: whether any signal has a live arrival time (the feed of a journal from before the state 'feed')."""
@@ -281,6 +304,7 @@ def journal_view(path, now):
         state = {r["k"]: r["v"] for r in j.rows("state")}
     finally:
         j.close()
+    state, groups_inferred = infer_groups(state, exits)
     run = os.path.basename(os.path.dirname(os.path.dirname(path)))
     pulse = [b for b in beats if not b["note"]]
     last = max(pulse, key=lambda b: b["minute"]) if pulse else None
@@ -396,6 +420,7 @@ def journal_view(path, now):
             "status": status, "variants": variants, "totals": totals, "positions": pos, "stop_rule": stop,
             "capital": capital, "n2": n2, "ranges": ranges, "ticker": ticker, "shadow_positions": shadow_rows,
             "arms": arm_groups(exits, positions, further, day), "arm_positions": arm_rows, "journal_usage_rows": len(usage),
+            "groups_inferred": groups_inferred,
             "holdout_rows_dropped": j.dropped}
 
 
@@ -711,6 +736,7 @@ def wallet_view(now):
             state = {r["k"]: r["v"] for r in j.rows("state")}
         finally:
             j.close()
+        state, groups_inferred = infer_groups(state, exits)
         clock = slot_clock(beats)
         primary, _ = stoprule.parse_groups(state.get(stoprule.GROUPS_KEY))
         # The bot's wallet is the primary group's (K3); the arms (H) keep their own paper wallet.
@@ -754,7 +780,8 @@ def wallet_view(now):
         _, counted, _, _ = stop_rule(exits, orders, state, day)
         final, _, taken, skipped, _ = capital_sim([(x["entry_slot"], x["exit_slot"], x["cost"] or 0, x["pnl"] or 0,
                                                     not x["tokens"]) for x in counted])
-        paper = {"journal": os.path.basename(os.path.dirname(os.path.dirname(path))), "day": day, "is_today": day == today,
+        paper = {"groups_inferred": groups_inferred,
+                 "journal": os.path.basename(os.path.dirname(os.path.dirname(path))), "day": day, "is_today": day == today,
                  "start_sol": CAPITAL_SOL, "balance_sol": final / 1e9, "sim_taken": taken, "sim_skipped": skipped,
                  "realised_sol": realised, "test_run": os.path.basename(os.path.dirname(os.path.dirname(path))).startswith("parity"),
                  "in_positions_sol": sum(p["cost"] or 0 for p in opens if own(p)) / 1e9, "open_positions": sum(1 for p in opens if own(p)),

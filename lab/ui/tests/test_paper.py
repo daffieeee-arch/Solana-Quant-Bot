@@ -394,6 +394,38 @@ class GroupPositions(unittest.TestCase):
         self.assertEqual(h[1]["venue"], "pool")
 
 
+class GroupsUnknown(unittest.TestCase):
+    """A journal without the state 'groups' (job 91's live-risk run, a harness that did not write it): the _H<n>
+    variants are group H's, not K3's, so the capital simulation equals the engine's own K3 wallet.json (LAB review:
+    4.93 SOL with H counted as K3, 8.38 without); the page says the groups were inferred."""
+    JOB91 = "/home/chupa/Solana-project/data-old-faithful-one/lab/tmp/job91/live-risk"
+
+    def test_inferred_from_the_variant_names(self):
+        state, inferred = paper.infer_groups({}, [{"family": "F7", "variant": "tp4_T600"}, {"family": "F7", "variant": "flow300_H6"},
+                                                  {"family": "N2_F7", "variant": "tp4_T600"}])
+        self.assertTrue(inferred)
+        self.assertEqual(paper.stoprule.parse_groups(state["groups"]), ({"tp4_T600"}, {"H": ["flow300_H6"]}))
+        self.assertEqual(paper.infer_groups({}, [{"family": "F7", "variant": "tp4_T600"}]), ({}, False))  # no arms: unchanged
+        with_groups = {"groups": json.dumps({"K3": {"primary": True, "variants": ["flow300_H6"]}})}
+        self.assertEqual(paper.infer_groups(with_groups, [{"family": "F7", "variant": "flow300_H6"}]), (with_groups, False))
+
+    def test_job91_capital_equals_the_engines_k3_wallet(self):
+        if not os.path.exists(os.path.join(self.JOB91, "journal.sqlite")):
+            self.skipTest("no job 91 journal")
+        os.environ["LAB_PAPER_JOURNAL"] = self.JOB91
+        try:
+            w = paper.wallet_view(1_792_497_600)
+            v = paper.journal_view(os.path.join(self.JOB91, "journal.sqlite"), 1_792_497_600)
+        finally:
+            del os.environ["LAB_PAPER_JOURNAL"]
+        with open(os.path.join(self.JOB91, "wallet.json")) as f:
+            k3 = json.load(f)["balance_lamports"] / 1e9
+        self.assertTrue(w["paper"]["groups_inferred"] and v["groups_inferred"])
+        self.assertAlmostEqual(w["paper"]["balance_sol"], k3, places=6)  # 8.380868337
+        self.assertEqual({p["variant"] for p in v["positions"]}, {"tp4_T600"})
+        self.assertEqual([g["group"] for g in v["arms"]], ["H"])
+
+
 class Recorder(unittest.TestCase):
     def test_sample_is_marked_and_summed_per_stream(self):
         os.environ["LAB_RECORDER_ROOT"] = "/nonexistent"
