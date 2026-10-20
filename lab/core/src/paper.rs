@@ -61,6 +61,11 @@ impl GradInfo {
     pub fn add_token(&mut self, mint: Id, complete_slot: Option<u64>, pool: Option<Id>) {
         self.tokens.insert(mint, (complete_slot, pool));
     }
+
+    /// Live (M3-11): the token is no longer known (`PaperEngine::forget_token`).
+    pub fn remove_token(&mut self, mint: Id) {
+        self.tokens.remove(&mint);
+    }
 }
 
 /// The run's settings beside the signal engine's.
@@ -1384,6 +1389,15 @@ impl PaperEngine {
     pub fn learn_token(&mut self, mint: Id, meta: MintMeta, complete_slot: Option<u64>, pool: Option<Id>) {
         self.sig.universe.add_mint(mint, meta);
         self.paper.cfg.grad.add_token(mint, complete_slot, pool);
+    }
+
+    /// Live (M3-11): a token the feed dropped (LiveFeed `_prune`: older than TOKEN_KEEP_DAYS days without a completion or
+    /// pool). Python's `feed.token(mint)` is None from then on: a pool of the mint takes its coin creator as the creator
+    /// (engine.py:567-568), a curve of it is out of the universe, and its graduation fields are gone. It goes in where
+    /// learn_token does (before the slots the source releases after the prune).
+    pub fn forget_token(&mut self, mint: Id) {
+        self.sig.universe.remove_mint(mint);
+        self.paper.cfg.grad.remove_token(mint);
     }
 
     /// Live (spec D3; M3-08b D4): a SOL market the feed learned while it read (live.py:451-485), into the Universe with

@@ -181,6 +181,14 @@ impl Universe {
         put(&mut self.mints, id, m);
     }
 
+    /// Live (M3-11): a token the feed no longer knows (LiveFeed `_prune`): its lookups fail from here on, as
+    /// `feed.token(mint)` returns None (a pool of its mint takes its coin creator, engine.py:567-568).
+    pub fn remove_mint(&mut self, id: Id) {
+        if let Some(m) = self.mints.get_mut(id as usize) {
+            *m = None;
+        }
+    }
+
     /// A SOL-market pool; other pools are never added (feed.py:97-99).
     pub fn add_pool(&mut self, id: Id, p: PoolMeta) {
         put(&mut self.pools, id, p);

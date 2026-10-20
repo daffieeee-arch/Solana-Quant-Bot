@@ -64,6 +64,12 @@
 //!   window with and without the farmer flag, the side digests drained at each slot end, the clock and the stats;
 //!   lab/live/nas_m3_09b.sh compares it with LiveFeed's on job 91.
 //!
+//! M3-11, the paper loop on the follow source (paper.rs `run_follow`; spec research/m3-11-paper-loop-spec-2026-10-20.md
+//! v0.3), against `paper.engine --live --catch-up` (paper/live_reference.py; lab/live/nas_m3_11.sh):
+//!
+//!   lab-live paper --follow ROOT --snapshot DIR [--snapshot-before SLOT] [--h24 N] --groups FILE --variants SPEC[,SPEC...]
+//!                  --cost-scenario FILE [--ignore-risk] --journal DIR [--summary FILE] [--mem-log FILE] [--expect-segments N]
+//!
 //! M1 C2-5, the curve seed before a replay's from (curve_hold.rs; spec research/m1-c2-positionsim-spec-2026-10-19.md §4.1):
 //! curve_hold.parquet of paper.snapshot_export, read per (mint, trader) and checked against the replay's from and to. No
 //! command uses it yet; `lab-live paper` (C2-4b) seeds its curve positions with it.
@@ -124,7 +130,9 @@ fn parse_args(argv: &[String]) -> Result<Args> {
                     lab-live signals --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --groups FILE --journal DIR [--dev-bounds LO HI] \
                     [--summary FILE] [--trace FILE]\n       \
                     lab-live paper (--chunks-root DIR | --segments DIR) --snapshot DIR --from SLOT --to SLOT --groups FILE --variants SPEC[,SPEC...] \
-                    --cost-scenario FILE [--ignore-risk] --journal DIR [--summary FILE] [--trace FILE] [--mem-log FILE] [--keep-farmer-history]"),
+                    --cost-scenario FILE [--ignore-risk] --journal DIR [--summary FILE] [--trace FILE] [--mem-log FILE] [--keep-farmer-history]\n       \
+                    lab-live paper --follow ROOT --snapshot DIR [--snapshot-before SLOT] [--h24 N] --groups FILE --variants SPEC[,SPEC...] \
+                    --cost-scenario FILE [--ignore-risk] --journal DIR [--summary FILE] [--mem-log FILE] [--expect-segments N]"),
     }
     let (mut chunks_root, mut segments_root, mut from, mut to, mut journal, mut order_out) = (None, None, None, None, None, None);
     while let Some(flag) = it.next() {
@@ -357,9 +365,14 @@ fn parse_paper_args(argv: &[String]) -> Result<paper::PaperArgs> {
     let (mut chunks_root, mut snapshot, mut from, mut to, mut groups, mut journal) = (None, None, None, None, None, None);
     let (mut variants, mut cost_scenario, mut ignore_risk, mut summary, mut trace, mut segments) = (None, None, false, None, None, None);
     let (mut mem_log, mut keep_farmer_history) = (None, false);
+    let (mut follow, mut before, mut h24, mut expect) = (None, None, None, None);
     while let Some(flag) = it.next() {
         let mut val = || it.next().cloned().with_context(|| format!("{flag} needs a value"));
         match flag.as_str() {
+            "--follow" => follow = Some(PathBuf::from(val()?)),
+            "--snapshot-before" => before = Some(val()?.parse::<u64>().context("--snapshot-before")?),
+            "--h24" => h24 = Some(val()?.parse::<u64>().context("--h24")?),
+            "--expect-segments" => expect = Some(val()?.parse::<u64>().context("--expect-segments")?),
             "--chunks-root" => chunks_root = Some(PathBuf::from(val()?)),
             "--segments" => segments = Some(PathBuf::from(val()?)),
             "--snapshot" => snapshot = Some(PathBuf::from(val()?)),
@@ -378,11 +391,32 @@ fn parse_paper_args(argv: &[String]) -> Result<paper::PaperArgs> {
             other => bail!("unknown argument {other}"),
         }
     }
+    let variants = variants.filter(|v| !v.is_empty()).context("--variants: the primary group's specs (paper.engine's default F7 grid is M4)")?;
+    // M3-11: --follow takes the follow source's options; the replay's are refused with it, and its with the replay
+    if let Some(root) = follow {
+        let replay_only = [("--chunks-root", chunks_root.is_some()), ("--segments", segments.is_some()), ("--from", from.is_some()),
+                           ("--to", to.is_some()), ("--trace", trace.is_some()), ("--keep-farmer-history", keep_farmer_history)];
+        if let Some((f, _)) = replay_only.iter().find(|x| x.1) {
+            bail!("{f} is the replay's: refused with --follow");
+        }
+        if h24 == Some(0) {
+            bail!("--h24 must be above 0");
+        }
+        return Ok(paper::PaperArgs {
+            follow: Some(paper::FollowOpts { root, snapshot_before: before, h24, expect_segments: expect }), chunks_root: PathBuf::new(),
+            segments: None, snapshot: snapshot.context("--snapshot")?, from: 0, to: 0, groups: groups.context("--groups")?, variants,
+            cost_scenario: cost_scenario.context("--cost-scenario")?, ignore_risk, journal: journal.context("--journal")?, summary,
+            trace: None, mem_log, keep_farmer_history: false,
+        });
+    }
+    if let Some((f, _)) = [("--snapshot-before", before.is_some()), ("--h24", h24.is_some()), ("--expect-segments", expect.is_some())]
+        .iter().find(|x| x.1) {
+        bail!("{f} is --follow's: refused without it");
+    }
     let (from, to) = (from.context("--from")?, to.context("--to")?);
     if from >= to {
         bail!("--from must be below --to");
     }
-    let variants = variants.filter(|v| !v.is_empty()).context("--variants: the primary group's specs (paper.engine's default F7 grid is M4)")?;
     let chunks_root = match (chunks_root, &segments) {
         (Some(_), Some(_)) => bail!("--chunks-root or --segments, not both"),
         (Some(c), None) => c,
@@ -390,7 +424,7 @@ fn parse_paper_args(argv: &[String]) -> Result<paper::PaperArgs> {
         (None, None) => bail!("--chunks-root or --segments"),
     };
     Ok(paper::PaperArgs {
-        chunks_root, segments, snapshot: snapshot.context("--snapshot")?, from, to,
+        follow: None, chunks_root, segments, snapshot: snapshot.context("--snapshot")?, from, to,
         groups: groups.context("--groups")?, variants, cost_scenario: cost_scenario.context("--cost-scenario")?, ignore_risk,
         journal: journal.context("--journal")?, summary, trace, mem_log, keep_farmer_history,
     })
@@ -433,6 +467,25 @@ mod tests {
                     base.replace("--cost-scenario /k ", ""), base.replace("--groups /g ", ""), base.replace("--to 20", "--to 10"),
                     format!("{base} --dev-bounds 0 5")] {
             assert!(parse_paper_args(&args(&bad)).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_paper_command_takes_the_follow_source_without_the_replays_options() {
+        // M3-11: --follow ROOT with its own options; a replay option with it, or one of its options without it, is refused
+        let base = "--follow /r --snapshot /s --groups /g --variants 0.04:600 --cost-scenario /k --journal /j";
+        let a = parse_paper_args(&args(&format!("{base} --snapshot-before 9 --h24 3 --expect-segments 2 --mem-log /l"))).unwrap();
+        let f = a.follow.as_ref().unwrap();
+        assert_eq!((f.root.to_str(), f.snapshot_before, f.h24, f.expect_segments, a.mem_log.is_some(), a.ignore_risk), (Some("/r"), Some(9), Some(3), Some(2), true, false));
+        let a = parse_paper_args(&args(base)).unwrap();
+        assert_eq!(a.follow.as_ref().map(|f| (f.snapshot_before, f.h24, f.expect_segments)), Some((None, None, None)));
+        for extra in ["--chunks-root /c", "--segments /seg", "--from 1", "--to 2", "--trace /t", "--keep-farmer-history", "--h24 0"] {
+            assert!(parse_paper_args(&args(&format!("{base} {extra}"))).is_err(), "{extra}");
+        }
+        let replay = "--chunks-root /c --snapshot /s --from 10 --to 20 --groups /g --variants 0.04:600 --cost-scenario /k --journal /j";
+        assert!(parse_paper_args(&args(replay)).unwrap().follow.is_none());
+        for extra in ["--snapshot-before 9", "--h24 3", "--expect-segments 2"] {
+            assert!(parse_paper_args(&args(&format!("{replay} {extra}"))).is_err(), "{extra}");
         }
     }
 

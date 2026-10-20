@@ -86,6 +86,13 @@ pub(crate) fn load(snap: &crate::snapshot::Snapshot, keys: &mut Keys, dev_bounds
     }
     let clock = Clock::new(snap.ms_per_slot.clone());
     let bounds = Bounds::new(dev_bounds.unwrap_or(meta_bounds), &clock);
+    let (universe, load) = universe_of(snap, keys, bounds)?;
+    Ok(Loaded { universe, clock, bounds, load })
+}
+
+/// The snapshot's tokens and SOL markets as the engine's universe with `bounds` (signals_core.rs `universe`). M3-11's
+/// live start interns every market's mint first (spec v0.3 §2.1), so the pool finds its token when it is learned later.
+pub(crate) fn universe_of(snap: &crate::snapshot::Snapshot, keys: &mut Keys, bounds: Bounds) -> Result<(Universe, UniverseLoad)> {
     let tokens: Vec<Token> = snap
         .tokens
         .values()
@@ -104,8 +111,7 @@ pub(crate) fn load(snap: &crate::snapshot::Snapshot, keys: &mut Keys, dev_bounds
                         create_slot: p.create_slot })
         })
         .collect::<Result<Vec<_>>>()?;
-    let (universe, load) = signals_core::universe(keys, bounds, &tokens, &markets);
-    Ok(Loaded { universe, clock, bounds, load })
+    Ok(signals_core::universe(keys, bounds, &tokens, &markets))
 }
 
 /// The rows the engine emitted, into the journal; the trace lines, into the trace file.

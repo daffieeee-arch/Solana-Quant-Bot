@@ -52,9 +52,13 @@
 //!   farm_seed, which must cover a window that holds slots: refused otherwise, never a silent empty seed);
 //! - the 100-segment prune drops the farmer histories whose last trade left the window.
 //!
-//! Not here yet (spec §5): the curve legs for a live curve entry (M3-11), the paper loop (with the engine's side of a
-//! flag fix), a process restart (the journal's learned rows, with the journal's live mode), and polling for new segments
-//! (this source is a catch-up: the complete segments at its start). The injected restart of spec §4.3 (segments written again, one process) is
+//! M3-11 (research/m3-11-paper-loop-spec-2026-10-20.md v0.3) feeds `lab-live paper --follow` (paper.rs `run_follow`) and
+//! adds two items: the farmer seed's window (`Item::FarmSeed`, once) and each token the prune drops
+//! (`Item::TokenForget`, with the segment's learns).
+//!
+//! Not here yet: the curve legs for a live curve entry (M3-11b), a process restart (the journal's learned rows, with the
+//! journal's live mode, M3-12/M3-13), and polling for new segments (this source is a catch-up: the complete segments at
+//! its start). The injected restart of spec §4.3 (segments written again, one process) is
 //! lab/live/nas_m3_09b.sh's STEP=restart, with paper.restart_root.
 
 use crate::legs::{event_kind, event_line, pool_leg, pool_line, Keys, PoolRow, DAY_MS};
@@ -341,6 +345,10 @@ struct SegOut {
     flag_fixes: Vec<(Id, Order, bool)>,
     usage: Vec<Value>,
     events: Vec<(Event, Arrival)>,
+    /// M3-11: the farmer seed's window when this segment set it (the first)
+    seed: Option<SeedWindow>,
+    /// M3-11 v0.3: the mints its prune dropped
+    forgot: Vec<Id>,
 }
 
 /// How a row key was first seen (live.py `_seen`): recorded (an event) or a backfill's (history only).
@@ -430,8 +438,16 @@ impl Follow {
     /// A follow source over `<root>/segments` with the snapshot as known before the first live slot (spec §2.1: the
     /// snapshot loaded with `before`), `h24` fixed when given (LiveFeed's `h24=`), the farmer seed's window taken when
     /// `seed` (LiveFeed's `seed_farmers`, as paper.engine --live and paper.legs_dump --segments build it).
-    pub fn open(root: &Path, mut snap: Snapshot, h24: Option<u64>, seed: bool) -> Result<Self> {
+    pub fn open(root: &Path, snap: Snapshot, h24: Option<u64>, seed: bool) -> Result<Self> {
+        Self::open_with(root, snap, h24, seed, |_, _| Ok(())).map(|(f, ())| f)
+    }
+
+    /// `open`, with `with` run on the snapshot and the source's admission before the snapshot is taken apart (M3-11:
+    /// the paper engine's universe in the source's keys, as `Replay::open` gives the replay's).
+    pub fn open_with<T>(root: &Path, mut snap: Snapshot, h24: Option<u64>, seed: bool,
+                        with: impl FnOnce(&Snapshot, &mut Admission) -> Result<T>) -> Result<(Self, T)> {
         let mut adm = Admission::live(&snap)?;
+        let made = with(&snap, &mut adm)?;
         // an export with the seed's trades (farm_seed.parquet read): kept for `seed_pool`
         let seed_trades = snap.seed_loaded.then(|| SeedTrades {
             by_pool: std::mem::take(&mut snap.seed), traders: std::mem::take(&mut snap.traders), export: snap.export_seed,
@@ -440,7 +456,7 @@ impl Follow {
         for (m, t) in snap.tokens {
             tokens.insert(adm.learn_mint(&m), t);
         }
-        Ok(Follow {
+        Ok((Follow {
             root: root.to_owned(), adm, tokens, fixed_h24: h24.filter(|&h| h != 0), ctx: HashMap::new(), ms_window: VecDeque::new(),
             epoch_span: HashMap::new(), per_epoch: BTreeMap::new(), stats: Stats::default(), unknown_pools: HashSet::new(),
             unknown_mints: HashSet::new(), counts: Counts::default(), next_seq: 0, heap: BTreeMap::new(), queued: HashSet::new(),
@@ -448,7 +464,7 @@ impl Follow {
             seen_order: VecDeque::new(), seen_hi: 0, farm_keys: HashMap::new(), backfill_pending: Vec::new(), backfill_counts: Counts::default(),
             pool_slots: snap.pool_slots, seed, farm_seed: None, seeded: HashSet::new(), mem_log: false, farmers: FarmerFlags::default(),
             recorded: VecDeque::new(), seed_trades,
-        })
+        }, made))
     }
 
     /// LiveFeed's `_h24()`: the fixed one, else a day at the window's ms per slot (first and last sample), else at 400 ms;
@@ -750,7 +766,8 @@ impl Follow {
     /// without a graduation leave the known mints (their later curve rows are unknown), and each pool's farm keys before
     /// last - h24 go (a pool left without keys is no longer a backfilled pool). The farmer history and the curve legs
     /// are M3-10's and M3-11's.
-    fn prune(&mut self, last: u64, h24: u64) {
+    /// The mints it dropped (M3-11 v0.3: `Item::TokenForget` each).
+    fn prune(&mut self, last: u64, h24: u64) -> Vec<Id> {
         self.farmers.prune(last, h24);
         let bound = last.checked_sub(TOKEN_KEEP_DAYS * h24);
         let old: Vec<Id> = self.tokens.iter()
@@ -769,6 +786,7 @@ impl Follow {
             }
             !keys.is_empty()
         });
+        old
     }
 
     /// One segment (module doc, steps 1-5).
@@ -827,6 +845,7 @@ impl Follow {
             }
             log::info!("farmer history seeded from the store over [{}, {}), complete from slot {}", w.lo, w.hi, w.complete_from);
             self.farm_seed = Some(w);
+            out.seed = Some(w);
         }
         // its own rows, admitted by what is known now, the unknown ones counted
         let part = Part { lo: 0, hi: u64::MAX, dir: s.dir.clone() };
@@ -901,7 +920,7 @@ impl Follow {
         if self.stats.segments % PRUNE_EVERY == 0 {
             if let Some((e, _)) = out.events.last() {
                 let last = e.leg.slot();
-                self.prune(last, h24);
+                out.forgot = self.prune(last, h24);
             }
         }
         Ok(out)
@@ -977,7 +996,7 @@ impl Follow {
     /// segments read. Each structure is bounded by construction: the seen keys by SEEN_KEEP_SLOTS, the heap and the
     /// pending rows by about a segment, the farm keys and tokens by the 100-segment prune, the unknown sets by their cap;
     /// the pool contexts, seeded pools and interned keys grow with the pools and traders seen.
-    fn mem(&self) -> ReplayMem {
+    pub fn mem(&self) -> ReplayMem {
         let mut m = ReplayMem { segments: Some(self.stats.segments), ..ReplayMem::default() };
         if !self.mem_log {
             return m;
@@ -1034,8 +1053,24 @@ impl Source for Follow {
         let (mut evs, mut arrs) = (Vec::new(), Vec::new());
         for (n, s) in segs.iter().enumerate() {
             let out = self.read_segment(s)?;
+            // M3-11: the keys a learned token or SOL market names, interned before it is handed out (the paper engine
+            // looks them up: a token's creator and pool, a market's mint and coin creator)
+            for t in &out.tokens {
+                for k in [t.creator.as_deref(), t.pool.as_deref()].into_iter().flatten() {
+                    self.adm.keys.id(k);
+                }
+            }
+            for p in &out.pools {
+                self.adm.keys.id(&p.mint);
+                if let Some(c) = &p.coin_creator {
+                    self.adm.keys.id(c);
+                }
+            }
             let (mem, h24) = (self.mem(), self.h24());
             let keys = &self.adm.keys;
+            if let Some(w) = out.seed {
+                f(keys, &mem, Item::FarmSeed(w))?;
+            }
             for t in &out.tokens {
                 f(keys, &mem, Item::Token(t))?;
             }
@@ -1056,6 +1091,9 @@ impl Source for Follow {
             }
             for u in &out.usage {
                 f(keys, &mem, Item::Usage(u))?;
+            }
+            for &mint in &out.forgot {
+                f(keys, &mem, Item::TokenForget { mint })?;
             }
             f(keys, &mem, Item::Segment { seq: s.seq, h24 })?;
             self.push(out.events);
@@ -1336,6 +1374,9 @@ impl Dump {
                 }
                 "segment"
             }
+            // the dump writes the source's farm_seed at its end (legs_dump's), and its tokens_dropped
+            Item::FarmSeed(_) => "farm_seed",
+            Item::TokenForget { .. } => "token_forget",
         };
         *self.items.entry(name).or_default() += 1;
         Ok(())
@@ -1436,15 +1477,10 @@ impl Dump {
     }
 }
 
-/// `lab-live legs --follow`: the follow source's events and side digests in paper.legs_dump's `--segments` form (spec
-/// §4.1), refused when it reads no segment, another number than `expect_segments`, a segment in the hold-out or the clean
-/// period, or no event.
-pub fn run(a: &FollowArgs) -> Result<Value> {
-    if a.window == 0 {
-        bail!("--window must be above 0");
-    }
-    check_root(&a.root)?;
-    let segs = segment_dirs(&a.root)?;
+/// The root's segments (`check_root`, `segment_dirs`), refused when one lies in the hold-out or the clean period.
+pub fn locked_out(root: &Path) -> Result<Vec<SegMeta>> {
+    check_root(root)?;
+    let segs = segment_dirs(root)?;
     for s in &segs {
         for (name, (lo, hi)) in [("the hold-out", HOLDOUT), ("the clean period (epochs 1055-1063)", CLEAN)] {
             if s.first < hi && s.last >= lo {
@@ -1452,12 +1488,28 @@ pub fn run(a: &FollowArgs) -> Result<Value> {
             }
         }
     }
-    // with the seed's trades when the export has them (farm_seed.parquet): the seed window then reads them (M3-10 §3)
-    let snap = if a.snapshot.join("farm_seed.parquet").is_file() {
-        Snapshot::load(&a.snapshot, a.snapshot_before)?
+    Ok(segs)
+}
+
+/// The snapshot as known before `before`, with the seed's trades when the export has them (farm_seed.parquet): the seed
+/// window then reads them (M3-10 §3).
+pub fn snapshot_known(dir: &Path, before: Option<u64>) -> Result<Snapshot> {
+    if dir.join("farm_seed.parquet").is_file() {
+        Snapshot::load(dir, before)
     } else {
-        Snapshot::load_known(&a.snapshot, a.snapshot_before)?
-    };
+        Snapshot::load_known(dir, before)
+    }
+}
+
+/// `lab-live legs --follow`: the follow source's events and side digests in paper.legs_dump's `--segments` form (spec
+/// §4.1), refused when it reads no segment, another number than `expect_segments`, a segment in the hold-out or the clean
+/// period, or no event.
+pub fn run(a: &FollowArgs) -> Result<Value> {
+    if a.window == 0 {
+        bail!("--window must be above 0");
+    }
+    let segs = locked_out(&a.root)?;
+    let snap = snapshot_known(&a.snapshot, a.snapshot_before)?;
     let (n_tokens, n_classed) = (snap.tokens.len(), snap.pool_class.len());
     let mut src = Follow::open(&a.root, snap, a.h24, true)?;
     src.mem_log = a.mem_log.is_some();
@@ -1496,7 +1548,7 @@ pub fn run(a: &FollowArgs) -> Result<Value> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::idl::{Kind, Val};
     use crate::legs_read::tests::{edit_meta, export, pool_cols, ptrade, put, tmp, trade, BUY, SELL, TRADE};
@@ -1511,7 +1563,7 @@ mod tests {
     }
 
     /// A complete segment `seq` of [first, last] under root/segments, with `extra` in its `_segment.json`.
-    fn seg(root: &Path, seq: u64, first: u64, last: u64, extra: Value) -> PathBuf {
+    pub(crate) fn seg(root: &Path, seq: u64, first: u64, last: u64, extra: Value) -> PathBuf {
         let dir = root.join("segments").join(format!("{seq:09}"));
         fs::create_dir_all(&dir).unwrap();
         let mut m = json!({"seq": seq, "first_slot": first, "last_slot": last, "complete": true});
@@ -1522,12 +1574,12 @@ mod tests {
         dir
     }
 
-    fn blocks(dir: &Path, rows: &[(u64, Option<i64>, Option<bool>)]) {
+    pub(crate) fn blocks(dir: &Path, rows: &[(u64, Option<i64>, Option<bool>)]) {
         let r: Vec<Vec<Val>> = rows.iter().map(|&(sl, t, sk)| vec![u(sl), t.map_or(Val::Null, Val::I64), sk.map_or(Val::Null, Val::Bool)]).collect();
         put(dir, "blocks", 0, &[("slot", Kind::U64), ("block_time", Kind::I64), ("skipped", Kind::Bool)], &r);
     }
 
-    fn create_pool(dir: &Path, part: usize, rows: &[(u64, &str, &str, &str)]) {
+    pub(crate) fn create_pool(dir: &Path, part: usize, rows: &[(u64, &str, &str, &str)]) {
         let cols = [("slot", Kind::U64), ("tx_index", Kind::U64), ("outer_ix", Kind::U64), ("inner_ix", Kind::U64), ("pool", Kind::Utf8),
                     ("base_mint", Kind::Utf8), ("quote_mint", Kind::Utf8), ("coin_creator", Kind::Utf8), ("is_mayhem_mode", Kind::Bool)];
         let r: Vec<Vec<Val>> = rows.iter().map(|&(sl, p, b, q)| vec![u(sl), u(0), u(0), u(3), s(p), s(b), s(q), s(&format!("CR{p}")), Val::Bool(false)]).collect();
@@ -1617,6 +1669,8 @@ mod tests {
                 Item::FlagFix { pool, order, farmer } => format!("flag_fix {} {} {farmer}", keys.name(pool).unwrap(), order.slot),
                 Item::Usage(u) => format!("usage {}", py_json(u)),
                 Item::Segment { seq, h24 } => format!("segment {seq} {h24}"),
+                Item::FarmSeed(w) => format!("farm_seed {} {} {}", w.lo, w.hi, w.complete_from),
+                Item::TokenForget { mint } => format!("token_forget {}", keys.name(mint).unwrap()),
             });
             Ok(())
         }).unwrap();
@@ -1626,12 +1680,14 @@ mod tests {
     #[test]
     fn the_learns_come_before_the_slots_they_precede_and_the_last_slot_waits_for_the_next_segment() {
         // spec §2.2-§2.5: each segment's learns (own dirs, then a complete backfill's) before its events; the release lags
-        // one slot, so seg 0's last slot (1030) goes out after seg 1's learns (the lookahead); late and duplicate rows dropped
+        // one slot, so seg 0's last slot (1030) goes out after seg 1's learns (the lookahead); late and duplicate rows dropped.
+        // M3-11: the farmer seed's window first, once (the store's pool rows end at the first live slot 1000).
         let root = tmp("follow-order");
         fixture(&root);
         let mut f = open(&root, Some(500));
         let t = trace(&mut f);
         let want = [
+            "farm_seed 1000 1000 1500",
             "learned epoch\t0\t0\t1000\t[1000, 1000000]",
             "usage {\"bytes\": 5, \"minute\": 1, \"note\": \"\\u00e9\", \"seq\": 0, \"stream\": \"tx_watchlist\"}",
             "segment 0 500",
@@ -1924,11 +1980,15 @@ mod tests {
                 }
             }
             let mut f = open(&root, Some(10));
-            trace(&mut f);
+            let t = trace(&mut f);
             let p1 = f.adm.keys.get("P1").unwrap();
+            // M3-11 v0.3: an item per dropped mint, with the 100th segment's items (before its slots), as many as dropped
+            let forgets: Vec<usize> = t.iter().enumerate().filter(|(_, l)| l.starts_with("token_forget")).map(|(i, _)| i).collect();
+            assert_eq!(forgets.len() as u64, f.stats.tokens_dropped);
             if events {
                 assert_eq!((f.stats.tokens_dropped, f.stats.unknown_mint_rows, f.farm_keys.contains_key(&p1)), (1, 1, false));
                 assert!(!f.adm.known_mint("M1") && !f.tokens.contains_key(&f.adm.keys.get("M1").unwrap()));
+                assert_eq!((t[forgets[0]].as_str(), t[forgets[0] + 1].as_str()), ("token_forget M1", "segment 99 10"));
             } else {
                 assert_eq!((f.stats.tokens_dropped, f.stats.unknown_mint_rows, f.farm_keys.contains_key(&p1)), (0, 0, true));
             }
@@ -1941,13 +2001,13 @@ mod tests {
     }
 
     /// W's trade of P1 at `slot` (a buy or a sell of `amount` tokens, transaction 0).
-    fn wtrade(slot: u64, sell: bool, amount: u64) -> Vec<Val> {
+    pub(crate) fn wtrade(slot: u64, sell: bool, amount: u64) -> Vec<Val> {
         let mut r = ptrade(slot, "P1", "W", None, amount, 1_000, sell);
         r[1] = u(0);
         r
     }
 
-    fn put_trades(dir: &Path, rows: &[(u64, bool, u64)]) {
+    pub(crate) fn put_trades(dir: &Path, rows: &[(u64, bool, u64)]) {
         let (buys, sells): (Vec<_>, Vec<_>) = rows.iter().partition(|r| !r.1);
         if !buys.is_empty() {
             put(dir, "pump_amm/BuyEvent", 0, &pool_cols(&BUY), &buys.iter().map(|&&(s, _, a)| wtrade(s, false, a)).collect::<Vec<_>>());

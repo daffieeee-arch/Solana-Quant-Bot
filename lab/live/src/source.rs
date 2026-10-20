@@ -13,8 +13,9 @@
 
 use crate::legs::Keys;
 use crate::legs_read::{Replay, ReplayMem};
-use crate::snapshot::{PoolInfo, TokenInfo};
+use crate::snapshot::{PoolInfo, SeedWindow, TokenInfo};
 use anyhow::Result;
+pub use lab_core::legs::Arrival;
 use lab_core::legs::{Event, Id, Leg, Order};
 use serde_json::Value;
 
@@ -29,15 +30,10 @@ pub struct Slot<'a> {
     pub arrivals: Option<&'a [Arrival]>,
 }
 
-/// An event's arrival (LiveFeed `Event.arrival`, live.py `_arrival_of`): the earliest received and created time of its
-/// transaction in the segment's arrivals table (created read as BIGINT: beyond it NULL), and the segment's written_unix.
-/// A transaction without an arrival row has (None, None, written).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Arrival {
-    pub received: Option<u64>,
-    pub created: Option<i64>,
-    pub written: Option<u64>,
-}
+// An event's arrival (LiveFeed `Event.arrival`, live.py `_arrival_of`) is lab_core's `Arrival` (M3-11: the engine reads
+// it for the signal latency): the earliest received and created time of its transaction in the segment's arrivals table
+// (created read as BIGINT: beyond it NULL), and the segment's written_unix. A transaction without an arrival row has
+// (None, None, written).
 
 /// A row of the journal's `learned` table (LiveFeed `drain_learned`): what a restart needs. `info` is Python's
 /// json.dumps of the row's list, so its text is the journal's.
@@ -77,6 +73,12 @@ pub enum Item<'a> {
     Usage(&'a Value),
     /// follow: the segment just read, and the farmer window h24 after its blocks (LiveFeed `seq` and `_h24()`).
     Segment { seq: u64, h24: u64 },
+    /// follow (M3-11): the farmer seed's window, once, with the first segment's learns (LiveFeed `farm_seed`, set by
+    /// `_init_seed` before any event): the engine's farm_complete and the journal's farmer_seed.
+    FarmSeed(SeedWindow),
+    /// follow (M3-11 v0.3): a token the prune dropped (LiveFeed `_prune`: no completion or pool, older than TOKEN_KEEP_DAYS
+    /// days), one item per dropped mint, before the slots released after it: `feed.token(mint)` is None from then on.
+    TokenForget { mint: Id },
 }
 
 /// A source of the paper engine's input, in chain order (module doc).

@@ -10,7 +10,8 @@
 #                chunks on the fixture, and every earlier test) and of ALL of lab/core, named tests required to have run
 #                (M3-08: lab/core's live API, the m3_live_cases golden and C2's cases with the slots closed live; M3-08b:
 #                the live farm-window rule, backfills as history and the one create_slot store; M3-09b: the follow source;
-#                M3-11: the flag fixes and the signal latency columns in lab/core, their golden cases and journal columns);
+#                M3-11: the flag fixes and the signal latency columns in lab/core, their golden cases and journal columns, the
+#                paper loop on the follow source and the dropped tokens);
 #                then the release binary into $OUT/bin/. Run with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab. Since
 #                STEP=repro, through lab/scripts/rust-repro.sh: cargo reaches the checkout by one fixed path
 #                ($LAB_RUST_ROOT/lab, a symlink, under a lock) and maps it and CARGO_HOME to /src and /cargo, so the
@@ -154,7 +155,11 @@ if [ "$STEP" = build ]; then
            follow::tests::a_late_backfill_reflags_a_recorded_trade_and_the_flags_follow_livefeeds_window \
            follow::tests::the_seed_window_takes_the_exports_trades_at_a_pools_first_live_row \
            tests::the_follow_dump_takes_a_root_a_snapshot_a_grid_origin_and_a_summary \
-           signals_core::tests::rows_become_the_journals_columns; do
+           signals_core::tests::rows_become_the_journals_columns \
+           paper::tests::a_follow_run_writes_the_live_states_and_counts_a_flag_fix_on_its_slots_day \
+           paper::tests::learned_and_usage_rows_wait_for_the_next_dated_minute_and_none_after_the_last \
+           paper::tests::a_group_that_could_trade_a_curve_is_refused_with_follow paper::tests::the_flag_fix_days_are_written_as_python_dumps_them \
+           tests::the_paper_command_takes_the_follow_source_without_the_replays_options; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"
@@ -172,7 +177,8 @@ if [ "$STEP" = build ]; then
            signals::tests::a_rows_latency_is_its_trigger_transactions_arrival_in_its_group \
            signals::tests::flag_fixes_reach_the_farm_windows_at_the_next_slot_end_after_the_backfills \
            paper::tests::flag_fixes_are_counted_per_day_with_the_pools_that_have_an_open_position \
-           paper::tests::a_live_push_gives_the_rows_their_latency_and_the_live_bounds_decide_everywhere; do
+           paper::tests::a_live_push_gives_the_rows_their_latency_and_the_live_bounds_decide_everywhere \
+           paper::tests::a_forgotten_token_leaves_its_pool_with_the_coin_creator; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test-core.log" || { log "cargo test lab-core: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test lab-core: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test-core.log") tests ok)"

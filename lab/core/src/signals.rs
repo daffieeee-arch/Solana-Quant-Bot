@@ -112,6 +112,7 @@ impl GroupSpec {
     }
 
     /// engine.py `_d_at` (:667-672): the entry and exit delay of a decision at t, d_ms in the clock's slots at t, else d.
+    /// A d_ms of 0 never reaches it: lab-live's parse_groups refuses it (Python's `if g.d_ms` would take d there).
     pub fn d_at(&self, t: u64, clock: &Clock) -> u64 {
         self.d_ms.map_or(self.d, |ms| clock.slots(ms as f64, t))
     }
