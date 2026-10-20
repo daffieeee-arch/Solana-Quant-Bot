@@ -4,6 +4,7 @@ The engine re-reads it every minute of event time. An invalid file means: open n
 why in the journal.
 """
 
+import math
 from dataclasses import dataclass
 
 import yaml
@@ -27,21 +28,26 @@ class Risk:
 
 
 def load(path):
-    """(Risk, None) or (None, reason)."""
+    """(Risk, None) or (None, reason). It never raises on what the file holds: the owner edits this file to stop, and a
+    typo must give a reason (the engine then opens nothing), not crash the engine at its next minute."""
     try:
         with open(path) as f:
             raw = yaml.safe_load(f)
-    except (OSError, yaml.YAMLError) as e:
+    except (OSError, yaml.YAMLError, UnicodeDecodeError) as e:  # a file that is not UTF-8
         return None, f"risk config unreadable: {e.__class__.__name__}"
     try:
         r = Risk(float(raw["size_sol"]), int(raw["max_open_positions"]), float(raw["max_exposure_sol"]),
                  float(raw["daily_loss_limit_sol"]), bool(raw["kill_switch"]), tuple(raw["families"]),
                  float(raw.get("pool_cooldown_h", 0)))
-    except (KeyError, TypeError, ValueError) as e:
+    except (KeyError, TypeError, ValueError, OverflowError) as e:  # OverflowError: a huge int, or .inf for an int
         return None, f"risk config invalid: {e.__class__.__name__} {e}"
     if not (0 < r.size_sol <= r.max_exposure_sol) or r.max_open_positions < 1 or r.daily_loss_limit_sol <= 0 \
             or r.pool_cooldown_h < 0:
         return None, "risk config invalid: sizes and limits must be positive and size <= max exposure"
+    if not all(math.isfinite(x) for x in (r.size_sol, r.max_exposure_sol, r.daily_loss_limit_sol, r.pool_cooldown_h)):
+        return None, "risk config invalid: sizes and limits must be finite"  # size_lamports and Clock.slots raise on inf
+    if not all(isinstance(f, str) for f in r.families):  # before set() and sorted(): a list or a number among them
+        return None, "risk config invalid: families must be names"
     if not set(r.families) <= set(FAMILIES):
         return None, f"risk config invalid: unknown families {sorted(set(r.families) - set(FAMILIES))}"
     if not isinstance(raw["kill_switch"], bool):

@@ -1184,7 +1184,7 @@
    "kind": "text",
    "rust": "refused",
    "python": {
-    "record": "Risk(size_sol=0.5, max_open_positions=5, max_exposure_sol=inf, daily_loss_limit_sol=1.0, kill_switch=False, pool_cooldown_h=24.0, families=['F7'], size_lamports=500000000)"
+    "record": "reason: risk config invalid: sizes and limits must be finite"
    },
    "text": "max_exposure_sol: inf\nsize_sol: 0.5\nmax_open_positions: 5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\n"
   },
@@ -1193,7 +1193,7 @@
    "kind": "text",
    "rust": "refused",
    "python": {
-    "record": "Risk(size_sol=0.5, max_open_positions=5, max_exposure_sol=2.5, daily_loss_limit_sol=1.0, kill_switch=False, pool_cooldown_h=nan, families=['F7'], size_lamports=500000000)"
+    "record": "reason: risk config invalid: sizes and limits must be finite"
    },
    "text": "pool_cooldown_h: NaN\nsize_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\n"
   },
@@ -1265,7 +1265,7 @@
    "kind": "text",
    "rust": "refused",
    "python": {
-    "record": "reason: risk config invalid: unknown families [7]"
+    "record": "reason: risk config invalid: families must be names"
    },
    "text": "families: [7]\nsize_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\npool_cooldown_h: 24\n"
   },
@@ -1274,7 +1274,7 @@
    "kind": "text",
    "rust": "refused",
    "python": {
-    "record": "reason: risk config invalid: unknown families [None]"
+    "record": "reason: risk config invalid: families must be names"
    },
    "text": "families: [F7, NULL]\nsize_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\npool_cooldown_h: 24\n"
   },
@@ -1283,7 +1283,7 @@
    "kind": "text",
    "rust": "refused",
    "python": {
-    "record": "raises: TypeError: '<' not supported between instances of 'int' and 'str'"
+    "record": "reason: risk config invalid: families must be names"
    },
    "text": "families: [F8, 7]\nsize_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\npool_cooldown_h: 24\n"
   },
@@ -1292,7 +1292,7 @@
    "kind": "text",
    "rust": "refused",
    "python": {
-    "record": "raises: TypeError: unhashable type: 'list'"
+    "record": "reason: risk config invalid: families must be names"
    },
    "text": "families: [[F7]]\nsize_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\npool_cooldown_h: 24\n"
   },
@@ -1463,7 +1463,7 @@
    "kind": "text",
    "rust": "refused",
    "python": {
-    "record": "raises: OverflowError: cannot convert float infinity to integer"
+    "record": "reason: risk config invalid: sizes and limits must be finite"
    },
    "text": "size_sol: 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0\nmax_exposure_sol: 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0\nmax_open_positions: 5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\npool_cooldown_h: 24\n"
   },
@@ -1472,7 +1472,7 @@
    "kind": "text",
    "rust": "refused",
    "python": {
-    "record": "Risk(size_sol=0.5, max_open_positions=5, max_exposure_sol=2.5, daily_loss_limit_sol=1.0, kill_switch=False, pool_cooldown_h=inf, families=['F7'], size_lamports=500000000)"
+    "record": "reason: risk config invalid: sizes and limits must be finite"
    },
    "text": "pool_cooldown_h: 10000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0\nsize_sol: 0.5\nmax_open_positions: 5\nmax_exposure_sol: 2.5\ndaily_loss_limit_sol: 1.0\nkill_switch: false\nfamilies: [F7]\n"
   },

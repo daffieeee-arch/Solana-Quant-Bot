@@ -7,8 +7,9 @@ Every case is a file text (or a missing file, or a directory) with Python's resu
 reason of `(None, reason)`, or the exception risk.load lets through. `rust` says what lab-live must do:
 - "same": the same Risk (every float to the bit) or the same reason text;
 - "refused": the text is outside lab-live's YAML subset, and lab-live refuses it with its own reason (OWN, fail closed,
-  D1). Python's result is kept for the record: Python may accept such a file (`1e9`, a block list, a duplicate key),
-  refuse it with a YAML error, or even raise (a families list mixing a number and a word; a file that is not UTF-8).
+  D1). Python's result is kept for the record: Python may accept such a file (`1e9`, a block list, a duplicate key) or
+  refuse it with its own reason (risk.load never raises on a file's content since lab/paper-risk-load-fail-closed; it
+  raised on a families list mixing a number and a word, on a list among the families and on an infinite size before).
 
 The subset (lab/live/src/risk.rs): `key: value` lines at column 0, blank lines, `#` comments (at a line's start, or after
 a space), LF or CRLF line ends and a leading BOM; no tab, no control character, no other YAML line break (a lone CR, NEL,

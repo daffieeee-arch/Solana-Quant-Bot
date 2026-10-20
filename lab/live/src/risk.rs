@@ -17,9 +17,10 @@
 //!   refuses one over 1024), a document marker, a tab, a control character, a lone CR, NEL, LS or PS, a file that is
 //!   not UTF-8). Also refused, though written in the subset: a list for a number, an int beyond 128 bits, a decimal
 //!   that is infinite as a float, a decimal for max_open_positions at or beyond ±9.2e18, and a size_sol whose
-//!   lamports reach 9.2e18 (Python carries these as big ints or infinities, which its engine cannot use). Python accepts some of these (`1e9`, a duplicate key:
-//!   the last wins, a block list), refuses others with a YAML error, and raises on two (a list mixing a number and a word;
-//!   a file that is not UTF-8). The golden table `paper/tests/data/c3_risk_load_cases.json` records each.
+//!   lamports reach 9.2e18 (Python carries these as big ints or infinities, which its engine cannot use). Python accepts
+//!   some of these (`1e9`, a duplicate key: the last wins, a block list) and refuses the others with its own reason
+//!   (risk.load raises on none since lab/paper-risk-load-fail-closed). The golden table
+//!   `paper/tests/data/c3_risk_load_cases.json` records each.
 //! - **Inside the subset, Python's steps.** Keys are looked up in risk.py's argument order (a missing one is
 //!   `KeyError '<key>'`), each value cast as `float()`, `int()`, `bool()` or `tuple()` casts it (an int is a float,
 //!   a bool is 1 or 0, a decimal for an int truncates, a word for a number is the ValueError Python writes, a word for
