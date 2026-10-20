@@ -249,20 +249,20 @@ def table(con, label, where, boot, blocks=None, twin=True):
                 continue
             trig_ok = n["trim"] > 0 and n["lo"] is not None and n["lo"] > 0
             n2_ok = p is not None and p["n2_trim"] > 0 and p["n2_lo"] is not None and p["n2_lo"] > 0
-            adv = trig_ok and not n2_ok
-            if bname == BINDING:
+            adv = trig_ok and not n2_ok if twin else None  # without a twin there is no advantage verdict (n/a), not a free "yes"
+            if bname == BINDING and twin:
                 verdicts[h] = adv
             L.append(f"| {bname} | {h} | {fmt(n['n'])} | {fmt(n['cut'], 0, pct=True)} | {fmt(n['dead'], 0, pct=True)} | {fmt(g['median'], 1, True, True)} | {fmt(g['trim'], 1, True, True)} | "
                      f"{fmt(n['median'], 1, True, True)} | **{fmt(n['trim'], 1, True, True)}** | {fmt(n['lo'], 1, True, True)} … {fmt(n['hi'], 1, True, True)} | "
                      f"{fmt(n['trim_ex'], 1, True, True)} | {fmt(n['lo_ex'], 1, True, True)} … {fmt(n['hi_ex'], 1, True, True)} | {fmt(n['pos'], 0, True)} | "
                      + (f"{fmt(p['n2_trim'], 1, True, True)} ({fmt(p['n'])}) | {fmt(p['n2_lo'], 1, True, True)} … {fmt(p['n2_hi'], 1, True, True)} | "
                         f"{fmt(p['diff'], 1, True, True)} | {fmt(p['lo'], 1, True, True)} … {fmt(p['hi'], 1, True, True)} |" if p else "– | – | – | – |")
-                     + (f" **{'yes' if adv else 'no'}** |" if bname == BINDING else " |"))
+                     + (f" **{'n/a' if adv is None else 'yes' if adv else 'no'}** |" if bname == BINDING else " |"))
     first = next((h for h in H_ORDER if verdicts.get(h)), None)
     imp = con.execute(f"SELECT avg((impact > 0.05)::INT), count(*) FROM entries WHERE ({where}) AND impact IS NOT NULL").fetchone()
     L.append("")
     L.append(f"{BINDING} verdict (spec section 5, conservative net with dead rows): "
-             + (f"advantage first at **{first}**" if first else "no horizon with an advantage") + "."
+             + ("n/a without an N2 twin" if not twin else f"advantage first at **{first}**" if first else "no horizon with an advantage") + "."
              + (f" Entry impact > 5 % at 0.5 SOL: {fmt(imp[0], 1, True)} of {fmt(imp[1])} entries." if imp and imp[0] is not None else ""))
     L.append("")
     return "\n".join(L)
