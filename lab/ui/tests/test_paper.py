@@ -470,6 +470,12 @@ class GroupPositions(unittest.TestCase):
         self.assertEqual([(p["group"], p["status"], p["key"]) for p in h], [("H", "open", "Popen"), ("H", "time", "P460000200")])
         self.assertAlmostEqual(h[1]["pnl_sol"], -0.1)
         self.assertEqual(h[1]["venue"], "pool")
+        # The day report card: per group the day's trades, Σ, best and worst (backlog 7).
+        k3, hc = v["day_card"]
+        self.assertEqual((k3["group"], k3["trades"], k3["wins"], hc["group"], hc["trades"]), ("K3", 1, 1, "H", 1))
+        self.assertAlmostEqual(k3["net_sol"], 0.02)
+        self.assertAlmostEqual(hc["net_sol"], -0.1)
+        self.assertEqual((hc["best"]["key"], hc["worst"]["key"]), ("P460000200", "P460000200"))
 
 
 class GroupsUnknown(unittest.TestCase):
