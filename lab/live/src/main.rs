@@ -55,7 +55,7 @@
 //! M3-09b, the follow source (follow.rs; spec research/m3-09b-follow-source-spec-2026-10-20.md v0.2), PR 1:
 //!
 //!   lab-live legs --follow ROOT --snapshot DIR [--snapshot-before SLOT] [--h24 N] --from SLOT [--to SLOT] --summary FILE
-//!                 [--out FILE [--out-from SLOT]] [--window N] [--expect-segments N]
+//!                 [--out FILE [--out-from SLOT]] [--window N] [--expect-segments N] [--mem-log FILE]
 //!
 //! - Python LiveFeed's events over a recorder's complete segments (`ROOT/segments`), with its admission: the snapshot as
 //!   known before the first live slot, tokens and pools learned per segment before its events, the rows of keys not
@@ -119,7 +119,7 @@ fn parse_args(argv: &[String]) -> Result<Args> {
                     lab-live snapshot --dir DIR [--before SLOT] [--first-slot SLOT --h24 SLOTS] --out FILE\n       \
                     lab-live legs --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --summary FILE [--out FILE [--out-from SLOT]] [--window N]\n       \
                     lab-live legs --follow ROOT --snapshot DIR [--snapshot-before SLOT] [--h24 N] --from SLOT [--to SLOT] --summary FILE \
-                    [--out FILE [--out-from SLOT]] [--window N] [--expect-segments N]\n       \
+                    [--out FILE [--out-from SLOT]] [--window N] [--expect-segments N] [--mem-log FILE]\n       \
                     lab-live signals --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --groups FILE --journal DIR [--dev-bounds LO HI] \
                     [--summary FILE] [--trace FILE]\n       \
                     lab-live paper (--chunks-root DIR | --segments DIR) --snapshot DIR --from SLOT --to SLOT --groups FILE --variants SPEC[,SPEC...] \
@@ -273,11 +273,11 @@ fn legs_cmd(a: &legs_read::LegsArgs) -> Result<()> {
 }
 
 /// `lab-live legs --follow ROOT --snapshot DIR [--snapshot-before SLOT] [--h24 N] --from SLOT [--to SLOT] --summary FILE
-/// [--out FILE [--out-from SLOT]] [--window N] [--expect-segments N]` (M3-09b, follow.rs).
+/// [--out FILE [--out-from SLOT]] [--window N] [--expect-segments N] [--mem-log FILE]` (M3-09b, follow.rs).
 fn parse_follow_args(argv: &[String]) -> Result<follow::FollowArgs> {
     let mut it = argv.iter();
     let (mut root, mut snapshot, mut before, mut h24, mut from, mut to) = (None, None, None, None, None, None);
-    let (mut summary, mut out, mut window, mut out_from, mut expect) = (None, None, 10_000, 0, None);
+    let (mut summary, mut out, mut window, mut out_from, mut expect, mut mem_log) = (None, None, 10_000, 0, None, None);
     while let Some(flag) = it.next() {
         let mut val = || it.next().cloned().with_context(|| format!("{flag} needs a value"));
         let num = |v: String, what: &str| v.parse::<u64>().with_context(|| what.to_owned());
@@ -293,6 +293,7 @@ fn parse_follow_args(argv: &[String]) -> Result<follow::FollowArgs> {
             "--out-from" => out_from = num(val()?, "--out-from")?,
             "--window" => window = num(val()?, "--window")?,
             "--expect-segments" => expect = Some(num(val()?, "--expect-segments")?),
+            "--mem-log" => mem_log = Some(PathBuf::from(val()?)),
             other => bail!("unknown argument {other}"),
         }
     }
@@ -301,7 +302,7 @@ fn parse_follow_args(argv: &[String]) -> Result<follow::FollowArgs> {
     }
     Ok(follow::FollowArgs {
         root: root.context("--follow")?, snapshot: snapshot.context("--snapshot")?, snapshot_before: before, h24, from: from.context("--from")?,
-        to, window, summary: summary.context("--summary")?, out, out_from, expect_segments: expect,
+        to, window, summary: summary.context("--summary")?, out, out_from, expect_segments: expect, mem_log,
     })
 }
 

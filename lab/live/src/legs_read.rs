@@ -186,6 +186,11 @@ impl Admission {
         }
     }
 
+    /// The memory log (M3-09b): the interned keys' bytes and the admission's two tables.
+    pub fn heap_bytes(&self) -> usize {
+        self.keys.heap_bytes() + lmem::vec(&self.is_mint) + lmem::vec(&self.pool)
+    }
+
     pub fn known_mint(&self, k: &str) -> bool {
         self.mint(k).is_some()
     }
