@@ -7,7 +7,9 @@
 # Steps, each logged in $RUN_DIR/entry_report.log; a failed step ends the job RED (rc 1):
 #   1. the report's tests (wallets/tests/test_entry_report.py);
 #   2. the input: parts, rows, the entry codes and days of the F7 pool_reversed 0.5 SOL rows; RED when a part, a row or an
-#      --entries code is missing (empty input is RED); the parts' size per column (the biggest first) goes to the log;
+#      --entries code is missing (empty input is RED), or when the days are not DAYS in all with EARLY_DAYS before the
+#      binding block and BINDING_DAYS in it (markout_report.BLOCKS; dev 1033-1046: 20 = 8 + 11 + 1, the labels "days 1-9"
+#      and "days 10-18" are the blocks' names, not their lengths); the parts' size per column (the biggest first) goes to the log;
 #   3. a compact copy of the positions in $RUN_DIR/entry-rows/part-000000.parquet (every column when the parts' compressed
 #      size is at most $COPY_ALL_GB; else only the columns the report reads), with its rows, bytes and sha256: the report
 #      stays reproducible from this copy once the big parts are removed;
@@ -16,7 +18,8 @@
 #      (every number within 1e-9 relative: the summation order of the rows differs; the verdict block exactly). Then
 #      the copy is a full substitute for the parts: the parts may go.
 # Tunables (env): LAB_PY, MEMORY (DuckDB limit, default 4GB), THREADS (default 4), REPORT_WORKERS (bootstrap processes,
-# default 4), BOOT (default: entry_report's BOOT = 10,000), COPY_ALL_GB (default 4), LAB_DEFAULTS (the cost config).
+# default 4), BOOT (default: entry_report's BOOT = 10,000), COPY_ALL_GB (default 4), LAB_DEFAULTS (the cost config),
+# DAYS / EARLY_DAYS / BINDING_DAYS (expected day counts, default 20 / 8 / 11 = dev 1033-1046).
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -46,10 +49,12 @@ log "tests: $(tail -1 "$RUN_DIR/entry_report.pytest.log")"
 # 2. input + 3. compact copy
 mkdir -p "$ROWS"
 rc=0
-"$PY" - "$PARTS" "$ROWS/part-000000.parquet" "$CODES" "${COPY_ALL_GB:-4}" >> "$LOG" 2>&1 <<'PYEOF' || rc=$?
+"$PY" - "$PARTS" "$ROWS/part-000000.parquet" "$CODES" "${COPY_ALL_GB:-4}" "${DAYS:-20}" "${EARLY_DAYS:-8}" "${BINDING_DAYS:-11}" >> "$LOG" 2>&1 <<'PYEOF' || rc=$?
 import glob, hashlib, os, sys
 import duckdb
+from wallets.markout_report import SPLIT_DAY, LAST_DAY
 parts, out, codes, copy_all_gb = sys.argv[1], sys.argv[2], sys.argv[3].split(","), float(sys.argv[4])
+want_days, want_early, want_binding = (int(x) for x in sys.argv[5:8])
 files = sorted(glob.glob(os.path.join(parts, "*.parquet")))
 if not files:
     print("RED: no parquet parts"); sys.exit(1)
@@ -71,6 +76,13 @@ print(f"input: {n_all:,} rows, {n:,} F7 pool_reversed 0.5 SOL rows with an entry
 missing = [c for c in codes if not per_code.get(c)]
 if n == 0 or missing:
     print(f"RED: empty input or codes without rows: {missing}"); sys.exit(1)
+# the day blocks the report binds on (markout_report.BLOCKS: days before SPLIT_DAY, SPLIT_DAY..LAST_DAY, after): every expected
+# day must be there, else the binding block is thin and 'positive: false' would be silent (LAB review on #482)
+early, binding, later = con.execute(f"""SELECT count(DISTINCT day) FILTER (WHERE day < '{SPLIT_DAY}'), count(DISTINCT day) FILTER (WHERE day BETWEEN '{SPLIT_DAY}' AND '{LAST_DAY}'),
+    count(DISTINCT day) FILTER (WHERE day > '{LAST_DAY}') FROM s WHERE family = 'F7' AND segment = 'pool_reversed' AND size_sol = 0.5 AND entry IS NOT NULL""").fetchone()
+print(f"days: {n_days} in all, {early} before {SPLIT_DAY} (early block), {binding} in {SPLIT_DAY}..{LAST_DAY} (binding block), {later} after; expected {want_days} / {want_early} / {want_binding}")
+if n_days != want_days or early != want_early or binding != want_binding:
+    print(f"RED: day count {n_days} / {early} / {binding} is not the expected {want_days} / {want_early} / {want_binding} (DAYS, EARLY_DAYS, BINDING_DAYS)"); sys.exit(1)
 report_cols = ["family", "segment", "size_sol", "entry", "variant", "farm", "regime", "day", "pool", "t", "entry_slot", "exit_slot",
                "exit_reason", "skipped", "entry_failed", "capped", "k_tx", "cost", "tokens", "proceeds", "exit_attempts", "vault_capped"]
 cols = "*" if total <= copy_all_gb * 1e9 else ", ".join(report_cols)
