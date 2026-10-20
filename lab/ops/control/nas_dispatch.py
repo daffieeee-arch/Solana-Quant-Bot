@@ -4,8 +4,12 @@ schema-checked JSON and nothing else; the NAS renders the job from a template it
 
 Each run (lab-nas-dispatch.timer, every 2 minutes; one at a time by flock):
   1. a job in <control>/nas-queue/: ask the NAS `sums` for the pinned template's sha256, build the job (schema
-     check), `put` it, record nas-status/<id>.json = sent; one job on its way at a time;
-  2. a job on its way: `status <id>`; once done, `get <id>` -> <data>/nas-results/ui/<id>/result.json.
+     check), `put` it, record nas-status/<id>.json = sent with the job's sha256; one job on its way at a time.
+     A put without an answer (a timeout, a dropped connection) may still have stored the job: the dispatcher then
+     asks `status <id>`; the NAS holding this very job (same job_sha256) counts as sent, an unknown id is put again
+     next pass (the NAS's put is idempotent), another job under the id is refused here;
+  2. a job on its way: `status <id>`, whose job_sha256 must be the one recorded (never another job's result);
+     once done, `get <id>` -> <data>/nas-results/ui/<id>/result.json.
 
 Settings in ~/.config/solana-lab/nas-ui.env (no secret in the repo; the key file itself stays where it is):
   NAS_UI_HOST=<the NAS's tailnet IP>  NAS_UI_USER=<user>  NAS_UI_KEY=<path of a key only for this dispatcher>
@@ -81,6 +85,16 @@ def _status(rid):
         return None
 
 
+def _lookup(cfg, call, rid):
+    """The NAS's status of one id, or None when it cannot be had (no answer, not JSON)."""
+    try:
+        rc, out, _ = call(cfg, f"status {rid}")
+        nas = json.loads(out) if rc == 0 else None
+    except (ValueError, RecursionError, OSError, subprocess.TimeoutExpired):
+        return None
+    return nas if isinstance(nas, dict) else None
+
+
 def run(cfg, call=ssh):
     """One dispatcher pass; a list of what it did (for the log and the tests)."""
     done = []
@@ -101,6 +115,8 @@ def run(cfg, call=ssh):
             nas = json.loads(out)
             if not isinstance(nas, dict):
                 raise ValueError("status is not an object")
+            if st.get("job_sha256") and nas.get("job_sha256") != st["job_sha256"]:
+                raise ValueError("the NAS's job under this id is not the one sent")
             state = {"done": "done", "failed": "failed", "refused": "refused", "running": "running", "queued": "queued"}.get(nas.get("state"), st["state"])
             if state == "done":
                 rc, out, err = call(cfg, f"get {rid}")
@@ -132,23 +148,36 @@ def run(cfg, call=ssh):
             sha = json.loads(out).get(TEMPLATE)
             if not sha:
                 raise ValueError(f"the NAS has no pinned {TEMPLATE}")
-            job = _schema().validate({"id": rid, "template": TEMPLATE, "template_sha256": sha, "params": local["params"]})
+            schema = _schema()
+            job = schema.validate({"id": rid, "template": TEMPLATE, "template_sha256": sha, "params": local["params"]})
+            job_sha = schema.job_sha256(job)
         except (OSError, ValueError, KeyError, RecursionError) as e:
             _write(os.path.join(st_dir, f"{rid}.json"), {"id": rid, "state": "refused", "reason": str(e)[:300], "checked_unix": int(time.time())})
             os.replace(path, os.path.join(q, f".refused-{n}"))
             done.append((rid, "refused", str(e)))
             continue
         try:
-            rc, out, err = call(cfg, "put", json.dumps(job).encode())
+            rc, out, err = call(cfg, "put", schema.canonical(job))
         except (OSError, subprocess.TimeoutExpired) as e:
             rc, out, err = 255, b"", str(e)[:200]
+        how = "sent"
         if rc != 0:
-            done.append((rid, "put failed", err))
-            break  # try again next pass; the job stays queued
+            # The NAS may have stored the job before its answer was lost (Codex review): look it up, never guess.
+            known = _lookup(cfg, call, rid)
+            if not known or known.get("state") == "unknown":
+                done.append((rid, "put failed", err))
+                break  # try again next pass; the job stays queued and the NAS's put is idempotent
+            if known.get("job_sha256") != job_sha:
+                reason = "the NAS holds another job under this id"
+                _write(os.path.join(st_dir, f"{rid}.json"), {"id": rid, "state": "refused", "reason": reason, "checked_unix": int(time.time())})
+                os.replace(path, os.path.join(q, f".refused-{n}"))
+                done.append((rid, "refused", reason))
+                continue
+            how = "sent (put's answer lost, found on the NAS)"
         _write(os.path.join(st_dir, f"{rid}.json"), {"id": rid, "state": "sent", "params": job["params"], "template_sha256": sha,
-                                                     "sent_unix": int(time.time())})
+                                                     "job_sha256": job_sha, "sent_unix": int(time.time())})
         os.replace(path, os.path.join(q, f".sent-{n}"))
-        done.append((rid, "sent", ""))
+        done.append((rid, how, ""))
         break  # one job at a time
     return done
 
