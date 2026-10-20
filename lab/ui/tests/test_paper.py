@@ -498,6 +498,53 @@ class WalletAndTriton(unittest.TestCase):
         self.assertEqual(sum(t["latency"]["hist"]), t["latency"]["n"])
         self.assertTrue(any(s["dropped"] for s in t["streams"]))
 
+    def test_wallet_has_each_groups_own_wallet_and_risk(self):
+        """K3's wallet.json and H's wallet-h.json side by side, each with the risk file the journal records for its
+        group (state 'groups', absolute paths next to the configs), H's trades its own variants only; a paper
+        transaction without a signature has none (not the text 'None')."""
+        jmod, _ = lab_paper()
+        sol = 1_000_000_000
+        with tempfile.TemporaryDirectory() as d:
+            risk = {}
+            for name, limit in (("risk.yaml", 1.0), ("risk-h.yaml", 0.25)):
+                risk[name] = os.path.join(d, name)
+                with open(risk[name], "w") as f:
+                    f.write(f"size_sol: 0.5\nmax_open_positions: 5\ndaily_loss_limit_sol: {limit}\nkill_switch: {'true' if limit < 1 else 'false'}\n")
+            j = jmod.Journal(os.path.join(d, "paper-k3", "journal"))
+            j.state("groups", json.dumps({"K3": {"primary": True, "variants": ["tp4_T600"], "risk": risk["risk.yaml"], "wallet": "wallet.json"},
+                                          "H": {"primary": False, "variants": ["flow300_H6"], "risk": risk["risk-h.yaml"], "wallet": "wallet-h.json"}}))
+            j.state("feed", json.dumps({"kind": "live"}))
+            t = 460_000_000
+            for variant, pnl in (("tp4_T600", 20_000_000), ("flow300_H6", -300_000_000), ("flow300_H6", 100_000_000)):
+                t += 100
+                j.put("orders", family="F7", variant=variant, key=f"P{t}", t=t, day="2026-10-20", entry_slot=t + 3, size=sol // 2, status="filled")
+                j.put("exits", family="F7", variant=variant, key=f"P{t}", t=t, day="2026-10-20", entry_slot=t + 3, exit_slot=t + 50,
+                      exit_reason="time", tokens=5, cost=sol // 2, proceeds=sol // 2 + pnl, pnl=pnl, ret=pnl / (sol / 2), exit_attempts=1)
+            j.put("positions", family="F7", variant="flow300_H6", key="Popen", t=t + 1, entry_slot=t + 4, cost=sol // 2, tokens=7, status="open")
+            j.put("heartbeat", minute=29_874_960, day="2026-10-20", last_slot=t + 900, events=3, open_positions=1, gap_slots=0, note="")
+            j.commit()
+            for name, bal in (("wallet.json", 10.02), ("wallet-h.json", 9.3)):
+                with open(os.path.join(j.dir, name), "w") as f:
+                    json.dump({"mode": "paper", "address": None, "slot": t + 900, "time_unix": None, "balance_lamports": int(bal * sol),
+                               "txs": [{"signature": None, "slot": t + 50, "kind": "sell", "mint": "P1", "amount_lamports": 1}]}, f)
+            path = os.path.join(j.dir, "journal.sqlite")
+            j.close()
+            os.environ["LAB_PAPER_JOURNAL"] = path
+            try:
+                w = paper.wallet_view(1_792_497_600)  # 2026-10-20 12:00 UTC
+            finally:
+                del os.environ["LAB_PAPER_JOURNAL"]
+        p, (h,) = w["paper"], w["groups"]
+        self.assertEqual((p["risk_file"], p["daily_loss_limit_sol"], p["kill_switch"]), ("risk.yaml", 1.0, False))
+        self.assertAlmostEqual(p["realised_sol"], 0.02)  # K3's trade only
+        self.assertEqual((w["onchain"]["balance_sol"], w["onchain"]["txs"][0]["signature"]), (10.02, None))
+        self.assertEqual((h["group"], h["wallet_file"], h["risk_file"], h["daily_loss_limit_sol"], h["kill_switch"]),
+                         ("H", "wallet-h.json", "risk-h.yaml", 0.25, True))
+        self.assertEqual((h["trades"], h["open_positions"], h["in_positions_sol"]), (2, 1, 0.5))
+        self.assertAlmostEqual(h["today_net_sol"], -0.2)
+        self.assertEqual(h["wallet"]["balance_sol"], 9.3)
+        self.assertIsNotNone(h["wallet"]["txs"][0]["time_unix"])  # the slot's time from the heartbeat
+
     def test_triton_forecast_from_the_first_recorded_minute(self):
         """A recorder that starts mid-month: the forecast is the spend so far plus the rate since its first minute
         (at most the daily cap) over the days left, not the spend spread over the month from the 1st. The budget is
