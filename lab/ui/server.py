@@ -42,6 +42,19 @@ def _load_paper():
 
 paper = _load_paper()
 
+
+def _load_actions():
+    """lab/ui/actions.py by its path, as 'lab_ui_actions' (the interactive UI's security layer, spec v0.3 §2)."""
+    if "lab_ui_actions" not in sys.modules:
+        spec = importlib.util.spec_from_file_location("lab_ui_actions", os.path.join(os.path.dirname(os.path.abspath(__file__)), "actions.py"))
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules["lab_ui_actions"] = mod
+        spec.loader.exec_module(mod)
+    return sys.modules["lab_ui_actions"]
+
+
+actions = _load_actions()
+
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")
 ANALYTICS = os.path.join(DATA, "analytics", "analytics.duckdb")
 ALLOWED_HOSTS = {"127.0.0.1", "100.112.193.63"}
@@ -543,8 +556,9 @@ class Handler(BaseHTTPRequestHandler):
     server_version = "lab-ui/0"
     sys_version = ""
     static_root = None
+    bound = None  # (host, port): actions only from this origin and Host (no DNS rebinding)
 
-    def send(self, status, body, ctype, cache="no-store"):
+    def send(self, status, body, ctype, cache="no-store", extra=()):
         if any(c in str(v) for v in (ctype, cache) for c in "\r\n"):
             raise ValueError("header value with a line break")
         gz = len(body) > 32_768 and ctype.startswith("application/json") and "gzip" in self.headers.get("Accept-Encoding", "")
@@ -559,12 +573,17 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", cache)
         for k, v in SECURITY_HEADERS.items():
             self.send_header(k, v)
+        for k, v in extra:
+            if any(c in str(v) for c in "\r\n"):
+                raise ValueError("header value with a line break")
+            self.send_header(k, v)
         self.end_headers()
         if self.command != "HEAD":
             self.wfile.write(body)
 
-    def send_json(self, status, obj):
-        self.send(status, json.dumps(obj, default=to_json, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+    def send_json(self, status, obj, extra=()):
+        self.send(status, json.dumps(obj, default=to_json, ensure_ascii=False).encode(), "application/json; charset=utf-8",
+                  extra=extra)
 
     def do_HEAD(self):
         self.do_GET()
@@ -600,10 +619,70 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             STREAM_SLOTS.release()
 
+    # --- the interactive UI's actions (lab/ui/actions.py): login, CSRF, confirmation, audit ---
+
+    def _peer(self):
+        return f"{self.client_address[0]}:{self.client_address[1]}"
+
+    def _cookie(self):
+        from http.cookies import CookieError, SimpleCookie
+        try:
+            c = SimpleCookie(self.headers.get("Cookie") or "")
+        except CookieError:
+            return None
+        return c[actions.COOKIE].value if actions.COOKIE in c else None
+
+    def _same_origin(self, origin):
+        host, port = self.bound or (None, None)
+        return host is not None and origin == f"http://{host}:{port}" and self.headers.get("Host") == f"{host}:{port}"
+
+    def action_get(self, path, query):
+        try:
+            if path == "/api/action/session":
+                s = actions.session(self._peer(), self._cookie())
+                why = actions.exposure(self.bound[1])
+                return self.send_json(HTTPStatus.OK, {"paired": True, "name": s["name"], "csrf": s["csrf"], "expires_unix": s["expires"],
+                                                      "actions_off": why, "actions": actions.ACTIONS})
+            actions.session(self._peer(), self._cookie())
+            if path == "/api/action/result":
+                return self.send_json(HTTPStatus.OK, actions.result((query.get("id") or [""])[0]))
+            if path == "/api/action/log":
+                return self.send_json(HTTPStatus.OK, {"events": actions.log()})
+            return self.send_json(HTTPStatus.NOT_FOUND, {"error": "onbekend pad"})
+        except actions.Refused as e:
+            return self.send_json(e.status, {"error": e.reason})
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        if path not in ("/api/action/pair", "/api/action/prepare", "/api/action/commit"):
+            return self.send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "alleen lezen"})
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+            if not 0 <= n <= actions.MAX_BODY:
+                raise actions.Refused(413, "body too large")
+            data = actions.check_post(self.headers, self._same_origin, self.rfile.read(n))
+            port = self.bound[1]
+            if path == "/api/action/pair":
+                sid, csrf, exp = actions.pair(self._peer(), data.get("code", ""))
+                cookie = f"{actions.COOKIE}={sid}; HttpOnly; SameSite=Strict; Path=/api/action; Max-Age={actions.SESSION_SECS}"
+                return self.send_json(HTTPStatus.OK, {"paired": True, "csrf": csrf, "expires_unix": exp}, extra=[("Set-Cookie", cookie)])
+            if path == "/api/action/prepare":
+                return self.send_json(HTTPStatus.OK, actions.prepare(self._peer(), self._cookie(), data, port))
+            return self.send_json(HTTPStatus.OK, actions.commit(self._peer(), self._cookie(), data, port))
+        except actions.Refused as e:
+            actions.audit("refused", path=path, status=e.status, reason=e.reason, peer=self.client_address[0])
+            return self.send_json(e.status, {"error": e.reason})
+        except ValueError:
+            return self.send_json(HTTPStatus.BAD_REQUEST, {"error": "bad request"})
+
+    do_PUT = do_DELETE = do_PATCH = lambda self: self.send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "alleen lezen"})
+
     def do_GET(self):
         url = urlparse(self.path)
         if url.path == "/api/stream":
             return self.stream()
+        if url.path.startswith("/api/action/"):
+            return self.action_get(url.path, parse_qs(url.query))
         if url.path.startswith("/api/"):
             fn = ROUTES.get(url.path)
             if fn is None:
@@ -633,10 +712,6 @@ class Handler(BaseHTTPRequestHandler):
         with open(full, "rb") as f:
             self.send(HTTPStatus.OK, f.read(), ctype, cache)
 
-    def do_POST(self):
-        self.send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "alleen lezen"})
-
-    do_PUT = do_DELETE = do_PATCH = do_POST
 
 
 def main():
@@ -650,6 +725,7 @@ def main():
     if a.port in FORBIDDEN_PORTS or a.port < 1024:
         sys.exit(f"refusing port {a.port}")
     Handler.static_root = a.static
+    Handler.bound = (a.host, a.port)
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
     srv.daemon_threads = True
     print(f"lab-ui on http://{a.host}:{a.port}", flush=True)

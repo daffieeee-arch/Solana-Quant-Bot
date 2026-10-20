@@ -1,0 +1,13 @@
+# lab-control: run the executor when the interactive UI files a request (spec v0.3 §2.6). A --user unit of the
+# owner's user: the only component with the user bus. Install: lab/ops/control/README.md.
+[Unit]
+Description=Solana lab: the interactive UI's request executor (trigger)
+
+[Path]
+PathChanged=%h/Solana-project/data-old-faithful-one/lab/control/requests
+MakeDirectory=yes
+DirectoryMode=0750
+Unit=lab-control.service
+
+[Install]
+WantedBy=default.target
