@@ -44,7 +44,7 @@ Lezing: als de verkoper zelf het netto levert, komt de prijs nauwelijks van zijn
 | log 1 m | +3,57 lp | −0,76 lp [−2,54; +1,08] |
 | log 5 m | +14,10 lp | +8,72 lp [+5,37; +12,13] |
 
-Waarom: de triggers zitten in weinig actieve pools (mediaan 4 triggers per pool, p90 30, max 217). Pools met 1–2 triggers (1.168 pools, 1.598 triggers) hebben netto 5 m **−14,7 %**; pools met 3–10 triggers +5,5 %, 11–50 +9,2 %, > 50 +7,2 %. Per trigger wegen de actieve pools zwaar en is het gemiddelde positief; per pool wegen de eenmalige pools even zwaar en is het negatief. De pre-registratie E45 kiest daarom de pool als eenheid; **"+5,5 % netto" in `buyback.md` is per trigger en is geen edge** (het is bovendien dev, zonder exitregel, en een trigger in een actieve pool is pas achteraf als zodanig bekend).
+Waarom: de triggers zitten in weinig actieve pools (mediaan 4 triggers per pool, p90 30, max 217). Per pool (gemiddelde over de triggers van de pool, 0,5 %-getrimd over de pools van de klasse) is het netto 5 m bij pools met 1–2 triggers (1.168 pools, 1.598 triggers) **−21,7 %**; bij 3–10 triggers (1.207 pools) +2,6 %, 11–50 (816) +9,5 %, > 50 (150) +7,3 %. (Per trigger ongewogen: −14,7 / +5,5 / +9,2 / +7,2 %: zelfde richting en volgorde.) Per trigger wegen de actieve pools zwaar en is het gemiddelde positief; per pool wegen de eenmalige pools even zwaar en is het negatief. De pre-registratie E45 kiest daarom de pool als eenheid; **"+5,5 % netto" in `buyback.md` is per trigger en is geen edge** (het is bovendien dev, zonder exitregel, en een trigger in een actieve pool is pas achteraf als zodanig bekend).
 
 ## 5. Persistentie per verkoper (feit)
 
