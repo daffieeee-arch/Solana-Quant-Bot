@@ -56,13 +56,26 @@ stoprule = _load_stoprule()
 MIN_TRADES, MIN_DAYS_CI = stoprule.MIN_TRADES, stoprule.MIN_DAYS_CI
 
 
+PAPER_RUN = "paper-k3"  # the paper run's journal, <data>/journal/paper-k3/journal (lab-paper.service, runbook §4)
+
+
+def _activity(db):
+    """When a journal last changed: in WAL mode the writes land in journal.sqlite-wal until a checkpoint."""
+    return max(os.path.getmtime(f) for f in (db, db + "-wal") if os.path.exists(f))
+
+
 def journal_path():
+    """LAB_PAPER_JOURNAL, else the paper run's journal (paper-k3) once it exists, else the most recently written
+    journal: a measuring-hour chain test or a parity run never takes the page from the paper run."""
     p = os.environ.get("LAB_PAPER_JOURNAL")
     if p:
         p = os.path.join(p, "journal.sqlite") if os.path.isdir(p) else p
         return p if os.path.isfile(p) else None
+    run = os.path.join(DATA, "journal", PAPER_RUN, "journal", "journal.sqlite")
+    if os.path.isfile(run):
+        return run
     found = glob.glob(os.path.join(DATA, "journal", "*", "journal", "journal.sqlite"))
-    return max(found, key=os.path.getmtime) if found else None
+    return max(found, key=_activity) if found else None
 
 
 def recorder_root():
@@ -336,8 +349,15 @@ def journal_view(path, now):
     shadow_today = sorted((x for (f, v), xs in by_group.items() if shade(f, v) for x in xs),
                           key=lambda x: (x["exit_slot"] or x["entry_slot"] or 0), reverse=True)
     shadow_rows = [pos_row(x, x) for x in shadow_today[:POSITIONS_SHOWN]]
-    names = token_names([r["key"] for r in pos + shadow_rows])
-    for r in pos + shadow_rows:
+    # Further groups' (H) open positions and the day's exits, each row with its group: the arms' own fills and exits.
+    arm_of = {v: g for g, vs in further.items() for v in vs}
+    arm = lambda f, v: f == "F7" and v in arm_of  # noqa: E731
+    arm_rows = [dict(pos_row(p), group=arm_of[p["variant"]]) for p in positions if arm(p["family"], p["variant"])]
+    arm_closed = sorted((x for (f, v), xs in by_group.items() if arm(f, v) for x in xs),
+                        key=lambda x: (x["exit_slot"] or x["entry_slot"] or 0), reverse=True)
+    arm_rows += [dict(pos_row(x, x), group=arm_of[x["variant"]]) for x in arm_closed[:POSITIONS_SHOWN]]
+    names = token_names([r["key"] for r in pos + shadow_rows + arm_rows])
+    for r in pos + shadow_rows + arm_rows:
         r.update(names.get(r["key"], {}))
 
     traded = [x for x in exits if ours(x["family"], x["variant"])]
@@ -375,7 +395,7 @@ def journal_view(path, now):
             "source": {"feed": feed, "paper_trading": feed == "live" and not run.startswith("parity"), "journal": run},
             "status": status, "variants": variants, "totals": totals, "positions": pos, "stop_rule": stop,
             "capital": capital, "n2": n2, "ranges": ranges, "ticker": ticker, "shadow_positions": shadow_rows,
-            "arms": arm_groups(exits, positions, further, day), "journal_usage_rows": len(usage),
+            "arms": arm_groups(exits, positions, further, day), "arm_positions": arm_rows, "journal_usage_rows": len(usage),
             "holdout_rows_dropped": j.dropped}
 
 
@@ -490,6 +510,7 @@ def recorder_view(now):
     budget = _budget(root)
     if budget is None:
         return None
+    cap_gb = (budget.get("cap_bytes") or 0) / 1e9  # the recorder's --budget-usd at USD_PER_GB
     segs = _segments_since(root, now - 3 * 86_400)
     days = sorted({d for s in segs for d in s["days"]})
     today = utc_day(now)
@@ -504,8 +525,10 @@ def recorder_view(now):
     return {
         "sample": sample, "day": day, "is_today": day == today,
         "streams": sorted(({"stream": st, "gb": b / 1e9, "messages": n} for st, (b, n) in streams.items()), key=lambda r: -r["gb"]),
-        "spent_gb": budget.get("spent_gb"), "cap_gb": (budget.get("cap_bytes") or 0) / 1e9, "usd_per_gb": USD_PER_GB,
-        "budget_usd": BUDGET_USD, "stopped": bool(budget.get("stopped")),
+        "spent_gb": budget.get("spent_gb"), "cap_gb": cap_gb, "usd_per_gb": USD_PER_GB,
+        "budget_usd": cap_gb * USD_PER_GB if cap_gb else BUDGET_USD, "stopped": bool(budget.get("stopped")),
+        # Why the recorder stopped the day when today's spend could not be known (meter.rs `unknown`, exit 75).
+        "unknown": str(budget["unknown"])[:300] if budget.get("unknown") else None,
         "budget_day": utc_day(budget["day"] * 86400) if isinstance(budget.get("day"), int) else None,
         "level": newest.get("level"), "dropped": newest.get("dropped", []), "last_segment_unix": newest.get("written_unix"),
         "last_slot": newest.get("last_slot"), "segments_today": sum(1 for s in segs if utc_day(s["written_unix"] or 0) == day),
@@ -551,8 +574,15 @@ def triton_view(now):
     rec = recorder_view(now)
     month_bytes = sum(b for s in segs for d, sts in s["days"].items() if d[:7] == utc_day(now)[:7] for b, _ in sts.values())
     days_in_month = calendar.monthrange(*map(int, utc_day(now)[:7].split("-")))[1]
-    elapsed = max(1 / 24, (now - month0) / 86_400)
     month_usd = month_bytes / 1e9 * USD_PER_GB
+    # The forecast runs from the month's first recorded minute, not from the 1st: a recorder that starts mid-month
+    # (the paper start, 2026-10-20) would otherwise spread its spend over days it did not run. The rate per day is
+    # at most the daily cap (the recorder stops there); the month = spent so far + that rate over the days left.
+    first = min((m * 60 for s in segs for m in s["minutes"] if m * 60 >= month0), default=None)
+    elapsed = max(1 / 24, (now - (first if first is not None else now)) / 86_400)
+    cap_usd = (rec or {}).get("budget_usd") or BUDGET_USD
+    usd_rate = min(month_usd / elapsed, cap_usd)
+    month_end = month0 + days_in_month * 86_400
     # Message rate per stream: the newest 5 minutes with usage rows.
     mins = sorted({m for s in segs[:30] for m in s["minutes"]}, reverse=True)[:5]
     rate = defaultdict(int)
@@ -584,7 +614,8 @@ def triton_view(now):
                for s in segs[:2000] for r in s["reconnects"] if r["unix"]]
     return {
         "sample": sample, "recorder": rec, "month_usd": month_usd, "month_gb": month_bytes / 1e9,
-        "forecast_usd": month_usd / elapsed * days_in_month, "balance": balance,
+        "forecast_usd": month_usd + usd_rate * max(0, month_end - now) / 86_400, "rate_usd_per_day": usd_rate,
+        "since_unix": first, "balance": balance,
         "streams": streams, "latency": _latency([s["dir"] for s in segs[:20]]), "reconcile": recon,
         "events": sorted(events, key=lambda e: -e["unix"])[:20],
     }
