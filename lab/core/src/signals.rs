@@ -425,6 +425,9 @@ pub struct SignalEngine {
     pub pool_last: HashMap<Id, u64>,
     /// Live (M3-08b): the pools with a backfill (engine.py `backfilled`), pruned with pool_last.
     pub backfilled: HashSet<Id>,
+    /// Live: the late probes (LiveFeed's late_probe_pools, creation-filters spec v0.2 §4 option A): their farm window
+    /// counts incomplete until they were seen for a day. Never pruned, as LiveFeed's set (a few a day).
+    pub late_probes: HashSet<Id>,
     /// Live (M3-08b): backfills given since the last slot end (`add_history`), drained at the next one.
     history: Vec<(Id, Vec<Leg>)>,
     /// Live (M3-11): flag fixes given since the last slot end (`add_flag_fix`), drained at the next one after `history`.
@@ -490,6 +493,7 @@ impl SignalEngine {
             pool_seen: HashMap::new(),
             pool_last: HashMap::new(),
             backfilled: HashSet::new(),
+            late_probes: HashSet::new(),
             history: Vec::new(),
             fixes: Vec::new(),
             arrivals: HashMap::new(),
@@ -762,7 +766,8 @@ impl SignalEngine {
         match self.window_rule {
             WindowRule::AllPools => WindowRule::all_pools(self.first_slot, t, &self.clock),
             WindowRule::Live => live_complete(self.pool_seen.get(&key).copied(), self.backfilled.contains(&key),
-                                              self.universe.pool(key).and_then(|p| p.create_slot), t, &self.clock),
+                                              self.late_probes.contains(&key), self.universe.pool(key).and_then(|p| p.create_slot),
+                                              t, &self.clock),
         }
     }
 

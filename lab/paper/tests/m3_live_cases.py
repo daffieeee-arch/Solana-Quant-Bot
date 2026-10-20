@@ -22,6 +22,8 @@ import sys
 import tempfile
 from dataclasses import asdict, replace
 
+from backtest.store import DAY_MS
+from backtest.strategies import HOUR_MS, Clock
 from paper.feed import PoolInfo, TokenInfo
 from paper.journal import Journal
 from paper.tests import c1b_signal_cases as C1
@@ -48,9 +50,11 @@ FORMAT = {
              "the engine's clock), or {at_slot, flag_fix: {pool, order, farmer}} (M3-11: a recorded trade's farmer flag "
              "computed again, order its [slot, tx, outer, inner], drained at the next slot end after the backfills as "
              "LiveFeed's drain_flag_fixes), or {at_slot, forget_token: mint} (M3-11 v0.3: the token leaves the feed's tokens, "
-             "as LiveFeed's _prune drops it). An item applies right before the first event whose slot is >= at_slot, after the "
+             "as LiveFeed's _prune drops it), or {at_slot, late_probe: pool} (creation-filters spec v0.2 §4 option A: the "
+             "pool's probe backfill reached past the replay window, LiveFeed's late_probe_pools; its farm window counts 0 "
+             "until it was seen for 24 h unless it has a backfill). An item applies right before the first event whose slot is >= at_slot, after the "
              "last event when there is none (lab/core: learn_token, learn_pool, add_history, fix_farm, forget_token, "
-             "set_epoch_ms before that push).",
+             "mark_late_probe, set_epoch_ms before that push).",
     "window_rule": "the feed's farm-window rule: all_pools (a replay's, CaseFeed) or live (M3-08b: LiveFeed's per pool, "
                    "engine.py:806-813; lab/core WindowRule::Live).",
     "regenerate": "M3_CASES_REGEN=1 pytest paper/tests/test_live_cases.py (or python -m paper.tests.m3_live_cases).",
@@ -69,6 +73,7 @@ class LearnFeed(C1.CaseFeed):
         self.all_pools = case["window_rule"] == "all_pools"  # live: the engine's per-pool farm-window rule
         self.history = []
         self.flag_fixes = []
+        self.late_probe_pools = set()  # LiveFeed's (engine.py _farm_window_complete reads it)
         # M3-11: an event's arrival (LiveFeed's Event.arrival), from its case entry
         self.evs = [replace(ev, arrival=tuple(d["arrival"])) if "arrival" in d else ev for ev, d in zip(self.evs, case["events"])]
 
@@ -95,6 +100,8 @@ class LearnFeed(C1.CaseFeed):
             self.flag_fixes.append((f["pool"], tuple(f["order"]), f["farmer"]))
         elif "forget_token" in x:
             del self.tokens[x["forget_token"]]  # live.py `_prune`: `del self.tokens[m]`
+        elif "late_probe" in x:
+            self.late_probe_pools.add(x["late_probe"])  # live.py `_segment_notes`
         elif "pool" in x:
             p = x["pool"]
             if p["pool"] not in self.classed:
@@ -164,6 +171,11 @@ class Case(C2.Case):
     def forget_token(self, mint, at_slot):
         """M3-11 v0.3: the token leaves the feed at at_slot (LiveFeed's `_prune`)."""
         self.learn.append({"at_slot": at_slot, "forget_token": mint})
+
+    def late_probe(self, pool, at_slot):
+        """Creation-filters spec v0.2 §4 option A: the pool's probe backfill failed past the replay window, learned at
+        at_slot (LiveFeed's late_probe_pools)."""
+        self.learn.append({"at_slot": at_slot, "late_probe": pool})
 
     def arrive(self, leg, received, created, written):
         """M3-11: the arrival of the event of `leg` (LiveFeed's Event.arrival)."""
@@ -485,13 +497,45 @@ def a_forgotten_token_gives_its_pool_the_coin_creator():
     return case
 
 
+def late_probe_window():
+    """Creation-filters spec v0.2 §4 option A (LAB review on #475): a late probe's farm window counts 0 until the pool
+    was seen for 24 h of the clock at t, unless it has a backfill; H (require_farm_complete) skips it, K3 enters."""
+    t = 450_160_000
+    clock = Clock(C1.DEV2_CLOCK)
+    hour, day = clock.slots(HOUR_MS, t), clock.slots(DAY_MS, t)
+    c = Case("late_probe_window", f"Live rule. Four late probes (their backfill past the replay window), each first seen "
+                                  f"`lag` slots before its trigger, with a trade halfway (pool_seen is kept): PL1 one hour "
+                                  f"and 100 slots ({hour} + 100), PL23 23 hours, PL24 a day ({day} slots at t's clock), "
+                                  f"PLB an hour and 100 slots with a backfill. PL1 and PL23: farm_window_complete 0 (one "
+                                  f"hour alone would give 1), H skips 'farm window incomplete'; PL24 and PLB: 1. K3 (farm "
+                                  f"all, no window gate) enters all four.", n2_k=0, window_rule="live")
+    lags = {"PL1": hour + 100, "PL23": clock.slots(23 * HOUR_MS, t), "PL24": day, "PLB": hour + 100}
+    keys, want = {}, {"PL1": 0, "PL23": 0, "PL24": 1, "PLB": 1}
+    for i, (label, lag) in enumerate(lags.items()):
+        tp = t + 100 * i
+        p = keys[label] = c.pool(label, create_slot=tp - lag - 50_000)
+        early = [(tp - lag, 0, "early buyer", "buy", SOL // 10, False), (tp - lag // 2, 0, "early buyer", "buy", SOL // 10, False)]
+        reversed_trigger(c, p, tp, 400 * SOL, early=early)
+        c.late_probe(p, tp - lag)
+        if label == "PLB":
+            c.learn_history(p, tp - 30, before=tp - lag // 2)
+    c.learn.sort(key=lambda x: x["at_slot"])  # build wants them in slot order
+    case = c.build()
+    for label, p in keys.items():
+        rows = h_rows(c, p)
+        ok(rows and all(r["farm_window_complete"] == want[label] for r in rows), c, f"{label} {rows}")
+        ok(all((r["reason"] == "farm window incomplete") == (want[label] == 0) for r in rows), c, f"{label} gate {rows}")
+        ok(c.one("orders", key=p, variant="tp4_T600")["status"] == "filled", c, f"{label} K3")
+    return case
+
+
 def reversed_trigger(c, pool, t, depth, **kw):
     return C1._reversed_trigger(c, pool, t, depth, **kw)
 
 
 CASES = [pool_learned_mid_run, graduation_learned_after_the_entry, completion_learned_too_late, clock_learned_mid_run,
          window_rule_live, backfill_as_history, backfill_of_an_unknown_pool, flag_fix_reaches_the_farm_label,
-         latency_of_a_live_signal, a_forgotten_token_gives_its_pool_the_coin_creator]
+         latency_of_a_live_signal, a_forgotten_token_gives_its_pool_the_coin_creator, late_probe_window]
 
 
 # ---------------------------------------------------------------------------------------------- the file

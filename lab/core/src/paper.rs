@@ -1412,6 +1412,13 @@ impl PaperEngine {
         true
     }
 
+    /// Live: a late probe (LiveFeed's late_probe_pools; a 'late_probe' learned row, creation-filters spec v0.2 §4 option
+    /// A). Its farm window counts incomplete until it was seen for a day (`farm::live_complete`). Like learn_*, it goes in
+    /// before the slots the source releases after it.
+    pub fn mark_late_probe(&mut self, pool: Id) {
+        self.sig.late_probes.insert(pool);
+    }
+
     /// Live (M3-08b D1): a backfill's trades of `pool`, history only (LiveFeed `drain_history`), taken at the next slot
     /// end after the recorded legs' farm windows (engine.py:416-421). Like learn_*, it goes in before the event it
     /// precedes in the feed, and a source that closes slots early gives what it read first.

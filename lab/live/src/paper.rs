@@ -553,6 +553,13 @@ fn run_follow(a: &PaperArgs, fo: &FollowOpts) -> Result<Value> {
                 "epoch_ms"
             }
             Item::Learned(l) => {
+                if l.kind == "late_probe" {
+                    // creation-filters spec v0.2 §4 option A: the engine's farm window for it (LiveFeed's
+                    // late_probe_pools, read by engine.py `_farm_window_complete`); a pool the run never interned has no row
+                    if let Some(id) = keys.get(&l.key) {
+                        eng.mark_late_probe(id);
+                    }
+                }
                 live.learned.push(l.clone());
                 "learned"
             }

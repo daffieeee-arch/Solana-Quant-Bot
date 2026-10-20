@@ -36,6 +36,8 @@ pub const F6_FARM_SHARE: f64 = 0.5;
 pub const HISTORY_SLOTS: u64 = 400;
 /// pool_seen of a pool without a trade for this long is forgotten (engine.py:79).
 pub const POOL_SEEN_KEEP_MS: f64 = 86_400_000.0;
+/// A day (backtest/store.py `DAY_MS`): a late probe's farm window counts incomplete until it was seen this long.
+pub const DAY_MS: f64 = 86_400_000.0;
 /// Live only: a pool first seen this close to its creation was followed since it was created (engine.py:78).
 pub const SINCE_CREATION_MS: f64 = 60_000.0;
 

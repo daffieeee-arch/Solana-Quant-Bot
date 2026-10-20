@@ -14,7 +14,7 @@
 //!   window entry (`fix`, engine.py `_farm_fix` :588-597), or waits in `fixes` for the trade's `add` (`_farm_add` :579),
 //!   swept at the hour rollover (:694-695). Mirrored, not fixed: the first match only.
 
-use crate::clock::{Clock, F6_FARM_MS, F6_FARM_SHARE, SINCE_CREATION_MS};
+use crate::clock::{Clock, DAY_MS, F6_FARM_MS, F6_FARM_SHARE, SINCE_CREATION_MS};
 use crate::exact::gt;
 use crate::legs::{Id, Leg, Order, FARMER};
 use crate::mem::{self, Mem};
@@ -158,13 +158,22 @@ impl WindowRule {
     }
 }
 
-/// engine.py `_farm_window_complete` on a live feed (:806-813), for a pool row at t: 0 for a pool never seen; 1 when it
-/// was seen an hour before t (`t - seen >= hour(t)`) or has a backfill; else 1 when it was first seen within
-/// SINCE_CREATION_MS of its known create slot (`seen - created <= slots(SINCE_CREATION_MS, t)`, Python's signed ints:
-/// a pool seen before its create slot counts), else 0.
-pub fn live_complete(seen: Option<u64>, backfilled: bool, created: Option<u64>, t: u64, clock: &Clock) -> u8 {
+/// engine.py `_farm_window_complete` on a live feed, for a pool row at t: 0 for a pool never seen; 1 when it has a
+/// backfill; a late probe (creation-filters spec v0.2 §4 option A: its backfill reached past the replay window, LiveFeed's
+/// late_probe_pools) 1 only once it was seen a day before t (`t - seen >= slots(DAY_MS, t)`); else 1 when it was seen an
+/// hour before t (`t - seen >= hour(t)`); else 1 when it was first seen within SINCE_CREATION_MS of its known create slot
+/// (`seen - created <= slots(SINCE_CREATION_MS, t)`, Python's signed ints: a pool seen before its create slot counts),
+/// else 0.
+pub fn live_complete(seen: Option<u64>, backfilled: bool, late: bool, created: Option<u64>, t: u64, clock: &Clock) -> u8 {
     let Some(seen) = seen else { return 0 };
-    if i128::from(t) - i128::from(seen) >= i128::from(clock.slots(F6_FARM_MS, t)) || backfilled {
+    if backfilled {
+        return 1;
+    }
+    let age = i128::from(t) - i128::from(seen);
+    if late {
+        return u8::from(age >= i128::from(clock.slots(DAY_MS, t)));
+    }
+    if age >= i128::from(clock.slots(F6_FARM_MS, t)) {
         return 1;
     }
     u8::from(created.is_some_and(|c| i128::from(seen) - i128::from(c) <= i128::from(clock.slots(SINCE_CREATION_MS, t))))
@@ -399,7 +408,7 @@ mod tests {
         let c = dev2();
         let t = 450_141_701;
         assert_eq!((c.slots(F6_FARM_MS, t), c.slots(SINCE_CREATION_MS, t)), (13_542, 226));
-        let live = |seen, backfilled, created| live_complete(seen, backfilled, created, t, &c);
+        let live = |seen, backfilled, created| live_complete(seen, backfilled, false, created, t, &c);
         assert_eq!(live(None, true, Some(t)), 0); // never seen
         assert_eq!((live(Some(t - 13_542), false, None), live(Some(t - 13_541), false, None)), (1, 0)); // an hour
         assert_eq!(live(Some(t - 10), true, None), 1); // a backfill
@@ -407,5 +416,21 @@ mod tests {
         assert_eq!((live(Some(seen), false, Some(seen - 226)), live(Some(seen), false, Some(seen - 227))), (1, 0)); // since creation
         assert_eq!(live(Some(seen), false, Some(seen + 5)), 1); // seen before its create slot: Python's negative difference
         assert_eq!(live(Some(t + 3), false, None), 0); // a seen slot after t: no hour (Python's negative t - seen)
+    }
+
+    #[test]
+    fn a_late_probe_counts_incomplete_until_a_day_of_its_own_history() {
+        // creation-filters spec v0.2 §4 option A (LAB review on #475; m3_live_cases.late_probe_window does it through the
+        // engine): 0 at an hour and at 23 hours, 1 at a day of t's clock; a backfill or no late mark as before.
+        let c = dev2();
+        let t = 450_141_701;
+        let (hour, day) = (c.slots(F6_FARM_MS, t), c.slots(DAY_MS, t));
+        assert_eq!(day, (86_400_000.0f64 / 265.83).round() as u64);
+        let late = |seen, backfilled| live_complete(Some(seen), backfilled, true, None, t, &c);
+        assert_eq!((late(t - hour, false), late(t - c.slots(23.0 * F6_FARM_MS, t), false)), (0, 0));
+        assert_eq!((late(t - day + 1, false), late(t - day, false)), (0, 1));
+        assert_eq!(late(t - 10, true), 1); // backfilled anyway
+        assert_eq!(live_complete(Some(t - hour), false, false, None, t, &c), 1); // not late: the hour as before
+        assert_eq!(live_complete(None, true, true, None, t, &c), 0); // never seen
     }
 }
