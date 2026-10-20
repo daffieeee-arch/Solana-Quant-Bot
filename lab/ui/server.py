@@ -503,6 +503,16 @@ def api_paper_chart(q):
     return out
 
 
+def api_paper_explain(q):
+    """One paper position explained (paper.explain): key, variant and signal slot t."""
+    key = (q.get("key", [""])[0] or "").strip()
+    variant = (q.get("variant", [""])[0] or "").strip()
+    t = (q.get("t", [""])[0] or "").strip()
+    if not (32 <= len(key) <= 44 and key.isalnum()) or not re.fullmatch(r"[A-Za-z0-9_]{1,40}", variant) or not t.isdigit():
+        raise ValueError("bad position")
+    return paper.explain(key, variant, int(t))
+
+
 def api_paper_trades(q):
     """The paper bot's entries and exits on one token, for its token page: the mint itself (curve trades) and
     every pool of that mint in the development store (pool trades)."""
@@ -548,7 +558,7 @@ ROUTES = {"/api/meta": api_meta, "/api/overview": api_overview, "/api/tokens": a
           "/api/token": api_token, "/api/ticker": api_ticker, "/api/strategies": api_strategies,
           "/api/strategy_curve": api_strategy_curve, "/api/candles": api_candles, "/api/cases": api_cases,
           "/api/paper": api_paper,
-          "/api/strategy_overview": api_strategy_overview, "/api/paper_chart": api_paper_chart,
+          "/api/strategy_overview": api_strategy_overview, "/api/paper_chart": api_paper_chart, "/api/paper_explain": api_paper_explain,
           "/api/paper_trades": api_paper_trades,
           "/api/wallet": api_wallet, "/api/triton": api_triton}
 

@@ -510,6 +510,57 @@ class GroupsUnknown(unittest.TestCase):
         self.assertEqual([g["group"] for g in v["arms"]], ["H"])
 
 
+class ExplainTrade(unittest.TestCase):
+    """'Verklaar deze trade': one position's signal (why), entry (delay, the market price at the signal and before the
+    entry from the recorder, our fill against it) and exit (reason, slots held, peak), from the journal and the
+    recorder's segments; the events' reserves are before the trade, so the market price is the one after it."""
+
+    def test_explain_one_position(self):
+        import duckdb
+        jmod, _ = lab_paper()
+        sol, pool, t0 = 1_000_000_000, "Poo1111111111111111111111111111111111111111", 1_792_497_600
+        with tempfile.TemporaryDirectory() as d:
+            root = os.path.join(d, "recorder")
+            sd = os.path.join(root, "segments", "000000001")
+            os.makedirs(os.path.join(sd, "pump_amm", "SellEvent"))
+            duckdb.sql(f"""COPY (SELECT * FROM (VALUES (470000010::UBIGINT, 1::UBIGINT, 0::UBIGINT, 0::UBIGINT, {t0}::BIGINT, '{pool}',
+                         30000000000::UBIGINT, 100000000000000::UBIGINT, 2000000000::UBIGINT, 5000000000000::UBIGINT))
+                         t(slot, tx_index, outer_ix, inner_ix, "timestamp", pool, pool_base_token_reserves, pool_quote_token_reserves,
+                           base_amount_in, quote_amount_out)) TO '{os.path.join(sd, "pump_amm", "SellEvent", "part-00000.parquet")}' (FORMAT parquet)""")
+            with open(os.path.join(sd, "_segment.json"), "w") as f:
+                json.dump({"seq": 1, "first_slot": 470_000_000, "last_slot": 470_000_100, "complete": True, "written_unix": int(time.time()) - 60, "usage": []}, f)
+            with open(os.path.join(root, "budget.json"), "w") as f:
+                json.dump({"day": 0, "spent_bytes": 0, "cap_bytes": 1}, f)
+            j = jmod.Journal(os.path.join(d, "paper-k3", "journal"))
+            t = 470_000_010
+            j.put("signals", family="F7", variant="tp4_T600", key=pool, t=t, day="2026-10-20", venue="pool", orientation="reversed",
+                  depth=150 * sol, trigger_trader="Trader11111111111111111111111111111111111111", status="entered", farm="organic", farm_complete=1)
+            j.put("orders", family="F7", variant="tp4_T600", key=pool, t=t, day="2026-10-20", entry_slot=t + 3, size=sol // 2, status="filled")
+            j.put("fills", family="F7", variant="tp4_T600", key=pool, t=t, side="buy", day="2026-10-20", slot=t + 3, tokens=1_400_000_000_000, quote=sol // 2)
+            j.put("fills", family="F7", variant="tp4_T600", key=pool, t=t, side="sell", day="2026-10-20", slot=t + 50, tokens=1_400_000_000_000, quote=520_000_000)
+            j.put("exits", family="F7", variant="tp4_T600", key=pool, t=t, day="2026-10-20", entry_slot=t + 3, exit_slot=t + 50, exit_reason="take_profit",
+                  tokens=1_400_000_000_000, cost=sol // 2, proceeds=520_000_000, pnl=19_000_000, ret=0.038, exit_attempts=1,
+                  peak_mark=530_000_000, peak_slot=t + 40)
+            j.commit()
+            path = os.path.join(j.dir, "journal.sqlite")
+            j.close()
+            os.environ.update(LAB_PAPER_JOURNAL=path, LAB_RECORDER_ROOT=root)
+            try:
+                x = paper.explain(pool, "tp4_T600", t)
+                with self.assertRaises(LookupError):
+                    paper.explain(pool, "tp4_T600", t + 1)
+            finally:
+                del os.environ["LAB_PAPER_JOURNAL"], os.environ["LAB_RECORDER_ROOT"]
+        after = 32 * sol / 95_000_000_000_000 / 1000  # the reserves after the SellEvent: 30 + 2 SOL, 100e12 - 5e12 tokens
+        e, o, s = x["entry"], x["exit"], x["signal"]
+        self.assertEqual((s["depth_sol"], s["farm"], s["farm_complete"]), (150.0, "organic", 1))
+        self.assertEqual((e["delay_slots"], e["price_at_signal"], e["price_before_entry"]), (3, after, after))
+        self.assertAlmostEqual(e["fill_price"], sol // 2 / 1_400_000_000_000 / 1000)
+        self.assertAlmostEqual(e["fill_vs_market_pct"], (e["fill_price"] / after - 1) * 100)
+        self.assertEqual((o["reason"], o["held_slots"], o["peak_slots"]), ("take_profit", 47, 37))
+        self.assertAlmostEqual(o["peak_ret"], 0.06)
+
+
 class Recorder(unittest.TestCase):
     def test_sample_is_marked_and_summed_per_stream(self):
         os.environ["LAB_RECORDER_ROOT"] = "/nonexistent"
@@ -645,14 +696,20 @@ class WalletAndTriton(unittest.TestCase):
             os.environ["LAB_RECORDER_ROOT"] = root
             try:
                 c = paper.live_pool_candles(pool, [470_000_015, 470_000_025], True, now=t0)
+                at = [paper.pool_price_at(pool, s_, True, now=t0) for s_ in (470_000_025, 470_000_015, 470_000_005, 470_000_149)]
             finally:
                 del os.environ["LAB_RECORDER_ROOT"]
         (k,) = c
         self.assertEqual((k["time"], k["trades"]), (t0, 2))
-        self.assertAlmostEqual(k["open"], 30 * sol / 100_000_000_000_000 / 1000)  # 3e-7 SOL per token
-        self.assertAlmostEqual(k["close"], 32 * sol / 95_000_000_000_000 / 1000)
+        # The events carry the reserves before the trade: the price is the one after it (the BuyEvent takes 1 SOL out
+        # and puts 3e12 tokens in; the SellEvent puts 2 SOL in and takes 5e12 tokens out).
+        self.assertAlmostEqual(k["open"], 29 * sol / 103_000_000_000_000 / 1000)
+        self.assertAlmostEqual(k["close"], 34 * sol / 90_000_000_000_000 / 1000)
         self.assertAlmostEqual(k["volume_quote"], 3.0)  # the SOL side: 1 + 2
         self.assertAlmostEqual(k["buy_quote"], 2.0)  # the SellEvent is the token buy in a reversed pool
+        # The price after the last trade at or before a slot (explain's market price); none before the first trade.
+        self.assertEqual(at, [(34 * sol / 90_000_000_000_000 / 1000, 470_000_020), (29 * sol / 103_000_000_000_000 / 1000, 470_000_010), (None, None),
+                              (34 * sol / 90_000_000_000_000 / 1000, 470_000_020)])
         os.environ["LAB_RECORDER_ROOT"] = "/nonexistent"  # the sample recorder: no live candles
         try:
             self.assertEqual(paper.live_pool_candles(pool, [470_000_015], True, now=t0), [])
