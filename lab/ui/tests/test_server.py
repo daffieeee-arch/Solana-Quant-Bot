@@ -290,5 +290,43 @@ class Unit(unittest.TestCase):
         self.assertRegex(self.text, r"(?m)^NoNewPrivileges=yes$")
 
 
+
+class SystemUnit(unittest.TestCase):
+    """lab/ops/systemd/lab-ui-web.system.service (variant A): the same app and bind as the user unit, as the system
+    user lab-ui with the home hidden except read-only binds; no write path, no user bus, no secrets; and the ACL
+    script only ever grants read."""
+    OPS = os.path.join(os.path.dirname(SERVER), "..", "ops")
+
+    def setUp(self):
+        with open(os.path.join(self.OPS, "systemd", "lab-ui-web.system.service")) as f:
+            self.text = f.read()
+        with open(os.path.join(self.OPS, "systemd", "lab-ui-web.service")) as f:
+            self.user = f.read()
+
+    def test_same_command_as_the_user_unit(self):
+        user_exec = re.search(r"^ExecStart=(.*)$", self.user, re.M).group(1).replace("%h", "/home/chupa")
+        self.assertEqual(re.search(r"^ExecStart=(.*)$", self.text, re.M).group(1), user_exec)
+        self.assertRegex(self.text, r"(?m)^WorkingDirectory=/home/chupa/Solana-project/worktrees/lab-ui-deploy$")
+
+    def test_own_user_and_sandbox(self):
+        for line in ("User=lab-ui", "ProtectHome=tmpfs", "ProtectSystem=strict", "InaccessiblePaths=/run/user",
+                     "NoNewPrivileges=yes", "CapabilityBoundingSet=", "PrivateTmp=yes", "IPAddressDeny=any", "MemoryMax=1G"):
+            self.assertRegex(self.text, rf"(?m)^{re.escape(line)}$")
+        self.assertNotRegex(self.text, r"(?m)^ReadWritePaths=")  # read-only until B0 adds the requests directory
+        binds = re.findall(r"(?m)^BindReadOnlyPaths=-?(\S+)$", self.text)
+        self.assertTrue(binds and all(b.startswith("/home/chupa/") for b in binds))
+        self.assertFalse(any(".config" in b or b.rstrip("/") in ("/home/chupa", "/home/chupa/Solana-project") for b in binds))
+        self.assertNotRegex(self.text, r"(?m)^BindPaths=")
+
+    def test_grant_script_reads_only(self):
+        with open(os.path.join(self.OPS, "ui-grant-read.sh")) as f:
+            sh = f.read()
+        acls = re.findall(r'setfacl[^\n]*"(d?:?u:\$U:[^"]*)"', sh)
+        self.assertTrue(acls)
+        self.assertTrue(all(a.split(":")[-1] in ("x", "rX") for a in acls), acls)
+        code = [ln for ln in sh.split("# Never:")[0].splitlines() if not ln.lstrip().startswith("#")]
+        self.assertFalse([ln for ln in code if ".config" in ln])  # granted nowhere; only the closing check names it
+
+
 if __name__ == "__main__":
     unittest.main()

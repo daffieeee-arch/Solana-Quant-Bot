@@ -1,0 +1,70 @@
+# Solana-lab web app (lab/ui/server.py) as the SYSTEM user lab-ui — variant A of the interactive-UI spec
+# (data-old-faithful-one/lab/research/ui-interactive-spec-2026-10-20.md, §2.3). It replaces the user unit
+# lab-ui-web.service (same command, same Tailscale bind), so that a fault in the web server never has the owner's
+# rights: no user bus, no systemctl --user, no signals to the bot, no ~/.config/solana-lab.
+# Install (the owner, once, with sudo): lab/ops/ui-variant-a.md. Read access comes from ACLs (lab/ops/ui-grant-read.sh).
+# Sandboxing works here because this is a system unit; in a --user unit the same options are silently ignored
+# on this VPS (measured 2026-10-20).
+[Unit]
+Description=Solana-lab web app (read-only, Tailscale only) as the system user lab-ui
+Documentation=file:/home/chupa/Solana-project/worktrees/lab-ui-deploy/lab/ops/ui-variant-a.md
+After=network-online.target tailscaled.service
+Wants=network-online.target
+StartLimitIntervalSec=1h
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=lab-ui
+Group=lab-ui
+WorkingDirectory=/home/chupa/Solana-project/worktrees/lab-ui-deploy
+Environment=LAB_DATA_ROOT=/home/chupa/Solana-project/data-old-faithful-one/lab
+ExecStart=/home/chupa/.local/share/solana-quant/toolchains/columnar-query-313-duckdb155/bin/python -I lab/ui/server.py --host 100.112.193.63 --port 8501
+Restart=on-failure
+RestartSec=15
+MemoryMax=1G
+CPUQuota=100%
+TasksMax=128
+Nice=10
+UMask=0077
+
+# The home directory is an empty tmpfs; only what the app reads comes back, read-only.
+ProtectHome=tmpfs
+BindReadOnlyPaths=/home/chupa/Solana-project/worktrees/lab-ui-deploy
+BindReadOnlyPaths=-/home/chupa/Solana-project/worktrees/paper-run/lab/paper
+BindReadOnlyPaths=/home/chupa/.local/share/solana-quant/toolchains/columnar-query-313-duckdb155
+BindReadOnlyPaths=/home/chupa/.local/share/uv/python/cpython-3.13.15-linux-x86_64-gnu
+BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/analytics
+BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/store
+BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/journal
+BindReadOnlyPaths=-/home/chupa/Solana-project/data-old-faithful-one/lab/recorder
+BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/ui-cache
+BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/backtests
+BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/wallets/cases-v1
+ProtectSystem=strict
+PrivateTmp=yes
+PrivateDevices=yes
+InaccessiblePaths=/run/user
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+ProcSubset=pid
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+# AF_UNIX: the tailscaled socket (whois, interactive UI); no outgoing IP besides the replies to tailnet peers.
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+IPAddressDeny=any
+IPAddressAllow=localhost 100.64.0.0/10 fd7a:115c:a1e0::/48
+
+[Install]
+WantedBy=multi-user.target
