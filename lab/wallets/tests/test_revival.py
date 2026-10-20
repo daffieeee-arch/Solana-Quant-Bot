@@ -216,6 +216,8 @@ def test_detect(tmp_path, monkeypatch):
     assert info["signals"] == 12 and info["cells"] == 18 and info["candidate_hours"] == 2 and info["candidate_legs"] == 26
     assert info["per_cell"]["S1_D10_T5"] == {"signals": 1, "pools": 1, "days": 1, "reversed": 1, "shifted": 1, "shift_slots_p50": 6.0, "shift_slots_p90": 6.0}
     assert info["per_cell"]["S1_D20_T5"]["shifted"] == 0
+    assert info["consistency"] == {"candidate_hours": 2, "hours_without_legs": 0, "trades_mismatch": 0, "volume_mismatch": 0, "traders_mismatch": 0}
+    assert con.execute(f"SELECT hour_sol_volume, hour_traders, hour_trades FROM read_parquet('{out}/signals.parquet') WHERE variant = 'S1_D10_T5'").fetchone() == (26 * SOL, 10, 11)
     assert info["signals_without_mint"] == 0 and info["mayhem_excluded"] is True
     # the report without a markout: frequency, sleeping pools, liquidity (depth 100 SOL: pool share 0.5 % at 0.5 SOL, average
     # fill 0.5 %, 1 % at 1.01 SOL), the shift columns and the legend
@@ -251,6 +253,17 @@ def test_detect_is_point_in_time(tmp_path, monkeypatch):
     c = con.execute(f"SELECT {cols} FROM read_parquet('{tmp_path}/cut/signals.parquet') ORDER BY 1").fetchall()
     assert f == c and len(c) == 2 and c[0][2] == B0 + 6
     assert full["signals"] == 12 and cut["signals"] == 2 and cut["candidate_hours"] == 1 and cut["candidate_legs"] == 6
+
+
+def test_detect_red_on_inconsistent_store(tmp_path, monkeypatch):
+    """The legs read for a candidate hour must reproduce the aggregate's hour totals; a store with one leg less stops RED."""
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path))
+    agg, st_path, first_day, B0 = _detect_fixture(tmp_path)
+    st = duckdb.connect(str(st_path))
+    st.execute("DELETE FROM pool WHERE pool = 'A' AND slot = ? AND trader = 'j'", [B0 + 18])
+    st.close()
+    with pytest.raises(SystemExit, match="RED.*trades_mismatch': 1.*volume_mismatch': 1.*traders_mismatch': 1"):
+        revival.detect(str(agg), str(tmp_path / "red"), first_day=first_day, store=str(st_path))
 
 
 def test_candidate_legs_plan():

@@ -192,8 +192,10 @@ def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None, req
     REV, variant = the cell, venue pool, segment by orientation, farm organic / flagged by the farmer share of the trades up to
     t >= 0.5, mint from the store's pools table: NULL for most pools from before the window, which have no creation event in
     the store; `mint_known` says so, run-detect.json counts them, and require_mint drops them; markout keys pools on `pool`, so
-    they stay in by default), with t_d_slot (the D crossing, the first version's t) and shift_slots = t - t_d_slot beside it,
-    plus run-detect.json."""
+    they stay in by default), with t_d_slot (the D crossing, the first version's t) and shift_slots = t - t_d_slot beside it
+    and the hour totals under an hour_ prefix (end-of-hour facts, never part of the rule), plus run-detect.json. The legs read
+    for the candidate hours must reproduce the aggregate's hour totals (trades, volume, distinct traders) on every candidate
+    hour, else detect stops RED (`consistency` in run-detect.json)."""
     con = connect(store or STORE, memory=os.environ.get("LAB_WALLETS_MEMORY", "1GB"), threads=int(os.environ.get("LAB_WALLETS_THREADS", "2")))
     os.makedirs(out_dir, exist_ok=True)
     ph, po = os.path.join(agg_dir, "pool_hour.parquet"), os.path.join(agg_dir, "pools.parquet")
@@ -222,14 +224,25 @@ def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None, req
       WHERE hour >= {hour_min} + {WEEK_S}
         AND (hours_traded_7d = 0 OR med_7d <= {s_max * SOL})
         AND (168 - hours_traded_7d) >= {SLEEP_QUIET} * 168
-        AND sol_volume >= GREATEST({d_min * SOL}, {REVIVE_P90_X} * COALESCE(p90_7d, 0))
+        AND sol_volume >= round(GREATEST({d_min * SOL}, {REVIVE_P90_X} * COALESCE(p90_7d, 0)))::BIGINT
         AND traders >= {t_min_all}
         AND ((NOT created_in_period AND day >= '{first_day}') OR (create_slot IS NOT NULL AND last_slot >= create_slot + {age_slots}))
         {f"AND day <= '{last_day}'" if last_day else ""}""")
     n_cand = _count(con, "cand")
     progress("candidate hours", n_cand)
     con.execute(f"CREATE OR REPLACE TEMP TABLE cl AS {candidate_legs_sql()}")
-    progress("candidate legs", _count(con, "cl"))
+    n_legs = _count(con, "cl")
+    progress("candidate legs", n_legs)
+    # the scan proves itself: per candidate hour the legs read from the store must reproduce the aggregate's hour totals
+    # (trades, SOL volume, distinct traders); a deviation means another store, a cut hour or a changed leg rule, and is RED
+    check = con.execute("""
+      SELECT count(*), sum((l.n IS NULL)::INT), sum((l.n <> c.trades)::INT), sum((l.vol <> c.sol_volume)::INT), sum((l.trd <> c.traders)::INT)
+      FROM cand c LEFT JOIN (SELECT pool, hour, count(*) AS n, max(cum) AS vol, max(cum_traders) AS trd FROM cl GROUP BY 1, 2) l USING (pool, hour)""").fetchone()
+    consistency = {"candidate_hours": check[0], "hours_without_legs": int(check[1] or 0), "trades_mismatch": int(check[2] or 0),
+                   "volume_mismatch": int(check[3] or 0), "traders_mismatch": int(check[4] or 0)}
+    if any(v for k, v in consistency.items() if k != "candidate_hours"):
+        raise SystemExit(f"RED: the candidate legs do not reproduce the aggregate's hour totals: {consistency} (store {store or STORE}, aggregate {agg_dir})")
+    progress("consistency", n_cand, "legs = trades, max cum = volume, max traders = traders on every candidate hour")
     dt = ", ".join(f"({D}, {D * SOL}, {T})" for D in THRESHOLDS for T in REVIVE_T)
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE cross_dt AS
@@ -247,7 +260,8 @@ def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None, req
                  x.at_t.slot AS t, x.at_t.tx AS t_tx, x.at_t.traders AS traders_at_t, x.at_t.depth AS depth_at_t, x.at_t.cum AS volume_at_t,
                  x.at_t.trades AS trades_at_t, x.at_t.farmer::DOUBLE / x.at_t.trades AS farmer_share_at_t, x.thr / {SOL}.0 AS thr_sol,
                  x.t_d_slot, x.at_t.slot - x.t_d_slot AS shift_slots,
-                 c.sol_volume, c.traders, c.buyers, c.net_inflow, c.trades, c.farmer_share_hour AS farmer_share, c.med_7d, c.p90_7d, c.hours_traded_7d, c.end_depth
+                 c.sol_volume AS hour_sol_volume, c.traders AS hour_traders, c.buyers AS hour_buyers, c.net_inflow AS hour_net_inflow, c.trades AS hour_trades,
+                 c.farmer_share_hour AS hour_farmer_share, c.end_depth AS hour_end_depth, c.med_7d, c.p90_7d, c.hours_traded_7d
           FROM cross_dt x JOIN cand c USING (pool, hour)
           WHERE x.at_t IS NOT NULL
             AND (c.hours_traded_7d = 0 OR c.med_7d <= {S * SOL})
@@ -264,7 +278,7 @@ def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None, req
                    CASE WHEN farmer_share_at_t >= 0.5 THEN 'flagged' ELSE 'organic' END AS farm, day, 0.5 AS size_sol,
                    NULL::VARCHAR AS ref_mint, NULL::BIGINT AS ref_t, NULL::VARCHAR AS trigger_trader, mint IS NOT NULL AS mint_known,
                    s_sol, d_sol, t_min, hour, t_tx, traders_at_t, depth_at_t, volume_at_t, trades_at_t, farmer_share_at_t, thr_sol, t_d_slot, shift_slots,
-                   sol_volume, traders, buyers, net_inflow, trades, farmer_share, med_7d, p90_7d, hours_traded_7d, end_depth
+                   hour_sol_volume, hour_traders, hour_buyers, hour_net_inflow, hour_trades, hour_farmer_share, hour_end_depth, med_7d, p90_7d, hours_traded_7d
             FROM sig {"WHERE mint IS NOT NULL" if require_mint else ""} ORDER BY variant, pool, t) TO '{out}' (FORMAT parquet, COMPRESSION zstd)""")
     null_mint, null_mint_pools = con.execute("SELECT sum((mint IS NULL)::INT), count(DISTINCT pool) FILTER (WHERE mint IS NULL) FROM sig").fetchone()
     per_cell = {r[0]: {"signals": r[1], "pools": r[2], "days": r[3], "reversed": r[4], "shifted": r[5], "shift_slots_p50": r[6], "shift_slots_p90": r[7]}
@@ -276,7 +290,7 @@ def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None, req
             "point_in_time": "t = first leg with running volume >= max(D, 10 x p90_7d) and running distinct traders >= T",
             "cells": len(SLEEP_S) * len(THRESHOLDS) * len(REVIVE_T), "sleep_s_sol": list(SLEEP_S), "thresholds_sol": list(THRESHOLDS), "revive_t": list(REVIVE_T),
             "revive_p90_x": REVIVE_P90_X, "sleep_quiet_share": SLEEP_QUIET, "age_days": AGE_DAYS, "age_slots_in_window": age_slots,
-            "candidate_hours": n_cand, "candidate_legs": _count(con, "cl"),
+            "candidate_hours": n_cand, "candidate_legs": n_legs, "consistency": consistency,
             "signals": n, "signals_without_mint": int(null_mint or 0), "pools_without_mint": int(null_mint_pools or 0),
             "require_mint": require_mint, "mayhem_excluded": True, "per_cell": per_cell, "sleeping_pools_per_day_with_trades": sleeping,
             "commit": git_commit(), "seconds": round(sum(PHASES.values()), 1), "phases_seconds": PHASES}

@@ -43,6 +43,13 @@ if [ "$STEP" = markout ]; then
   else
     log "detect FAILED (see $LOG/detect.log)"; exit 1
   fi
+  # empty input is RED: the markout step needs candidate hours, their legs and signals (and detect's own consistency check passed)
+  COUNTS=$("$PY" -c "import json,sys; d=json.load(open(sys.argv[1])); print(d['candidate_hours'], d['candidate_legs'], d['signals'])" "$RV/detect/run-detect.json")
+  read -r N_HOURS N_LEGS N_SIG <<< "$COUNTS"
+  if [ "${N_HOURS:-0}" -le 0 ] || [ "${N_LEGS:-0}" -le 0 ] || [ "${N_SIG:-0}" -le 0 ]; then
+    log "RED: empty detect input (candidate_hours=$N_HOURS candidate_legs=$N_LEGS signals=$N_SIG), no markout"; exit 1
+  fi
+  log "detect counts: candidate_hours=$N_HOURS candidate_legs=$N_LEGS signals=$N_SIG"
   if [ -s "$RV/markout/markout-revival.parquet" ]; then log "markout exists, skipped"; exit 0; fi
   log "markout on $RV/detect (engine ${LAB_ENGINE:-?})"
   if nice -n 10 "$PY" -u -m wallets.markout --parts "$RV/detect" --run revival --out "$RV/markout" > "$LOG/markout.log" 2>&1; then
