@@ -11,7 +11,7 @@ acc = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(acc)
 
 STATS = {"segments": 4, "late_rows": 0, "duplicate_rows": 0, "backfill_rows": 6, "backfill_duplicates": 1, "tokens_dropped": 0,
-         "seeded_pools": 2, "unknown_pools": 3, "unknown_pool_rows": 7, "unknown_pool_other_rows": 1, "unknown_mints": 2,
+         "seeded_pools": 2, "farmer_flags_fixed": 1, "unknown_pools": 3, "unknown_pool_rows": 7, "unknown_pool_other_rows": 1, "unknown_mints": 2,
          "unknown_mint_rows": 5}
 
 
@@ -28,10 +28,9 @@ def summary(**kw):
 
 
 def lab_live(v, **extra):
-    """lab-live's summary of the same run: the farmer flags all false (another sha256 and history with them)."""
+    """lab-live's summary of the same run (M3-10: the farmer flags LiveFeed's), with its own measurements."""
     r = copy.deepcopy(v)
-    r.update({"sha256": "s-false", "history": {"count": 6, "sha256": "h-false"}, "flag_fixes": None,
-              "lab_live": {"peak_rss_bytes": 1 << 20, "mem_max": {"heap": [1, 2]}}})
+    r.update({"lab_live": {"peak_rss_bytes": 1 << 20, "mem_max": {"heap": [1, 2]}}})
     r.update(extra)
     return r
 
@@ -40,7 +39,15 @@ def test_the_strict_tier_is_green_on_equal_summaries_and_names_each_difference()
     py = summary()
     rs = lab_live(py)
     red, info = acc.strict(py, rs, lab_live(py, lab_live={"peak_rss_bytes": 7}), 4, 10)
-    assert red == [] and any("sha256 with the farmer flag differs" in i for i in info)
+    assert red == [] and any("flag_fixes 1, farmer_flags_fixed 1" in i for i in info)
+    # M3-10: the farmer bit is gated: another flag in a window, the history with it, a fix
+    red, _ = acc.strict(py, lab_live(py, windows=[[0, 100, 4, "x", "n0"], [100, 200, 6, "w1", "n1"]], sha256="x"),
+                        lab_live(py, windows=[[0, 100, 4, "x", "n0"], [100, 200, 6, "w1", "n1"]], sha256="x"), 4, 10)
+    assert any(r.startswith("sha256:") for r in red) and any("1 windows differ" in r and "[0]" in r for r in red)
+    fixes = lab_live(py, flag_fixes={"count": 0, "sha256": "e"})
+    fixes["stats"] = dict(STATS, farmer_flags_fixed=0)
+    red, _ = acc.strict(py, fixes, fixes, 4, 10)
+    assert any(r.startswith("flag_fixes:") for r in red) and any("farmer_flags_fixed" in r for r in red)
     bad = lab_live(py, windows=[[0, 100, 4, "w0", "n0"], [100, 200, 6, "w1", "x"]], learned={"count": 3, "sha256": "x"})
     bad["stats"] = dict(STATS, backfill_duplicates=2)
     red, _ = acc.strict(py, bad, bad, 4, 10)
@@ -90,7 +97,8 @@ def test_the_restart_equals_the_plain_run_but_for_the_copies():
         assert len(red) == 1 and why in red[0] and red[0].startswith("lab-live on the restart"), (why, red)
     bad = restarted(plain)
     bad["sha256"] = "other"
-    assert acc.restart(plain, bad, rs, 1, 3)[0] == ["LiveFeed on the restart: its history or sha256 with the farmer flag differ from the plain run's"]
+    red = acc.restart(plain, bad, rs, 1, 3)[0]
+    assert len(red) == 1 and red[0].startswith("LiveFeed on the restart: sha256")
 
 
 def test_main_reads_the_runs_and_the_copies_usage(tmp_path, capsys):
@@ -110,3 +118,20 @@ def test_main_reads_the_runs_and_the_copies_usage(tmp_path, capsys):
     assert "M3-09b restart: GREEN" in capsys.readouterr().out
     assert acc.main(["restart", str(out), "5", "10", str(root), "6", "1"]) == 1  # the copy would be seq 7: 1 usage row, not 3
     assert "usage rows" in capsys.readouterr().out
+
+
+def test_the_seed_step_needs_a_window_with_slots_and_seeded_pools(tmp_path, capsys):
+    # M3-10 spec v0.2 §6.2: compare's rules on seed-*, EVENTS `-` is LiveFeed's count; an empty window or no pool seeded
+    # means the seed was not exercised: RED
+    out = tmp_path / "out"
+    plain = summary()
+    for name, v in (("seed-py", plain), ("seed-rs1", lab_live(plain)), ("seed-rs2", lab_live(plain))):
+        (out / name).mkdir(parents=True)
+        (out / name / "summary.json").write_text(json.dumps(v))
+    assert acc.main(["seed", str(out), "4", "-"]) == 0
+    assert "M3-10 seed: GREEN" in capsys.readouterr().out
+    empty = summary(farm_seed={"lo": 2, "hi": 2, "h24": 500, "first_live_slot": 2, "complete_from": 502})
+    for name, v in (("seed-py", empty), ("seed-rs1", lab_live(empty)), ("seed-rs2", lab_live(empty))):
+        (out / name / "summary.json").write_text(json.dumps(v))
+    assert acc.main(["seed", str(out), "4", "-"]) == 1
+    assert "the seed was not exercised" in capsys.readouterr().out

@@ -62,3 +62,19 @@ def test_an_out_that_is_not_empty_or_inside_the_recorder_is_refused(tmp_path):
         restart_root.make(rec, os.path.join(rec, "restart"), at=1)
     restart_root.main(["--root", rec, "--out", str(tmp_path / "ok"), "--at", "0", "--n", "1"])
     assert len(_read(str(tmp_path / "ok"))) == 6
+
+
+def test_a_later_start_links_the_segments_from_a_seq_with_their_own_seqs(tmp_path):
+    # M3-10's seed step: the segments from seq 2 on, as they are; refused from a seq that is not there or not complete
+    rec = _rec(tmp_path, incomplete=(1,))
+    res = restart_root.link(rec, str(tmp_path / "later"), 2)
+    assert res == {"segments": 3, "complete": 3, "first_slot": 1200}
+    assert {int(k): m["seq"] for k, m in _read(str(tmp_path / "later")).items()} == {2: 2, 3: 3, 4: 4}
+    with pytest.raises(SystemExit, match="segment 1 is not there and complete"):
+        restart_root.link(rec, str(tmp_path / "x"), 1)
+    with pytest.raises(SystemExit, match="segment 9 is not there"):
+        restart_root.link(rec, str(tmp_path / "y"), 9)
+    restart_root.main(["--root", rec, "--out", str(tmp_path / "cli"), "--from-seq", "3"])
+    assert sorted(_read(str(tmp_path / "cli"))) == ["000000003", "000000004"]
+    with pytest.raises(SystemExit):
+        restart_root.main(["--root", rec, "--out", str(tmp_path / "z"), "--from-seq", "3", "--at", "3"])

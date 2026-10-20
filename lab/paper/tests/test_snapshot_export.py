@@ -335,3 +335,32 @@ def test_curve_hold_refusals_leave_the_export_as_it_was_and_an_overflow_leaves_n
     with pytest.raises(duckdb.Error, match="(?i)out of range|overflow"):
         export(over, str(out), history=(2000, 2500), seed=False)
     assert not (out / "meta.json").exists()
+
+
+def test_a_seed_range_holds_exactly_seed_pools_rows_over_it(tmp_path, monkeypatch):
+    # M3-10 spec v0.2 §3: farm_seed over exactly [lo, hi) holds what _seed_pool reads (buys and sells, every trader, in
+    # chain order); live_seed_window is _init_seed's window; a range outside the pool rows, without the seed, or touching
+    # the hold-out or the clean period is refused (the tiny store's pool rows are W's buys of P1 at 1500 and 2100)
+    store = tiny_store(tmp_path / "tiny.duckdb", TINY)
+    assert snapshot_export.live_seed_window(store, 2000, 300) == (1700, 2000)
+    assert snapshot_export.live_seed_window(store, 1600, 5000) == (1500, 1600)  # as far as the pool rows reach
+    assert snapshot_export.live_seed_window(store, 5000, 100) == (4900, 4900)  # after the store, more than a day: empty
+    out = tmp_path / "snap"
+    meta = export(store, str(out), seed_range=(1500, 2000))
+    assert meta["farm_seed"] == {"lo": 1500, "hi": 2000, "h24": meta["farm_seed"]["h24"], "given": True}
+    assert meta["counts"]["farm_seed"] == 1 and _rows(out / "farm_seed.parquet") == [("P1", "W", 1500, 0, 0, 2, True, 5)]
+    con = streams.open_store(store, threads=1, memory="256MB")
+    try:
+        seed_pool = con.execute("""SELECT trader, slot, token_buy, token_amount FROM pool WHERE pool = ? AND kind IN ('buy', 'sell')
+                                   AND slot >= ? AND slot < ? ORDER BY slot, tx_index, outer_ix, inner_ix""", ["P1", 1500, 2000]).fetchall()
+    finally:
+        con.close()
+    assert [(r[1], r[2], r[6], r[7]) for r in _rows(out / "farm_seed.parquet")] == seed_pool == [("W", 1500, True, 5)]
+    for bad, why in (((1000, 2000), "not inside the store's pool rows"), ((1500, 2200), "not inside"), ((1600, 1600), "not inside")):
+        with pytest.raises(ValueError, match=why):
+            export(store, str(tmp_path / "x"), seed_range=bad)
+    with pytest.raises(ValueError, match="goes with the seed"):
+        export(store, str(tmp_path / "x"), seed=False, seed_range=(1500, 2000))
+    monkeypatch.setattr(snapshot_export, "CLEAN", (1900, 1950))
+    with pytest.raises(ValueError, match=r"seed range \[1500, 2000\) touches the clean period"):
+        export(store, str(tmp_path / "x"), seed_range=(1500, 2000))

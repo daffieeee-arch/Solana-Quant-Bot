@@ -106,16 +106,41 @@ def _copy(con, out, name, sql):
     return int(n)
 
 
-def export(store, out, history=None, seed=True):
+def live_seed_window(store, first, h24):
+    """LiveFeed's farmer-seed window of a live start at `first` with `h24` (paper/live.py `_init_seed`): [first - h24,
+    first) as far as the store's pool rows reach, as (lo, hi) with hi >= lo. M3-10: an export of exactly that window
+    (seed_range) lets lab-live seed as LiveFeed does on a start inside the store."""
+    con = streams.open_store(store, threads=1, memory="256MB")
+    try:
+        start, end = con.execute("SELECT min(slot), max(slot) + 1 FROM pool").fetchone()
+    finally:
+        con.close()
+    start, end = int(start or 0), int(end or 0)
+    lo = max(first - h24, start)
+    return lo, max(lo, min(first, end))
+
+
+def export(store, out, history=None, seed=True, seed_range=None):
     """The snapshot of `store` into `out`; history=(from, to) adds farm_hist.parquet and curve_hold.parquet for a replay
-    of [from, to); seed=False leaves farm_seed out."""
+    of [from, to); seed=False leaves farm_seed out; seed_range=(lo, hi) writes farm_seed over exactly [lo, hi) instead of
+    the store's last day (M3-10: a live start inside the store, `live_seed_window`), inside the store's pool rows and
+    clear of the hold-out and the clean period."""
     os.makedirs(out, exist_ok=True)
     con = streams.open_store(store, threads=2, memory="1GB")
     try:
         start, end = con.execute("SELECT min(slot), max(slot) + 1 FROM pool").fetchone()
         start, end = int(start or 0), int(end or 0)
         h24 = max(Clock.from_store(con).slots(DAY_MS, max(start, end - 1)), MIN_H24)
-        lo = max(start, end - h24)
+        lo, hi_seed = max(start, end - h24), end
+        if seed_range is not None:
+            if not seed:
+                raise ValueError("a seed range goes with the seed")
+            lo, hi_seed = (int(x) for x in seed_range)
+            if not start <= lo < hi_seed <= end:
+                raise ValueError(f"seed range [{lo}, {hi_seed}) is not inside the store's pool rows [{start}, {end})")
+            for name, period in (("hold-out", HOLDOUT), ("clean period", CLEAN)):
+                if _overlaps(lo, hi_seed, period):
+                    raise ValueError(f"seed range [{lo}, {hi_seed}) touches the {name} [{period[0]}, {period[1]})")
         store_meta = json.loads(con.execute("SELECT json FROM meta").fetchone()[0])
         s0, s1 = store_meta["slot_start"], store_meta["slot_end_exclusive"]
         ms_per_slot, farmer = store_meta["ms_per_slot"], store_meta["farmer"]
@@ -146,7 +171,7 @@ def export(store, out, history=None, seed=True):
         for name, sql in (("mints", MINTS), ("pools", POOLS)):
             counts[name] = _copy(con, out, name, sql)
         if seed:
-            counts["farm_seed"] = _copy(con, out, "farm_seed", SEED.format(lo=lo, hi=end))
+            counts["farm_seed"] = _copy(con, out, "farm_seed", SEED.format(lo=lo, hi=hi_seed))
         if hist is not None:
             counts["farm_hist"] = hist["rows"] = _copy(con, out, "farm_hist", HIST.format(lo=hist["lo"], a=hist["hi"], b=hist["to"]))
             counts["curve_hold"] = hold["rows"] = _copy(con, out, "curve_hold", CURVE_HOLD.format(a=hold["hi"], b=hold["to"]))
@@ -158,7 +183,9 @@ def export(store, out, history=None, seed=True):
             "ms_per_slot": ms_per_slot, "farmer": farmer, "chunk_list": store_meta["chunk_list"],
             "chunk_h24": chunks, "exported_unix": int(time.time())}
     if seed:
-        meta["farm_seed"] = {"lo": lo, "hi": end, "h24": h24}
+        meta["farm_seed"] = {"lo": lo, "hi": hi_seed, "h24": h24}
+        if seed_range is not None:
+            meta["farm_seed"]["given"] = True  # the range asked for, not the store's last day
     if hist is not None:
         meta["farm_hist"] = hist
         meta["curve_hold"] = hold
@@ -175,11 +202,16 @@ def main(argv=None):
     ap.add_argument("--history-from", type=int)
     ap.add_argument("--history-to", type=int)
     ap.add_argument("--no-seed", action="store_true")
+    ap.add_argument("--seed-from", type=int, help="farm_seed over [--seed-from, --seed-to) instead of the store's last day")
+    ap.add_argument("--seed-to", type=int)
     a = ap.parse_args(argv)
     if (a.history_from is None) != (a.history_to is None):
         ap.error("give --history-from and --history-to together")
+    if (a.seed_from is None) != (a.seed_to is None) or (a.seed_from is not None and a.no_seed):
+        ap.error("give --seed-from and --seed-to together, and not with --no-seed")
     history = None if a.history_from is None else (a.history_from, a.history_to)
-    meta = export(a.store, a.out, history, seed=not a.no_seed)
+    seed_range = None if a.seed_from is None else (a.seed_from, a.seed_to)
+    meta = export(a.store, a.out, history, seed=not a.no_seed, seed_range=seed_range)
     print(json.dumps({k: v for k, v in meta.items() if k not in ("chunk_list", "chunk_h24")}, indent=1))
 
 
