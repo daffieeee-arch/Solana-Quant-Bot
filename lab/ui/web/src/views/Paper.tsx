@@ -12,8 +12,11 @@ import type { PaperAssessmentItem, PaperJournal, PaperPosition, PaperRecorder } 
 
 // Paper tab (design v1, "Paper — iPhone"): the paper engine's journal and the recorder's meter, read-only
 // (lab/ui/paper.py). Numbers mirror the engine's daily report; nothing here sends or signs anything.
+// Every exit reason the engine journals (lab/paper/engine.py, backtest/strategies.py), in Dutch.
 const EXIT: Record<string, string> = {
   take_profit: "doel geraakt", stop_loss: "stop-loss", time: "tijdslimiet", window_end: "einde data", open: "open",
+  outflow: "uitstroom", graduation: "migratie", restart_lost: "verloren bij herstart", entry_slippage: "instap: slippage",
+  after_window_end: "einde data", end_of_data: "einde data",
 };
 const VERDICT: Record<string, { text: string; tone: "buy" | "warn" | "sell" }> = {
   GO: { text: "GO", tone: "buy" }, ADJUST: { text: "BIJSTELLEN", tone: "warn" }, STOP: { text: "STOP", tone: "sell" },
@@ -234,7 +237,7 @@ function PositionRow({ p, lastSlot }: { p: PaperPosition; lastSlot: number | nul
           {p.farm && p.farm !== "n/a" && <span className={cn("text-[10px] px-1.5 py-0.5 rounded-md font-bold", p.farm === "organic" ? "bg-buy-soft text-buy" : "bg-warn-soft text-warn")}>{p.farm === "organic" ? "organisch" : "farming"}</span>}
         </div>
         <span className="text-[11px] text-muted truncate">
-          <span className="num">{p.cost_sol == null ? "–" : p.cost_sol.toLocaleString("nl-NL", { minimumFractionDigits: 2 })} SOL{slots != null ? ` · ${n0(slots)} slots` : ""} · {p.variant.split("_")[0]}</span>
+          <span className="num">{p.cost_sol == null ? "–" : p.cost_sol.toLocaleString("nl-NL", { minimumFractionDigits: 2 })} SOL{slots != null ? ` · ${n0(slots)} slots` : ""} · {"group" in p ? p.variant.replace(/_H\d+$/, "") : p.variant.split("_")[0]}</span>
           {" · "}<DexLink mint={p.mint ?? p.key}>Dex ↗</DexLink>
         </span>
       </div>
@@ -257,8 +260,10 @@ const dur = (p: PaperPosition) => {
 };
 const retOf = (p: PaperPosition) => p.ret ?? null;
 const pctTxt = (v: number | null) => (v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${n1(Math.abs(v * 100))}%`);
-const FILTERS = [{ value: "all", label: "Alles" }, { value: "open", label: "Open" }, { value: "shadow", label: "N2-schaduw" }] as const;
-type Filter = (typeof FILTERS)[number]["value"];
+// The table's views: K3 (all, open), each further group's own positions ("arm:H"), and K3's N2 shadow.
+type Filter = string;
+const filtersFor = (groups: string[]) => [{ value: "all", label: "K3" }, { value: "open", label: "K3 open" },
+  ...groups.map((g) => ({ value: `arm:${g}`, label: `Groep ${g}` })), { value: "shadow", label: "N2-schaduw" }];
 
 function PositionsTable({ rows, sel, onSel }: { rows: PaperPosition[]; sel: string | null; onSel: (k: string) => void }) {
   return (
@@ -276,7 +281,7 @@ function PositionsTable({ rows, sel, onSel }: { rows: PaperPosition[]; sel: stri
           {rows.map((p) => {
             const ret = retOf(p), sym = label(p.symbol, 16) || shortAddr(p.key), on = sel === p.key;
             return (
-              <tr key={`${p.family}|${p.key}|${p.entry_slot}`} onClick={() => onSel(p.key)} aria-selected={on}
+              <tr key={`${p.family}|${p.variant}|${p.key}|${p.entry_slot}`} onClick={() => onSel(p.key)} aria-selected={on}
                 className={cn("border-b border-[#161D2A] cursor-pointer hover:bg-surface-2/50", on && "bg-accent-soft")}>
                 <td className="px-2 py-2.5">
                   <span className="inline-flex items-center gap-2.5">
@@ -311,12 +316,18 @@ export default function Paper() {
   const [open, setOpen] = useState<string | null>(null);
   const [sel, setSel] = useState<string | null>(null);
   const [filter, setFilter] = useState<Filter>("all");
+  const [list, setList] = useState<string>("main"); // phone: K3's positions or a further group's
   if (error && !data) return <p className="text-warn">{error}</p>;
   if (!data) return <Loading what="Paper" />;
   const j = data.journal, r = data.recorder;
   const nOpen = j?.positions.filter((p) => p.status === "open").length ?? 0;
   const chartKey = sel ?? j?.positions[0]?.key ?? null;
-  const tableRows = !j ? [] : filter === "shadow" ? j.shadow_positions : filter === "open" ? j.positions.filter((p) => p.status === "open") : j.positions;
+  const armGroups = j ? [...new Set([...j.arms.map((a) => a.group), ...j.arm_positions.map((p) => p.group)])] : [];
+  const armRows = (g: string) => j?.arm_positions.filter((p) => p.group === g) ?? [];
+  const tableRows = !j ? [] : filter === "shadow" ? j.shadow_positions : filter === "open" ? j.positions.filter((p) => p.status === "open")
+    : filter.startsWith("arm:") ? armRows(filter.slice(4)) : j.positions;
+  const phoneRows = !j ? [] : list === "main" || !armGroups.includes(list) ? j.positions : armRows(list);
+  const phoneOpen = phoneRows.filter((p) => p.status === "open").length;
 
   return (
     <div className="grid gap-3.5">
@@ -343,7 +354,7 @@ export default function Paper() {
               <h2 className="m-0 text-base font-extrabold">Posities</h2>
               <span className="text-xs text-muted">{nOpen} open · {j.positions.length - nOpen} gesloten {j.is_today ? "vandaag" : j.day}</span>
               <div className="ml-auto flex gap-1.5">
-                {FILTERS.map((f) => (
+                {filtersFor(armGroups).map((f) => (
                   <button key={f.value} type="button" onClick={() => setFilter(f.value)} aria-pressed={filter === f.value}
                     className={cn("min-h-9 px-3 rounded-lg border text-xs", filter === f.value ? "border-accent-line bg-accent-soft text-accent-fg font-bold" : "border-track text-[#A3ADBF] font-semibold")}>
                     {f.label}
@@ -352,7 +363,7 @@ export default function Paper() {
               </div>
             </div>
             {tableRows.length ? <PositionsTable rows={tableRows.slice(0, shown * 2)} sel={chartKey} onSel={setSel} />
-              : <p className="text-sm text-muted m-0">{filter === "shadow" ? "Geen N2-schaduw in dit journaal." : "Geen posities."}</p>}
+              : <p className="text-sm text-muted m-0">{filter === "shadow" ? "Geen N2-schaduw in dit journaal." : filter.startsWith("arm:") ? `Geen posities van groep ${filter.slice(4)} ${j.is_today ? "vandaag" : j.day}.` : "Geen posities."}</p>}
             {tableRows.length > shown * 2 && <Button type="button" onClick={() => setShown(shown + 25)} className="justify-self-start">Toon meer ({tableRows.length - shown * 2} over)</Button>}
           </section>
 
@@ -364,15 +375,18 @@ export default function Paper() {
               {r && <TritonCard r={r} />}
             </div>
             <section className="grid gap-2 min-w-0">
-              <div className="flex justify-between items-baseline">
+              <div className="flex justify-between items-center gap-2 flex-wrap">
                 <h2 className="m-0 text-base font-extrabold">Posities</h2>
-                <span className="text-xs text-muted">{nOpen} open · {j.positions.length - nOpen} gesloten</span>
+                {!!armGroups.length && <Segmented label="Groep" value={armGroups.includes(list) ? list : "main"} onChange={setList}
+                  options={[{ value: "main", label: "K3" }, ...armGroups.map((g) => ({ value: g, label: `Groep ${g}` }))]} />}
+                <span className="text-xs text-muted">{phoneOpen} open · {phoneRows.length - phoneOpen} gesloten</span>
               </div>
-              {!j.positions.length ? <p className="text-muted text-sm m-0">Geen posities.</p> : (
+              {list !== "main" && armGroups.includes(list) && <p className="m-0 text-[11px] text-muted">Groep {list}: meting, telt niet mee voor de stopregel of de kapitaalsimulatie.</p>}
+              {!phoneRows.length ? <p className="text-muted text-sm m-0">Geen posities.</p> : (
                 <div className="grid gap-2">
                   <AnimatePresence initial={false}>
-                    {j.positions.slice(0, shown).map((p) => {
-                      const id = `${p.family}|${p.key}|${p.entry_slot}`;
+                    {phoneRows.slice(0, shown).map((p) => {
+                      const id = `${p.family}|${p.variant}|${p.key}|${p.entry_slot}`;
                       return (
                         <motion.div key={id} layout initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
                           {/* A div, not a button: the row holds the DexScreener link. */}
@@ -390,9 +404,9 @@ export default function Paper() {
                   </AnimatePresence>
                 </div>
               )}
-              {j.positions.length > shown && (
+              {phoneRows.length > shown && (
                 <Button type="button" onClick={() => setShown(shown + 50)} className="justify-self-start">
-                  Toon meer ({j.positions.length - shown} over)
+                  Toon meer ({phoneRows.length - shown} over)
                 </Button>
               )}
             </section>
