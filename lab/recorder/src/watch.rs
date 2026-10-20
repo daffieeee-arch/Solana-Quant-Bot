@@ -10,9 +10,9 @@
 //! reached the probe depth) get their own transaction filter for a few hours.
 //!
 //! Streams, in downscale order (the first is dropped first): `pool_accounts`, `pool_creations`,
-//! `tx_new_reversed`, `new_vaults`, `backfill` (no new backfills), `tx_probes`, `vaults`,
-//! `tx_wallets`, `tx_watchlist` (watchlist pools; the open-position pools stay). Blocks, slot statuses and `tx_new_pools` (pump.fun
-//! graduations, ~0.003 GB/day) always stay; only the hard stop ends them.
+//! `new_vaults`, `backfill` (no new backfills), `tx_probes`, `tx_new_reversed`, `vaults`,
+//! `tx_wallets`, `tx_pump_creates`, `tx_watchlist` (watchlist pools; the open-position pools stay). Blocks, slot statuses and
+//! `tx_new_pools` (pump.fun graduations, ~0.003 GB/day) always stay; only the hard stop ends them.
 
 use serde_json::{json, Value};
 use std::collections::{BTreeSet, HashMap};
@@ -44,10 +44,11 @@ pub const PUMP_MINT_AUTHORITY: &str = "TSLvdd1pWpHVjahSpsvCXUbgwsL3JAcvokwaKt1eo
 /// SPL token account `amount` (both token programs).
 pub const VAULT_SLICE: (u64, u64) = (64, 8);
 pub const WSOL: &str = "So11111111111111111111111111111111111111112";
-/// Pool bytes 271..287: `protocol_fees` and `creator_fees` (u64 each). Hypothesis, to verify in the
-/// first measuring hour: both are 0 when a pool is created and grow with its first trade, so an
-/// account stream asking for zeros there sees each new pool once (`pool_creations`).
-pub const FRESH_FEES: (u64, usize) = (271, 16);
+/// Pool bytes 271..287, zeros asked for by the `pool_creations` account stream. A measurement probe,
+/// not a creation detector: the measuring hour of 2026-10-20 refuted the "fresh fees" hypothesis
+/// (both u64 grow with a pool's first trade); the bytes are zero in every pool today, so the stream
+/// sees every pool write (~1.3 GB a day). It starts nothing (creation-filters spec v0.2 P3, S5).
+pub const POOL_WRITE_PROBE: (u64, usize) = (271, 16);
 /// `tx_new_reversed`: every PumpSwap transaction without one of these generic accounts. They are
 /// the accounts the creation-filter measurement (1052, windows a and b) excluded in both windows:
 /// protocol and buyback fee recipients (in every trade, in no creation), Jupiter v6 and a few
@@ -70,17 +71,21 @@ pub const NEW_REVERSED_EXCLUDE: [&str; 15] = [
     "HTVZVEQMBsNanubDPTs3CxDAEGNFQHJY8c1441iy2S5r",
 ];
 
-/// The streams a budget downscale drops, in order. `tx_pump_creates` goes last before the watchlist:
-/// its CreateEvents give LiveFeed the creator of every token created after the store snapshot (F7's
-/// creator rule; a creator who moved the creator fee to a sharing config is not the pool's coin
-/// creator, #233 job 84), it costs ~0.1 GB a day, and without the watchlist no trigger is left for it.
+/// The streams a budget downscale drops, in order. `tx_new_reversed` goes after the probes
+/// (creation-filters spec v0.2 M4): with `pool_creations` starting nothing it is, with the
+/// graduations of `tx_new_pools`, the only source of new pools; without it nothing creates pools or
+/// probes, and dropping it writes the note "creation detection off (downscale)". `tx_pump_creates`
+/// goes last before the watchlist: its CreateEvents give LiveFeed the creator of every token created
+/// after the store snapshot (F7's creator rule; a creator who moved the creator fee to a sharing
+/// config is not the pool's coin creator, #233 job 84), it costs ~0.1 GB a day, and without the
+/// watchlist no trigger is left for it.
 pub const DOWNSCALE: [&str; 10] = [
     "pool_accounts",
     "pool_creations",
-    "tx_new_reversed",
     "new_vaults",
     "backfill",
     "tx_probes",
+    "tx_new_reversed",
     "vaults",
     "tx_wallets",
     "tx_pump_creates",
@@ -365,7 +370,7 @@ impl Filter {
                 "pool_creations".to_owned(),
                 SubscribeRequestFilterAccounts {
                     owner: vec![PUMP_AMM.to_owned()],
-                    filters: vec![Self::memcmp(0, POOL_DISC.to_vec()), Self::memcmp(FRESH_FEES.0, vec![0u8; FRESH_FEES.1])],
+                    filters: vec![Self::memcmp(0, POOL_DISC.to_vec()), Self::memcmp(POOL_WRITE_PROBE.0, vec![0u8; POOL_WRITE_PROBE.1])],
                     ..Default::default()
                 },
             );
@@ -522,8 +527,9 @@ mod tests {
         }
     }
 
-    fn level(i: usize) -> usize {
-        DOWNSCALE.iter().position(|s| *s == ["pool_accounts", "pool_creations", "tx_new_reversed", "new_vaults", "tx_probes", "vaults", "tx_wallets", "tx_watchlist"][i]).unwrap()
+    /// The level that drops `stream` (it is off from `level(stream) + 1`).
+    fn level(stream: &str) -> usize {
+        DOWNSCALE.iter().position(|s| *s == stream).unwrap()
     }
 
     #[test]
@@ -560,14 +566,18 @@ mod tests {
         assert_eq!(full.tx_probes, vec![C.to_owned()]); // A is already a watchlist pool
         assert!(full.pool_accounts && full.pool_creations && full.new_reversed);
         assert!(!full.vaults.is_empty() && !full.fresh_vaults.is_empty() && !full.tx_wallets.is_empty());
-        let l3 = Filter::new(&w, &extra, level(2) + 1, &opts(true, 10_000));
-        assert!(!l3.pool_accounts && !l3.pool_creations && !l3.new_reversed && !l3.fresh_vaults.is_empty());
-        let l5 = Filter::new(&w, &extra, level(4) + 1, &opts(true, 10_000));
-        assert!(l5.fresh_vaults.is_empty() && l5.tx_probes.is_empty() && !l5.vaults.is_empty());
-        assert!(l5.pump_creates); // the creates stay until only the watchlist is left
-        let l7 = Filter::new(&w, &extra, level(6) + 1, &opts(true, 10_000));
-        assert!(l7.tx_wallets.is_empty() && l7.pump_creates && l7.tx_pools.len() == 2);
-        let l8 = Filter::new(&w, &extra, level(6) + 2, &opts(true, 10_000));
+        let nv = Filter::new(&w, &extra, level("new_vaults") + 1, &opts(true, 10_000));
+        assert!(!nv.pool_accounts && !nv.pool_creations && nv.fresh_vaults.is_empty() && nv.new_reversed && nv.tx_probes == full.tx_probes);
+        // creation-filters spec v0.2 M4: the probes go before the creation detection, which goes before the vaults
+        let pr = Filter::new(&w, &extra, level("tx_probes") + 1, &opts(true, 10_000));
+        assert!(!pr.backfill && pr.tx_probes.is_empty() && pr.new_reversed && !pr.vaults.is_empty());
+        let nr = Filter::new(&w, &extra, level("tx_new_reversed") + 1, &opts(true, 10_000));
+        assert!(!nr.new_reversed && !nr.vaults.is_empty() && nr.new_pools);
+        assert!(nr.pump_creates); // the creates stay until only the watchlist is left
+        assert_eq!(level("tx_new_reversed"), level("tx_probes") + 1);
+        let l7 = Filter::new(&w, &extra, level("tx_wallets") + 1, &opts(true, 10_000));
+        assert!(l7.tx_wallets.is_empty() && l7.vaults.is_empty() && l7.pump_creates && l7.tx_pools.len() == 2);
+        let l8 = Filter::new(&w, &extra, level("tx_wallets") + 2, &opts(true, 10_000));
         assert!(!l8.pump_creates && l8.tx_pools.len() == 2); // then the creates, the watchlist pools last
         let last = Filter::new(&w, &extra, DOWNSCALE.len(), &opts(true, 10_000));
         assert_eq!(last.tx_pools, vec![B.to_owned()]);

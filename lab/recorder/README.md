@@ -18,7 +18,7 @@ transactions.
 | `blocks` | block meta | block time, height, tx count per slot (the engine's clock) |
 | `slots` | slot status, `filter_by_commitment` | a slot is written once confirmed (+ `--close-lag`) |
 | `tx_new_reversed` (off by default, `--new-reversed`) | `account_include` [PumpSwap], `account_exclude` 15 generic accounts (protocol and buyback fee recipients, Jupiter v6, a few routers; `watch.rs` `NEW_REVERSED_EXCLUDE`) | direct pool creations, mostly reversed pools (97% of the reversed pools ≥ 150 SOL on a day are created that day). The certain fallback: ~7–8 GB/day with ~100% of direct creations (creation-filter measurement, 1052). The exclusion list also lets through deposits, withdrawals and other non-trade PumpSwap transactions |
-| `pool_creations` (off by default, `--pool-creations`) | owner PumpSwap + memcmp Pool discriminator + memcmp 16 zero bytes at 271 (`protocol_fees`, `creator_fees`), data slice 43..244 | **hypothesis, to verify in the first measuring hour:** both counters are 0 at creation and grow with the first trade, so each new pool gives exactly one update for almost no bytes. A fee collection probably sets them to 0 again, so collects on existing pools match as well. Measure updates per hour, updates per *distinct* pool, and whether every new reversed pool appears (compare with OF1's CreatePoolEvents). Every update is written (`pool_creations/`), not deduplicated |
+| `pool_creations` (off by default, `--pool-creations`) | owner PumpSwap + memcmp Pool discriminator + memcmp 16 zero bytes at 271 (`watch.rs` `POOL_WRITE_PROBE`), data slice 43..244 | **a measurement, not a creation detector.** The measuring hour of 2026-10-20 refuted the "fresh fees" hypothesis: the bytes are zero in every pool today, so the stream sees every pool write, old pools too (~1.3 GB/day). It starts no probe and follows no vault, and the feeds learn no pool from it (creation-filters spec v0.2 P3, M1). Every update is written (`pool_creations/`), not deduplicated |
 | `tx_pump_creates` (off by default, `--pump-creates`) | `account_required` = [pump.fun, its mint authority `TSLvdd1p…` (PDA "mint-authority")] | every pump.fun create transaction: the CreateEvent (name, symbol, uri, **creator**) and the Metaplex/Token-2022 metadata it creates (`token_meta/`), for the UI's token names. LiveFeed takes the creator of every token created after its store snapshot from it: without it F7's creator rule falls back to the pool's coin creator, which is a sharing config when the creator moved the creator fee (pfee `migrate_bonding_curve_creator`, #233 job 84). ~0.1 GB/day; a downscale drops it last before the watchlist pools |
 | `tx_probes` | `account_include` = the recorder's own probe pools | a new WSOL pool becomes a probe (full transactions for `--probe-minutes`, 180) at once when it is created with ≥ `--probe-depth-sol` (120) WSOL, or when its followed WSOL vault reaches that depth. 120, not F7's 150: the trigger sell is the first trade that sees 150, so a switch at 150 comes a minute late (LAB research, watchlist measurement: the F7 watchlist enters at 120 too). Probes are applied within a second (no rate limit): the first F7 trigger comes 0–2 minutes after creation (LAB research smoke test) |
 | `new_vaults` | the WSOL vaults of new reversed pools below the probe depth, for `--fresh-vault-minutes` (60), data slice 64..72 | finds the ~85-SOL pools that become deep later. Their trades before the probe starts are not recorded (the farmer flag of those pools is incomplete) |
@@ -33,10 +33,11 @@ transactions.
 - This is rare: F7's pools are almost all created the day of the create.
 
 **F7 needs creation detection.** 99% of the F7 triggers come in reversed pools created the same day,
-minutes after their creation (LAB research, watchlist measurement). Without `--pool-creations` or
-`--new-reversed` no new reversed pool is found, `new_vaults` stays empty and F7 coverage is ~0%;
-the recorder logs a warning then (and the dry run lists it). Which of the two becomes the default
-is decided after the first measuring hour.
+minutes after their creation (LAB research, watchlist measurement). Without `--new-reversed` no new
+reversed pool is found, `new_vaults` stays empty and F7 coverage is ~0%; the recorder logs a warning
+then (and the dry run lists it). Probes and vault follows start only from a decoded `CreatePoolEvent`
+(`tx_new_reversed`, `tx_new_pools` or a backfill); `--pool-creations` starts nothing (creation-filters
+spec v0.2 P3).
 
 A transaction filter is never sent with an empty address list (that would match every
 transaction on chain); the tests check this. The vault stream is a second subscription on the
@@ -106,9 +107,10 @@ segment numbers.
 Every update is metered (protobuf size before transport compression, times `--wire-ratio`) per
 stream and minute. The daily cap is `--budget-usd` / `--usd-per-gb` (default $2 / $0.08 = 25 GB,
 UTC day, kept in `<root>/budget.json` across restarts). When the day projects above the cap, the
-lowest-priority stream is dropped (`pool_accounts`, `pool_creations`, `tx_new_reversed`, `new_vaults`, `backfill`,
-`tx_probes`, `vaults`, `tx_wallets`, `tx_pump_creates`, then the watchlist pools; open-position pools,
-graduations, blocks and slots stay); a minute above 20x the sustainable
+lowest-priority stream is dropped (`pool_accounts`, `pool_creations`, `new_vaults`, `backfill`, `tx_probes`,
+`tx_new_reversed`, `vaults`, `tx_wallets`, `tx_pump_creates`, then the watchlist pools; open-position pools,
+graduations, blocks and slots stay). Probes go before the creation detection; dropping `tx_new_reversed` adds
+the note `creation detection off (downscale)` (creation-filters spec v0.2 M4). A minute above 20x the sustainable
 rate downscales at once. At the cap the recorder writes its last segment and exits with code 75;
 it refuses to start again the same day. A new UTC day restores all streams. Every decision is a
 `budget` usage row with a note, which the engine journals (`usage` table).

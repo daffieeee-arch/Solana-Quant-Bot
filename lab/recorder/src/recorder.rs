@@ -533,7 +533,9 @@ impl Recorder {
 
     /// A pool account update. `pool_accounts`: a pool's first update in this process (the account
     /// is written by every trade, so later updates carry nothing new). `pool_creations`: every
-    /// update (to verify the creation-only hypothesis); a new reversed pool's WSOL vault is followed.
+    /// update, a measurement only (`POOL_WRITE_PROBE`: it sees every pool write, old pools too).
+    /// Neither starts a probe or follows a vault (creation-filters spec v0.2 P3): only a decoded
+    /// CreatePoolEvent does (`on_creation`).
     fn pool_row(&mut self, a: &SubscribeUpdateAccount, now_ns: u64, stream: &str) -> Option<Row> {
         let acc = a.account.as_ref()?;
         let d = &acc.data;
@@ -541,11 +543,7 @@ impl Recorder {
             self.stats.short_accounts += 1;
             return None;
         }
-        if stream == "pool_creations" {
-            if b58(&d[0..32]) == WSOL {
-                self.follow_vault(b58(&d[96..128]), b58(&acc.pubkey), now_ns / 1_000_000_000, Some(a.slot));
-            }
-        } else if !self.seen_pools.insert(acc.pubkey.clone()) {
+        if stream != "pool_creations" && !self.seen_pools.insert(acc.pubkey.clone()) {
             return None;
         }
         let k = |i: usize| Val::Str(b58(&d[i..i + 32]));
@@ -695,6 +693,10 @@ impl Recorder {
                     let f = self.filter(self.level);
                     if !f.same_streams(&self.active) {
                         self.meter.note(format!("downscale to level {}: {} off ({reason})", self.level, DOWNSCALE[self.level - 1]));
+                        if self.active.new_reversed && !f.new_reversed {
+                            // creation-filters spec v0.2 M4: no new pool is created or probed from here on
+                            self.meter.note("creation detection off (downscale)".to_owned());
+                        }
                         return self.change(f, now_unix);
                     }
                 }
@@ -879,6 +881,27 @@ mod tests {
         r.meter.add("vaults", 30_000).unwrap(); // over 20x the sustainable rate: downscale at once
         assert!(matches!(r.on_tick(T0 + 5, None).unwrap(), Action::None)); // no level changes a stream
         assert_eq!((r.level, r.active.level), (DOWNSCALE.len(), DOWNSCALE.len()));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dropping_the_creation_detection_is_noted() {
+        // creation-filters spec v0.2 M4: with only tx_new_reversed on, the levels before it change nothing; its drop
+        // (after the probes) says that no new pool is detected from here on, in the same budget row.
+        let root = tmp("rec-creation-off");
+        let (segs, last) = Segments::open(&root, 1000, 3600).unwrap();
+        let meter = Meter::load(&root, 1_440_000, 1.0, T0).unwrap();
+        let watch = Watch::parse(Some(&json!({"pools": [], "wallets": [], "vaults": []})), None);
+        let cfg = Config { opts: Opts { backfill: false, new_reversed: true, ..Opts::default() }, ..Config::default() };
+        let mut r = Recorder::new(cfg, plugin(), segs, meter, watch, last, 1);
+        assert!(r.active.new_reversed);
+        r.meter.add("tx_new_reversed", 30_000).unwrap(); // over 20x the sustainable rate: downscale at once
+        assert!(matches!(r.on_tick(T0 + 5, None).unwrap(), Action::Resubscribe(..)));
+        assert!(!r.active.new_reversed && DOWNSCALE[r.active.level - 1] == "tx_new_reversed");
+        r.meter.close_minute();
+        let notes: Vec<String> = r.meter.take_usage().iter().filter(|u| u["stream"] == "budget").map(|u| u["note"].as_str().unwrap().to_owned()).collect();
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains(": tx_new_reversed off (") && notes[0].ends_with("; creation detection off (downscale)"), "{notes:?}");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1074,14 +1097,22 @@ mod tests {
             }))
         };
         r.on_update(account("pool_accounts", data.clone()), 1).unwrap();
-        r.on_update(account("pool_accounts", data), 1).unwrap(); // the same pool again: no row
+        r.on_update(account("pool_accounts", data.clone()), 1).unwrap(); // the same pool again: no row
         r.on_update(account("vaults", 42u64.to_le_bytes().to_vec()), 1).unwrap();
+        // pool_creations: a row per update, and a reversed pool (WSOL base) follows no vault and starts no probe
+        // (creation-filters spec v0.2 P3: only a CreatePoolEvent does)
+        let mut reversed = data;
+        reversed[0..32].copy_from_slice(&bs58::decode(WSOL).into_vec().unwrap());
+        r.on_update(account("pool_creations", reversed.clone()), 1).unwrap();
+        r.on_update(account("pool_creations", reversed), 1).unwrap();
+        assert!(r.fresh.is_empty() && r.probes.is_empty() && !r.extra_dirty);
         for u in [meta(1000), confirmed(1000), confirmed(1001)] {
             r.on_update(u, 1).unwrap();
         }
         r.on_tick(T0 + 1, None).unwrap();
         let m = segment_meta(&root, 0);
         assert_eq!((m["rows"]["pool_accounts"].as_u64(), m["rows"]["vaults"].as_u64()), (Some(1), Some(1)));
+        assert_eq!(m["rows"]["pool_creations"].as_u64(), Some(2));
         std::fs::remove_dir_all(&root).unwrap();
     }
 
