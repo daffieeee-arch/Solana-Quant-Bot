@@ -72,6 +72,19 @@ pub struct SeedWindow {
     pub complete_from: u64,
 }
 
+impl SeedWindow {
+    /// The window of a live start at `first_slot` over a store whose pool rows are [start, end) (paper/live.py
+    /// `_init_seed`): [first - h24, first) as far as the store reaches, complete from `first` when the store reaches it,
+    /// else a day later. Without the export's trades: M3-09b's follow source records it (its farm_seed and seeded_pools);
+    /// `Snapshot::seed_window` checks the export covers it.
+    pub fn of((start, end): (u64, u64), first_slot: u64, h24: u64) -> Self {
+        let lo = first_slot.saturating_sub(h24).max(start);
+        let hi = first_slot.min(end).max(lo);
+        let complete_from = if end >= first_slot { first_slot.max(start + h24) } else { first_slot + h24 };
+        SeedWindow { lo, hi, h24, first_live_slot: first_slot, complete_from }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct Snapshot {
     pub tokens: BTreeMap<String, TokenInfo>,
@@ -337,15 +350,12 @@ impl Snapshot {
     /// as far as the store reaches, complete from `first` when the store reaches it, else a day later. An error when the
     /// export's day of trades does not cover it (a start inside the store's range, more than its last day back).
     pub fn seed_window(&self, first_slot: u64, h24: u64) -> Result<SeedWindow> {
-        let (start, end) = self.pool_slots;
-        let lo = first_slot.saturating_sub(h24).max(start);
-        let hi = first_slot.min(end).max(lo);
-        let complete_from = if end >= first_slot { first_slot.max(start + h24) } else { first_slot + h24 };
-        if hi > lo && (lo < self.export_seed.0 || hi > self.export_seed.1) {
-            bail!("the seed window [{lo}, {hi}) of a start at {first_slot} is not in the export's [{}, {})", self.export_seed.0,
+        let w = SeedWindow::of(self.pool_slots, first_slot, h24);
+        if w.hi > w.lo && (w.lo < self.export_seed.0 || w.hi > self.export_seed.1) {
+            bail!("the seed window [{}, {}) of a start at {first_slot} is not in the export's [{}, {})", w.lo, w.hi, self.export_seed.0,
                   self.export_seed.1);
         }
-        Ok(SeedWindow { lo, hi, h24, first_live_slot: first_slot, complete_from })
+        Ok(w)
     }
 
     /// A pool's seed trades in the window, in LiveFeed's order (paper/live.py `_seed_pool`).

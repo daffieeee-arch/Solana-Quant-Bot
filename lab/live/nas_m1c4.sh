@@ -145,6 +145,9 @@ if [ "$STEP" = build ]; then
            follow::tests::the_clock_takes_pythons_float_steps_and_h24_its_window follow::tests::json_and_floats_are_written_as_python_writes_them \
            follow::tests::the_dump_writes_legs_dumps_summary_with_its_drain_points \
            follow::tests::a_segment_in_the_hold_out_or_the_clean_period_is_refused \
+           follow::tests::backfills_are_history_before_inside_and_after_and_a_restart_is_deduplicated \
+           follow::tests::the_seen_keys_leave_in_their_order_once_the_oldest_is_three_thousand_slots_behind \
+           follow::tests::the_prune_drops_old_tokens_and_farm_keys_at_the_hundredth_segment_with_events \
            tests::the_follow_dump_takes_a_root_a_snapshot_a_grid_origin_and_a_summary; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
   done
