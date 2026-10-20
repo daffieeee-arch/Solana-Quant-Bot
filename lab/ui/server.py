@@ -134,6 +134,7 @@ def api_meta(q):
         tabs.append("triton")
     if has_table(con, "strategy_summary") and con.execute("SELECT count(*) FROM strategy_summary").fetchone()[0]:
         tabs.insert(0, "strategies")
+    tabs.append("control")  # Bediening: pairing, confirmed actions, the audit log (lab/ui/actions.py)
     return {"meta": meta, "tabs": tabs}
 
 

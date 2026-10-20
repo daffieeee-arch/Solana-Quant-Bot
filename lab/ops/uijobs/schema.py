@@ -55,7 +55,10 @@ def validate(raw):
     if isinstance(raw, str):
         if len(raw.encode("utf-8")) > MAX_BYTES:
             raise ValueError(f"job larger than {MAX_BYTES} bytes")
-        raw = json.loads(raw)
+        try:
+            raw = json.loads(raw)
+        except RecursionError:
+            raise ValueError("job nested too deeply") from None
     if not isinstance(raw, dict) or set(raw) != {"id", "template", "template_sha256", "params"}:
         raise ValueError("job: exactly id, template, template_sha256, params")
     jid, tpl, sha, p = raw["id"], raw["template"], raw["template_sha256"], raw["params"]

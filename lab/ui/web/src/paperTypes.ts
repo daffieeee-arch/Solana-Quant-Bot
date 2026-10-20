@@ -34,6 +34,9 @@ export interface PaperJournal {
   arms: { group: string; variants: (PaperGroup & { variant: string; today_sol: number })[] }[];
   // Further groups' (H) open positions and the day's exits (lab/ui/paper.py journal_view), each with its group.
   arm_positions: (PaperPosition & { group: string })[];
+  // The day report card (lab/ui/paper.py journal_view day_card): per group the day's trades, Σ, best and worst.
+  day_card: { group: string; trades: number; entry_failed: number; net_sol: number; wins: number;
+    best: DayTrade | null; worst: DayTrade | null }[];
   // The journal has no state 'groups' (an older journal): K3 and H inferred from the variant names (paper.infer_groups).
   groups_inferred?: boolean;
   holdout_rows_dropped: number;
@@ -41,6 +44,10 @@ export interface PaperJournal {
 // stoprule.decide: a verdict from MIN_TRADES filled trades and MIN_DAYS_CI trading days (owner, 2026-10-16).
 export type PaperVerdict = "GO" | "ADJUST" | "STOP" | "too few trades" | "too few days";
 // stoprule.clock_state: 'due' once there is a verdict or at the limit (CLOCK_MAX_DAYS, `limit`).
+export interface DayTrade {
+  key: string; variant: string; ret: number | null; pnl_sol: number; exit_reason: string | null;
+  mint?: string | null; symbol?: string | null; name?: string | null;
+}
 export interface PaperClock {
   date: string; reason: string; set_at: string; phase: "not_started" | "running" | "due"; clock_day: number | null; limit: boolean;
 }

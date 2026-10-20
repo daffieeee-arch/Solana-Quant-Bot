@@ -3,6 +3,7 @@ import { useState, type ReactNode } from "react";
 import { Badge, DexLink, Loading, SolscanLink } from "../components/ui";
 import { Button } from "../components/Button";
 import PaperChart from "../components/PaperChart";
+import DayCard from "../components/DayCard";
 import { Change, Num } from "../components/Num";
 import { Segmented } from "../components/Segmented";
 import { usePaper } from "../live";
@@ -349,6 +350,7 @@ export default function Paper() {
               <Hero j={j} />
               <StopCard j={j} />
               {r && <TritonCard r={r} />}
+              <DayCard j={j} r={r} />
             </aside>
           </div>
           <section className="hidden lg:grid rounded-[18px] bg-surface-alt border border-line p-[18px] gap-3">
@@ -376,6 +378,7 @@ export default function Paper() {
               <StopCard j={j} />
               {r && <TritonCard r={r} />}
             </div>
+            <DayCard j={j} r={r} />
             <section className="grid gap-2 min-w-0">
               <div className="flex justify-between items-center gap-2 flex-wrap">
                 <h2 className="m-0 text-base font-extrabold">Posities</h2>

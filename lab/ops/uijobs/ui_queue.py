@@ -4,6 +4,7 @@
   restrict,command="/usr/bin/python3 -I /lab/bin/uijobs/ui_queue.py" ssh-ed25519 AAAA… lab-ui-jobs
 
 The client's command line arrives in SSH_ORIGINAL_COMMAND and may only be:
+  sums           the pinned templates' sha256 ({"backtest-f7": "<hex>"}), read-only
   put            a job (JSON on stdin, at most schema.MAX_BYTES), checked against schema.py, written atomically to
                  <UI_JOBS_DIR>/queue/ui-<id>.json; prints the id
   status <id>    the job's state: queued, running, done or failed (status.json), or unknown
@@ -50,6 +51,18 @@ def run(command, stdin, out):
         os.replace(tmp, os.path.join(q, f"ui-{job['id']}.json"))
         out.write(job["id"] + "\n")
         return
+    if parts == ["sums"]:
+        # The templates the NAS has pinned (SHA256SUMS), read-only: the VPS puts the matching template_sha256 in a job,
+        # so a reviewed template change on the NAS never makes every job fail (LAB review on #440).
+        path = os.path.join(os.environ.get("UI_TEMPLATES_DIR", "/lab/templates"), "SHA256SUMS")
+        with open(path) as f:
+            pinned = {}
+            for line in f.read(16_384).splitlines():
+                p = line.split()
+                if len(p) == 2 and schema.SHA_RE.match(p[0]) and p[1].endswith(".sh") and p[1][:-3] in schema.TEMPLATES:
+                    pinned[p[1][:-3]] = p[0]
+        out.write(json.dumps(pinned, sort_keys=True) + "\n")
+        return
     if len(parts) == 2 and parts[0] in ("status", "get") and schema.ID_RE.match(parts[1]):
         jid = parts[1]
         if parts[0] == "status":
@@ -64,14 +77,14 @@ def run(command, stdin, out):
             raise ValueError("result too large")
         out.write(data.decode("utf-8"))
         return
-    raise ValueError("commands: put | status <id> | get <id>")
+    raise ValueError("commands: sums | put | status <id> | get <id>")
 
 
 def main():
     try:
         run(os.environ.get("SSH_ORIGINAL_COMMAND", ""), sys.stdin.buffer, sys.stdout)
-    except (ValueError, OSError) as e:
-        print(f"refused: {e}", file=sys.stderr)
+    except (ValueError, OSError, RecursionError) as e:  # RecursionError: deeply nested JSON
+        print(f"refused: {e.__class__.__name__ if isinstance(e, RecursionError) else e}", file=sys.stderr)
         return 2
     return 0
 
