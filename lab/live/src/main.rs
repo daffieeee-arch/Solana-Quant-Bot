@@ -52,6 +52,18 @@
 //!   `paper.journal_diff --scope signals` (lab/live/nas_m1b.sh: the dev range of dev2 and the whole of fwd1053); the shared
 //!   golden cases (paper/tests/data/c1b_signal_cases.json) run in signals_core.rs's tests.
 //!
+//! M3-09b, the follow source (follow.rs; spec research/m3-09b-follow-source-spec-2026-10-20.md v0.2), PR 1:
+//!
+//!   lab-live legs --follow ROOT --snapshot DIR [--snapshot-before SLOT] [--h24 N] --from SLOT [--to SLOT] --summary FILE
+//!                 [--out FILE [--out-from SLOT]] [--window N] [--expect-segments N]
+//!
+//! - Python LiveFeed's events over a recorder's complete segments (`ROOT/segments`), with its admission: the snapshot as
+//!   known before the first live slot, tokens and pools learned per segment before its events, the rows of keys not
+//!   known counted, the release one slot behind.
+//! - `--summary` in paper.legs_dump's `--segments` form (`--from` the window grid's origin): the lines' digests per
+//!   window with and without the farmer flag, the side digests drained at each slot end, the clock and the stats;
+//!   lab/live/nas_m3_09b.sh compares it with LiveFeed's on job 91.
+//!
 //! M1 C2-5, the curve seed before a replay's from (curve_hold.rs; spec research/m1-c2-positionsim-spec-2026-10-19.md §4.1):
 //! curve_hold.parquet of paper.snapshot_export, read per (mint, trader) and checked against the replay's from and to. No
 //! command uses it yet; `lab-live paper` (C2-4b) seeds its curve positions with it.
@@ -66,6 +78,7 @@ mod sink;
 // `lab-live paper` reads it; its lookups (`of`, `net`) serve the tests and the seed proof's debugging.
 #[allow(dead_code)]
 mod curve_hold;
+mod follow;
 mod journal;
 mod legs;
 mod legs_read;
@@ -105,6 +118,8 @@ fn parse_args(argv: &[String]) -> Result<Args> {
         _ => bail!("usage: lab-live replay (--chunks-root DIR | --segments-root DIR) --from SLOT --to SLOT --journal DIR [--order-out FILE]\n       \
                     lab-live snapshot --dir DIR [--before SLOT] [--first-slot SLOT --h24 SLOTS] --out FILE\n       \
                     lab-live legs --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --summary FILE [--out FILE [--out-from SLOT]] [--window N]\n       \
+                    lab-live legs --follow ROOT --snapshot DIR [--snapshot-before SLOT] [--h24 N] --from SLOT [--to SLOT] --summary FILE \
+                    [--out FILE [--out-from SLOT]] [--window N] [--expect-segments N]\n       \
                     lab-live signals --chunks-root DIR --snapshot DIR --from SLOT --to SLOT --groups FILE --journal DIR [--dev-bounds LO HI] \
                     [--summary FILE] [--trace FILE]\n       \
                     lab-live paper (--chunks-root DIR | --segments DIR) --snapshot DIR --from SLOT --to SLOT --groups FILE --variants SPEC[,SPEC...] \
@@ -257,6 +272,49 @@ fn legs_cmd(a: &legs_read::LegsArgs) -> Result<()> {
     Ok(())
 }
 
+/// `lab-live legs --follow ROOT --snapshot DIR [--snapshot-before SLOT] [--h24 N] --from SLOT [--to SLOT] --summary FILE
+/// [--out FILE [--out-from SLOT]] [--window N] [--expect-segments N]` (M3-09b, follow.rs).
+fn parse_follow_args(argv: &[String]) -> Result<follow::FollowArgs> {
+    let mut it = argv.iter();
+    let (mut root, mut snapshot, mut before, mut h24, mut from, mut to) = (None, None, None, None, None, None);
+    let (mut summary, mut out, mut window, mut out_from, mut expect) = (None, None, 10_000, 0, None);
+    while let Some(flag) = it.next() {
+        let mut val = || it.next().cloned().with_context(|| format!("{flag} needs a value"));
+        let num = |v: String, what: &str| v.parse::<u64>().with_context(|| what.to_owned());
+        match flag.as_str() {
+            "--follow" => root = Some(PathBuf::from(val()?)),
+            "--snapshot" => snapshot = Some(PathBuf::from(val()?)),
+            "--snapshot-before" => before = Some(num(val()?, "--snapshot-before")?),
+            "--h24" => h24 = Some(num(val()?, "--h24")?),
+            "--from" => from = Some(num(val()?, "--from")?),
+            "--to" => to = Some(num(val()?, "--to")?),
+            "--summary" => summary = Some(PathBuf::from(val()?)),
+            "--out" => out = Some(PathBuf::from(val()?)),
+            "--out-from" => out_from = num(val()?, "--out-from")?,
+            "--window" => window = num(val()?, "--window")?,
+            "--expect-segments" => expect = Some(num(val()?, "--expect-segments")?),
+            other => bail!("unknown argument {other}"),
+        }
+    }
+    if window == 0 || h24 == Some(0) {
+        bail!("--window and --h24 must be above 0");
+    }
+    Ok(follow::FollowArgs {
+        root: root.context("--follow")?, snapshot: snapshot.context("--snapshot")?, snapshot_before: before, h24, from: from.context("--from")?,
+        to, window, summary: summary.context("--summary")?, out, out_from, expect_segments: expect,
+    })
+}
+
+fn follow_cmd(a: &follow::FollowArgs) -> Result<()> {
+    let t0 = std::time::Instant::now();
+    let mut v = follow::run(a)?;
+    v["lab_live"]["secs"] = serde_json::json!(t0.elapsed().as_secs_f64());
+    std::fs::write(&a.summary, serde_json::to_string_pretty(&v)?).with_context(|| format!("write {}", a.summary.display()))?;
+    log::info!("legs --follow: {} segments, {} events in {:.1} s, sha256 {}, peak RSS {} MB", v["stats"]["segments"], v["events"],
+               t0.elapsed().as_secs_f64(), v["sha256"].as_str().unwrap_or("?"), mem::mb(mem::peak_rss_bytes()));
+    Ok(())
+}
+
 fn parse_signals_args(argv: &[String]) -> Result<signals::SignalsArgs> {
     let mut it = argv.iter();
     let (mut chunks_root, mut snapshot, mut from, mut to, mut groups, mut journal) = (None, None, None, None, None, None);
@@ -341,6 +399,7 @@ fn main() -> Result<()> {
     let argv: Vec<String> = std::env::args().skip(1).collect();
     match argv.first().map(String::as_str) {
         Some("snapshot") => return snapshot_cmd(&parse_snapshot_args(&argv[1..])?),
+        Some("legs") if argv[1..].iter().any(|a| a == "--follow") => return follow_cmd(&parse_follow_args(&argv[1..])?),
         Some("legs") => return legs_cmd(&parse_legs_args(&argv[1..])?),
         Some("signals") => return signals::run(&parse_signals_args(&argv[1..])?).map(|_| ()),
         Some("paper") => return paper::run(&parse_paper_args(&argv[1..])?).map(|_| ()),
@@ -352,7 +411,7 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_args, parse_legs_args, parse_paper_args, parse_signals_args, parse_snapshot_args};
+    use super::{parse_args, parse_follow_args, parse_legs_args, parse_paper_args, parse_signals_args, parse_snapshot_args};
 
     #[test]
     fn the_paper_command_takes_its_inputs_the_variants_and_the_costs() {
@@ -401,6 +460,20 @@ mod tests {
                     "--chunks-root /c --snapshot /s --from 2 --to 2 --summary /m", "--chunks-root /c --snapshot /s --from 1 --to 2",
                     "--chunks-root /c --snapshot /s --from 1 --to 2 --summary /m --window 0"] {
             assert!(parse_legs_args(&args(bad)).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn the_follow_dump_takes_a_root_a_snapshot_a_grid_origin_and_a_summary() {
+        // M3-09b: `legs --follow` (main dispatches on --follow), the window grid's end optional as in legs_dump --segments
+        let a = parse_follow_args(&args("--follow /r --snapshot /s --snapshot-before 9 --h24 3 --from 10 --summary /m --expect-segments 2")).unwrap();
+        assert_eq!((a.snapshot_before, a.h24, a.from, a.to, a.window, a.expect_segments), (Some(9), Some(3), 10, None, 10_000, Some(2)));
+        let a = parse_follow_args(&args("--follow /r --snapshot /s --from 10 --to 20 --summary /m --out /o --out-from 15 --window 5")).unwrap();
+        assert_eq!((a.to, a.window, a.out.is_some(), a.out_from, a.h24), (Some(20), 5, true, 15, None));
+        for bad in ["--snapshot /s --from 1 --summary /m", "--follow /r --from 1 --summary /m", "--follow /r --snapshot /s --summary /m",
+                    "--follow /r --snapshot /s --from 1", "--follow /r --snapshot /s --from 1 --summary /m --window 0",
+                    "--follow /r --snapshot /s --from 1 --summary /m --h24 0", "--follow /r --snapshot /s --from 1 --summary /m --chunks-root /c"] {
+            assert!(parse_follow_args(&args(bad)).is_err(), "{bad}");
         }
     }
 

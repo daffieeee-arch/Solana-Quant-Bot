@@ -32,13 +32,16 @@ farmer flag as `-` (M3-09b compares that until M3-10). The summary adds what the
 events, each as a count and the sha256 of its lines:
 - history: the backfill trades of drain_history, drained where the engine drains them (when the next slot's first
   event arrives, and at the end): `at pool slot tx outer inner` and the pool leg's fields, at the slot whose end drains;
+  history_no_farmer the same lines with the leg's farmer flag (their last field) as `-` (M3-09b compares it until M3-10);
 - flag_fixes: drain_flag_fixes at the same points: `at pool slot tx outer inner farmer`;
 - learned: drain_learned's rows (`kind key seq slot info`) and new_pools, each drain's in sorted order (LiveFeed appends a
   segment's in DuckDB's GROUP BY order, which differs between processes); usage: drain_usage's (as sorted JSON); and
   arrivals: each event's position and (received ns, created ns, segment written) when it has them. The dump drains usage
   and learned at every slot end, the engine at every live minute (engine.py `_live_minute`): the same rows, usage in the
   same order (first in, first out, with no `at`), so only how often they are taken differs;
-and LiveFeed's stats and its farmer seed (without the store's path).
+the clock (M3-09b spec v0.2 §4.1): `per_epoch`, LiveFeed's ms per slot by epoch at the end, and `h24`, its farmer window
+as `[seq, value]` each time it changed, taken at the same drain points with the segment read by then; and LiveFeed's
+stats and its farmer seed (without the store's path).
 """
 
 import argparse
@@ -197,7 +200,7 @@ def store_h24(store, slot):
         con.close()
 
 
-SIDE = ("history", "flag_fixes", "learned", "usage", "new_pools", "arrivals")
+SIDE = ("history", "history_no_farmer", "flag_fixes", "learned", "usage", "new_pools", "arrivals")
 
 
 def check_root(root):
@@ -226,11 +229,14 @@ def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0,
                     seed_farmers=True)
     side = {k: _Digest() for k in SIDE}
     pools_seen = [0]  # new_pools taken so far
+    clock_h24 = []  # [seq, h24] at each drain point where it changed
 
     def drain(at):
         for pool, legs in feed.drain_history():
             for l in legs:
-                side["history"].add(history_line(at, pool, l))
+                s = history_line(at, pool, l)
+                side["history"].add(s)
+                side["history_no_farmer"].add(s[: s.rindex("\t")] + "\t-")  # the leg's farmer flag masked (M3-09b, until M3-10)
         for pool, order, farmer in feed.drain_flag_fixes():
             side["flag_fixes"].add(_join([at, pool, *order, farmer]))
         # Learned rows and new pools in sorted order per drain: LiveFeed appends a segment's in the order DuckDB's
@@ -243,6 +249,9 @@ def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0,
         pools_seen[0] = len(feed.new_pools)
         for u in feed.drain_usage():
             side["usage"].add(json.dumps(u, sort_keys=True))
+        h24_now = feed._h24()
+        if not clock_h24 or clock_h24[-1][1] != h24_now:
+            clock_h24.append([feed.seq, h24_now])
 
     try:
         events = feed.events() if max_rss_mb is None else capped(feed.events(), max_rss_mb)
@@ -250,8 +259,9 @@ def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0,
         seed = {k: v for k, v in (feed.farm_seed or {}).items() if k != "store"} or None
         windows = res.pop("windows")
         res.update({k: side[k].result() for k in SIDE})
+        clock = {"per_epoch": {str(e): ms for e, ms in sorted(feed.clock.per_epoch.items())}, "h24": clock_h24}
         res.update({"stats": dict(sorted(feed.stats.items())), "farm_seed": seed, "snapshot_before": snapshot_before,
-                    "h24": h24, "windows": windows})
+                    "h24": h24, "clock": clock, "windows": windows})
     finally:
         feed.close()
     read = res["stats"].get("segments", 0)

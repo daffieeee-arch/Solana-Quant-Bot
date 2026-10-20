@@ -9,7 +9,7 @@
 #   STEP=build   (bookworm runner, Rust 1.97.1): cargo test --release --locked of lab/live (the segments against the
 #                chunks on the fixture, and every earlier test) and of ALL of lab/core, named tests required to have run
 #                (M3-08: lab/core's live API, the m3_live_cases golden and C2's cases with the slots closed live; M3-08b:
-#                the live farm-window rule, backfills as history and the one create_slot store);
+#                the live farm-window rule, backfills as history and the one create_slot store; M3-09b: the follow source);
 #                then the release binary into $OUT/bin/. Run with LAB_DATA_ROOT=/lab/data-old-faithful-one/lab. Since
 #                STEP=repro, through lab/scripts/rust-repro.sh: cargo reaches the checkout by one fixed path
 #                ($LAB_RUST_ROOT/lab, a symlink, under a lock) and maps it and CARGO_HOME to /src and /cargo, so the
@@ -139,7 +139,13 @@ if [ "$STEP" = build ]; then
            paper_core::tests::every_m3_case_gives_the_engines_writes_with_what_it_learns \
            paper_core::tests::every_c2_case_gives_the_engines_writes_with_the_slots_closed_live \
            paper_core::tests::every_c3_case_gives_the_engines_writes_with_the_slots_closed_live_where_the_files_stay \
-           signals::tests::every_markets_create_slot_reaches_its_pool_meta; do
+           signals::tests::every_markets_create_slot_reaches_its_pool_meta \
+           follow::tests::the_learns_come_before_the_slots_they_precede_and_the_last_slot_waits_for_the_next_segment \
+           follow::tests::the_unknown_sets_are_capped_and_a_key_past_the_cap_counts_as_new_again \
+           follow::tests::the_clock_takes_pythons_float_steps_and_h24_its_window follow::tests::json_and_floats_are_written_as_python_writes_them \
+           follow::tests::the_dump_writes_legs_dumps_summary_with_its_drain_points \
+           follow::tests::a_segment_in_the_hold_out_or_the_clean_period_is_refused \
+           tests::the_follow_dump_takes_a_root_a_snapshot_a_grid_origin_and_a_summary; do
     grep -q "^test $t ... ok$" "$OUT/cargo-test.log" || { log "cargo test: $t did not run: FAILED"; exit 1; }
   done
   log "cargo test: ok ($(grep -c '^test .* ok$' "$OUT/cargo-test.log") tests ok)"

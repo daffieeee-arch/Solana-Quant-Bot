@@ -5,6 +5,7 @@ and digests, and --out-from. No store needed: the events are built by backtest.s
 import hashlib
 import json
 import os
+import types
 
 import pytest
 
@@ -125,10 +126,16 @@ class _LiveFeed:
         self.stats = {"segments": 2, "late_rows": 0}
         self.farm_seed = None
         self.closed = False
+        # the clock: the segment read, the farmer window and the ms per slot by epoch, as LiveFeed holds them
+        self.seq, self.h, self.clock = None, None, types.SimpleNamespace(per_epoch={})
         _LiveFeed.made.append(self)
+
+    def _h24(self):
+        return self.h
 
     def events(self):
         ctx, hctx = {}, {}
+        self.seq, self.h = 0, 1099
         self.farm_seed = {"store": "/somewhere/s.duckdb", "lo": 1, "hi": 1100, "h24": 1099, "first_live_slot": 1100,
                           "complete_from": 1100}
         self.usage.append({"minute": 7, "stream": "tx", "bytes": 10, "messages": 1, "seq": 0, "note": None})
@@ -140,8 +147,12 @@ class _LiveFeed:
         self.fixes.append(("P1", (1100, 1, 0, 2), True))
         self.learned.append(("pool", "P3", 1, 1500, "[]"))
         self.new_pools.append("P3")
+        self.seq, self.h = 1, 1200  # segment 1 moved the window
+        self.clock.per_epoch[2] = 400.5
         yield _pool(1500, 1, "sell", ctx)
         self.history.append(("P2", [_pool(950, 0, "sell", hctx).leg]))
+        self.seq, self.h = 2, 1300
+        self.clock.per_epoch[1] = 399.25
 
     def drain_history(self):
         out, self.history = self.history, []
@@ -189,7 +200,9 @@ def test_the_segments_summary_drains_where_the_engine_does(monkeypatch, tmp_path
         return {"count": len(lines), "sha256": hashlib.sha256("".join(l + "\n" for l in lines).encode()).hexdigest()}
 
     # The backfill read on the way to slot 1500 is drained at the end of slot 1100, the last one at the end of 1500.
-    assert res["history"] == digest([legs_dump.history_line(1100, "P2", first), legs_dump.history_line(1500, "P2", last)])
+    hist = [legs_dump.history_line(1100, "P2", first), legs_dump.history_line(1500, "P2", last)]
+    assert res["history"] == digest(hist)
+    assert res["history_no_farmer"] == digest([h[: h.rindex("\t")] + "\t-" for h in hist]) != res["history"]
     assert legs_dump.history_line(1100, "P2", first).split("\t")[:6] == ["1100", "P2", "900", "0", "0", "2"]
     assert res["flag_fixes"] == digest(["1100\tP1\t1100\t1\t0\t2\ttrue"])
     assert res["learned"] == digest(["pool\tP3\t1\t1500\t[]"]) and res["new_pools"] == digest(["P3"])
@@ -197,6 +210,9 @@ def test_the_segments_summary_drains_where_the_engine_does(monkeypatch, tmp_path
     assert res["arrivals"] == digest(["1100\t0\t0\t1\t5\t4\t3"])
     assert res["farm_seed"] == {"lo": 1, "hi": 1100, "h24": 1099, "first_live_slot": 1100, "complete_from": 1100}
     assert res["stats"] == {"late_rows": 0, "segments": 2}
+    # the clock: h24 at the drain points where it changed (the end of 1100, when 1500 arrives after segment 1; the end of
+    # 1500 after segment 2), the ms per slot by epoch at the end
+    assert res["clock"] == {"per_epoch": {"1": 399.25, "2": 400.5}, "h24": [[1, 1200], [2, 1300]]}
     # The lines are the store form's; the farmer-free digest masks the pool lines' flag.
     ctx = {}
     evs = [_curve(1100, 0), _pool(1100, 1, "buy", ctx), _pool(1500, 1, "sell", ctx)]
