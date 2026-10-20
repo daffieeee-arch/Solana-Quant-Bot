@@ -426,3 +426,59 @@ fn one_create_slot_serves_the_graduation_and_the_live_window() {
     eng.sig.pool_seen.insert(G, s + 300);
     assert_eq!(eng.sig.window_complete(G, s + 310), 0);
 }
+
+// ---------------------------------------------------------------------------------------------- live (M3-11)
+
+#[test]
+fn flag_fixes_are_counted_per_day_with_the_pools_that_have_an_open_position() {
+    // M3-11 spec §2.2 (engine.py:422-428): a fix given between pushes reaches the farm window at the next slot end, after
+    // the backfills, and counts on the slot's day as [fixes, of them in a pool with an open position]. P's position is
+    // open from its entry at T + 2 (K3's d 2 slots) to the end of data.
+    let mut eng = engine_live(vec![k3()], vec![0.5]);
+    let mut keys = FakeKeys { names: vec![""; 3], seeds: vec![0; 3], triggers: HashMap::new() };
+    let ev = |l: Leg, day: i64| Event::new(l, Some(BT0 + day * 86_400 + (l.slot() as i64 - T as i64) * 2 / 5));
+    let (pre, t) = (inflow(T - 10, P, 580), trig((T, 0), P, 30, 600));
+    eng.push(&ev(pre, 0), &mut keys).unwrap();
+    eng.fix_farm(P, pre.order(), false); // at T - 10's end: P has no position
+    assert!(eng.paper.flag_fix_days().is_empty(), "taken at the slot end");
+    eng.push(&ev(t, 0), &mut keys).unwrap();
+    let day = |d: &str, n: [u64; 2]| (Some(d.to_owned()), n);
+    assert_eq!(eng.paper.flag_fix_days().clone().into_iter().collect::<Vec<_>>(), [day("2026-09-21", [1, 0])]);
+    for (l, d, fix) in [(inflow(T + 5, Q, 580), 0, Some(P)), (inflow(T + 6, Q, 580), 0, Some(Q)), (inflow(T + 7, Q, 580), 1, Some(P)),
+                        (inflow(T + 8, Q, 580), 1, None)] {
+        eng.push(&ev(l, d), &mut keys).unwrap(); // the entry at T + 2 came with T + 5's push (a quiet entry)
+        if let Some(p) = fix {
+            eng.fix_farm(p, t.order(), true);
+        }
+    }
+    eng.finish(&mut keys).unwrap();
+    assert_eq!(eng.paper.flag_fix_days().clone().into_iter().collect::<Vec<_>>(),
+               [day("2026-09-21", [3, 1]), day("2026-09-22", [1, 1])]);
+    // P's trigger's entry got the fix (its own slot ended before it), Q never traded at T: kept, for its add
+    assert_eq!((eng.sig.farm.items(P).map(|i| i.iter().map(|x| x.3 > 0).collect::<Vec<_>>()), eng.sig.farm.fixes()),
+               (Some(vec![false, true]), 1));
+    assert!(eng.mem_report().iter().any(|m| m.name == "flag_fix_days" && m.entries == 2));
+}
+
+#[test]
+fn a_live_push_gives_the_rows_their_latency_and_the_live_bounds_decide_everywhere() {
+    // M3-11 spec §2.1: LiveFeed's meta_bounds (0, 2^63 - 1) on an empty clock (REF_MS 267.3) are burn = dlo = 324,000 and
+    // dhi = 2^63 - 1 - 20,000. §3: push_arrived gives K3's row its trigger's latency, d_ms round(2 * 267.83) = 536.
+    let b = Bounds::new((0, i64::MAX as u64), &crate::clock::Clock::default());
+    assert_eq!((b.burn, b.dlo, b.dhi), (324_000, 324_000, i64::MAX as u64 - 20_000));
+    assert!(b.decides(T) && !b.decides(323_999));
+    let mut eng = engine_live(vec![k3()], vec![0.5]);
+    let mut keys = FakeKeys { names: vec![""; 3], seeds: vec![0; 3], triggers: HashMap::new() };
+    let bt = BT0;
+    let a = Arrival { received: Some(bt as u64 * 1_000_000_000 + 801_000_000), created: None, written: Some(bt as u64 + 1) };
+    eng.push_arrived(&Event::new(inflow(T - 10, P, 580), Some(bt - 4)), None, &mut keys).unwrap();
+    eng.push_arrived(&Event::new(trig((T, 0), P, 30, 600), Some(bt)), Some(&a), &mut keys).unwrap();
+    eng.finish(&mut keys).unwrap();
+    let lat = eng.paper.ops.iter().find_map(|o| match o {
+        Op::Signal(r, _) => Some(r.lat),
+        _ => None,
+    });
+    assert_eq!(lat, Some(Some(crate::signals::Latency { block_time: bt, received_unix_ns: a.received, created_unix_ns: None,
+                                                         latency_ms: Some(801), segment_written_unix: a.written,
+                                                         segment_lag_ms: Some(1_000), d_ms: 536 })));
+}
