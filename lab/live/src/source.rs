@@ -7,15 +7,15 @@
 //! (`Replay::for_each_slot_mem`). Later sources add their own items beside `Slot`:
 //! - M3-09b's follow source over a recorder root (follow.rs, research/m3-09b-follow-source-spec-2026-10-20.md §3): after
 //!   reading a segment, what it learned (tokens, SOL markets, the journal's learned rows, epochs' ms per slot), its usage
-//!   rows and the segment itself; then the slots it releases, each event with its arrival. Backfill rows as history come
-//!   with its PR 2;
+//!   rows, its backfill trades as history and the segment itself; then the slots it releases, each event with its
+//!   arrival;
 //! - M3-14's relay: gaps.
 
 use crate::legs::Keys;
 use crate::legs_read::{Replay, ReplayMem};
 use crate::snapshot::{PoolInfo, TokenInfo};
 use anyhow::Result;
-use lab_core::legs::Event;
+use lab_core::legs::{Event, Id, Leg};
 use serde_json::Value;
 
 /// One slot's events, in chain order: every event of the slot the source has, within its range. The follow source
@@ -69,6 +69,8 @@ pub enum Item<'a> {
     EpochMs { epoch: u64, ms: f64 },
     /// follow: a learned row for the journal.
     Learned(&'a Learned),
+    /// follow: a backfill trade of `pool`, history only, never an event (LiveFeed `drain_history`: one leg per trade).
+    History { pool: Id, legs: &'a [Leg] },
     /// follow: a usage row of the segment's `_segment.json`, with its seq (LiveFeed `drain_usage`).
     Usage(&'a Value),
     /// follow: the segment just read, and the farmer window h24 after its blocks (LiveFeed `seq` and `_h24()`).

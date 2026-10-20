@@ -32,6 +32,7 @@ farmer flag as `-` (M3-09b compares that until M3-10). The summary adds what the
 events, each as a count and the sha256 of its lines:
 - history: the backfill trades of drain_history, drained where the engine drains them (when the next slot's first
   event arrives, and at the end): `at pool slot tx outer inner` and the pool leg's fields, at the slot whose end drains;
+  history_no_farmer the same lines with the leg's farmer flag (their last field) as `-` (M3-09b compares it until M3-10);
 - flag_fixes: drain_flag_fixes at the same points: `at pool slot tx outer inner farmer`;
 - learned: drain_learned's rows (`kind key seq slot info`) and new_pools, each drain's in sorted order (LiveFeed appends a
   segment's in DuckDB's GROUP BY order, which differs between processes); usage: drain_usage's (as sorted JSON); and
@@ -199,7 +200,7 @@ def store_h24(store, slot):
         con.close()
 
 
-SIDE = ("history", "flag_fixes", "learned", "usage", "new_pools", "arrivals")
+SIDE = ("history", "history_no_farmer", "flag_fixes", "learned", "usage", "new_pools", "arrivals")
 
 
 def check_root(root):
@@ -233,7 +234,9 @@ def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0,
     def drain(at):
         for pool, legs in feed.drain_history():
             for l in legs:
-                side["history"].add(history_line(at, pool, l))
+                s = history_line(at, pool, l)
+                side["history"].add(s)
+                side["history_no_farmer"].add(s[: s.rindex("\t")] + "\t-")  # the leg's farmer flag masked (M3-09b, until M3-10)
         for pool, order, farmer in feed.drain_flag_fixes():
             side["flag_fixes"].add(_join([at, pool, *order, farmer]))
         # Learned rows and new pools in sorted order per drain: LiveFeed appends a segment's in the order DuckDB's

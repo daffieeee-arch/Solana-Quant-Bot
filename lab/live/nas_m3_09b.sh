@@ -1,5 +1,5 @@
 #!/bin/bash
-# M3-09b PR 1 (research/m3-09b-follow-source-spec-2026-10-20.md v0.2 §4): lab-live's follow source (follow.rs) against
+# M3-09b PRs 1 and 2 (research/m3-09b-follow-source-spec-2026-10-20.md v0.2 §4): lab-live's follow source (follow.rs) against
 # Python LiveFeed on job 91's segments, on the NAS. No Triton stream, no keys.
 #
 #   STEP=build   (bookworm runner): lab/live/nas_m1c4.sh STEP=build of this commit: cargo test of lab-live and lab-core
@@ -14,14 +14,15 @@
 #                4. `paper.legs_dump --segments` once (LiveFeed, this commit: with the clock object) and `lab-live legs
 #                   --follow` twice, the same root and slots;
 #                5. GREEN needs: the two lab-live summaries equal (but their own `lab_live` measurements); against LiveFeed
-#                   equal events, kinds, each window's count, the learned, new_pools, usage and arrivals digests, the clock,
-#                   snapshot_before and h24, and the stats segments, late_rows, duplicate_rows and unknown_pool_rows. #430's
+#                   equal events, kinds, each window's count and sha256 without the farmer flag, the learned, new_pools,
+#                   usage, arrivals and history (without the farmer flag) digests, the clock, snapshot_before and h24, and
+#                   the stats segments, late_rows, duplicate_rows, backfill_rows, backfill_duplicates, tokens_dropped and
+#                   unknown_pool_rows. #430's
 #                   counters (unknown_pools by its rule, which also counts the pools of unknown boost, withdraw and deposit
 #                   rows; unknown_pool_other_rows; unknown_mint_rows) equal LiveFeed's where it is #430's, else 99zzt's
 #                   (#430, d5750c6, on these segments: 3, 2 and 12,127 = 11,606 + 521); unknown_mints is reported.
-#                   Reported, not gated in PR 1: each window's sha256 without the farmer flag (a backfill's rows set the
-#                   pool context of the withdraw and deposit legs after them: PR 2 brings the backfill as history), the
-#                   sha256 with it (M3-10), history and flag_fixes (PR 2, M3-10), the farm seed (PR 3).
+#                   Reported, not gated: the sha256 with the farmer flag and the history with it, flag_fixes (M3-10), the
+#                   farm seed and seeded_pools (PR 3).
 #
 #   STEP=build LAB_DATA_ROOT=/lab/data-old-faithful-one/lab bash lab/live/nas_m3_09b.sh      (bookworm runner)
 #   STEP=compare LAB_PY=/lab/venv/bin/python bash lab/live/nas_m3_09b.sh                    (lab runner; kort)
@@ -108,11 +109,12 @@ for name, v in (("LiveFeed", py), ("lab-live", rs)):
         red.append(f"{name} read {v.get('stats', {}).get('segments')} segments, not {want_segs}")
     if v.get("events") != want_events:
         red.append(f"{name}: {v.get('events')} events, not {want_events:,}")
-for k in ("events", "kinds", "learned", "new_pools", "usage", "arrivals", "clock", "snapshot_before", "h24"):
+for k in ("events", "kinds", "learned", "new_pools", "usage", "arrivals", "history_no_farmer", "sha256_no_farmer", "clock",
+          "snapshot_before", "h24"):
     if py.get(k) != rs.get(k):
         red.append(f"{k}: LiveFeed {json.dumps(py.get(k))[:300]}, lab-live {json.dumps(rs.get(k))[:300]}")
 ps, ls = py["stats"], rs["stats"]
-for k in ("segments", "late_rows", "duplicate_rows", "unknown_pool_rows"):
+for k in ("segments", "late_rows", "duplicate_rows", "backfill_rows", "backfill_duplicates", "tokens_dropped", "unknown_pool_rows"):
     if ps.get(k) != ls.get(k):
         red.append(f"stats {k}: LiveFeed {ps.get(k)}, lab-live {ls.get(k)}")
 # #430's counters: LiveFeed's when it is #430's (main's unknown_pools counts the pools of unknown buys and sells only),
@@ -123,32 +125,30 @@ for k, ref99 in (("unknown_pools", 3), ("unknown_pool_other_rows", 2), ("unknown
     if ls.get(k) != ref:
         red.append(f"stats {k}: lab-live {ls.get(k)}, {src} {ref}")
 pw, rw = ({w[0]: w for w in v["windows"]} for v in (py, rs))
-counts = sorted(a for a in set(pw) | set(rw) if a not in pw or a not in rw or pw[a][2] != rw[a][2])
-if counts:
-    red.append(f"{len(counts)} windows with another count, the first {counts[:5]}")
-nf_same = sum(1 for a in pw if a in rw and pw[a][4] == rw[a][4])
-nf_differ = sorted(a for a in pw if a in rw and pw[a][4] != rw[a][4])
-print(f"information: windows equal without the farmer flag {nf_same} of {len(pw)}"
-      + (f"; differing (PR 2's backfill history sets the pool context of withdraw and deposit legs) {nf_differ[:20]}" if nf_differ else ""))
-print(f"information: sha256 with the farmer flag {'equal' if py['sha256'] == rs['sha256'] else 'differs'} (M3-10); "
-      f"no-farmer total {'equal' if py['sha256_no_farmer'] == rs['sha256_no_farmer'] else 'differs'}; "
-      f"LiveFeed history {py.get('history', {}).get('count')} rows and flag_fixes {py.get('flag_fixes', {}).get('count')} (PR 2, M3-10); "
+differ = sorted(a for a in set(pw) | set(rw) if a not in pw or a not in rw or pw[a][2] != rw[a][2] or pw[a][4] != rw[a][4])
+if differ:
+    red.append(f"{len(differ)} windows differ in their count or sha256 without the farmer flag, the first {differ[:5]}")
+nf_same = sum(1 for a in pw if a in rw and pw[a][2] == rw[a][2] and pw[a][4] == rw[a][4])
+print(f"information: sha256 with the farmer flag {'equal' if py['sha256'] == rs['sha256'] else 'differs'}, history with it "
+      f"{'equal' if py['history'] == rs['history'] else 'differs'} (M3-10); LiveFeed flag_fixes {py.get('flag_fixes', {}).get('count')}, "
+      f"seeded_pools {ps.get('seeded_pools')} (M3-10, PR 3); history {rs['history']['count']} rows; "
       f"unknown_mints lab-live {ls.get('unknown_mints')}{', LiveFeed ' + str(ps['unknown_mints']) if 'unknown_mints' in ps else ''}")
 print("LiveFeed stats: " + json.dumps(ps))
 print("lab-live stats: " + json.dumps(ls))
 print("clock: " + json.dumps(rs.get("clock")))
 secs = {n: open(os.path.join(out, n, "secs")).read().strip() for n in ("py", "rs1", "rs2")}
 rss = rs["lab_live"].get("peak_rss_bytes") or 0
-measure = (f"{rs['events']:,} events of {ls['segments']} segments; unknown: {ls['unknown_pools']} pools ({ls['unknown_pool_rows']} trade, "
+measure = (f"{rs['events']:,} events of {ls['segments']} segments; history {ls['backfill_rows']} rows, {ls['backfill_duplicates']} backfill and "
+           f"{ls['duplicate_rows']} recorded duplicates, {ls['tokens_dropped']} tokens dropped; unknown: {ls['unknown_pools']} pools ({ls['unknown_pool_rows']} trade, "
            f"{ls['unknown_pool_other_rows']} other rows), {ls['unknown_mints']} mints ({ls['unknown_mint_rows']} rows); "
            f"windows without the farmer flag {nf_same} of {len(pw)} equal; LiveFeed {secs['py']} s, lab-live {secs['rs1']} s and {secs['rs2']} s, "
            f"peak RSS {rss / 2**20:.0f} MB")
 if red:
-    print("M3-09b PR 1: RED: " + "; ".join(red))
+    print("M3-09b: RED: " + "; ".join(red))
     print("measure: " + measure)
     sys.exit(1)
-print("M3-09b PR 1: GREEN: lab-live's follow source equals LiveFeed (events, kinds, window counts, learned, new_pools, usage, "
-      "arrivals, clock, stats); two lab-live runs equal. " + measure)
+print("M3-09b: GREEN: lab-live's follow source equals LiveFeed without the farmer flag (events, kinds, every window, learned, "
+      "new_pools, usage, arrivals, history, clock, stats); two lab-live runs equal. " + measure)
 EOF
 tee -a "$OUT/job.log" < "$OUT/acceptance.log"
 [ "$rc" = 0 ] || exit 1

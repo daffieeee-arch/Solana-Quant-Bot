@@ -200,7 +200,9 @@ def test_the_segments_summary_drains_where_the_engine_does(monkeypatch, tmp_path
         return {"count": len(lines), "sha256": hashlib.sha256("".join(l + "\n" for l in lines).encode()).hexdigest()}
 
     # The backfill read on the way to slot 1500 is drained at the end of slot 1100, the last one at the end of 1500.
-    assert res["history"] == digest([legs_dump.history_line(1100, "P2", first), legs_dump.history_line(1500, "P2", last)])
+    hist = [legs_dump.history_line(1100, "P2", first), legs_dump.history_line(1500, "P2", last)]
+    assert res["history"] == digest(hist)
+    assert res["history_no_farmer"] == digest([h[: h.rindex("\t")] + "\t-" for h in hist]) != res["history"]
     assert legs_dump.history_line(1100, "P2", first).split("\t")[:6] == ["1100", "P2", "900", "0", "0", "2"]
     assert res["flag_fixes"] == digest(["1100\tP1\t1100\t1\t0\t2\ttrue"])
     assert res["learned"] == digest(["pool\tP3\t1\t1500\t[]"]) and res["new_pools"] == digest(["P3"])

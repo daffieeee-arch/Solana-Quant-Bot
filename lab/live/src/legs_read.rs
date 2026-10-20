@@ -179,6 +179,13 @@ impl Admission {
         id
     }
 
+    /// A mint no longer known (live.py `_prune`: a token learned live, dropped after TOKEN_KEEP_DAYS without a graduation).
+    pub fn forget_mint(&mut self, id: Id) {
+        if let Some(m) = self.is_mint.get_mut(id as usize) {
+            *m = false;
+        }
+    }
+
     pub fn known_mint(&self, k: &str) -> bool {
         self.mint(k).is_some()
     }
