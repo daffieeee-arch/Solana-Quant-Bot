@@ -43,6 +43,8 @@ from backtest.costs import Scenario, settle
 from backtest.replay import _hist_state, _insertion_index
 from backtest.store import DAY_MS, load_defaults
 from backtest.strategies import (
+    BURN_IN_MS,
+    END_GUARD_MS,
     F6_FARM_MS,
     F6_FARM_SHARE,
     F7_BIG_GRID,
@@ -215,7 +217,8 @@ class Open:
 class Engine:
     def __init__(self, feed, journal, risk_path, *, variants=F7_GRID, d=1, q=0.5, tol=0.05, tau="empirical",
                  dev_bounds=None, n2_k=1, ignore_risk=False, cfg=None, clock=None, backup=True, segments=None,
-                 farm="all", watchlist=None, d_ms=None, name="K3", groups=(), restart=False, wall_clock=None):
+                 farm="all", watchlist=None, d_ms=None, name="K3", groups=(), restart=False, wall_clock=None,
+                 burn_in_ms=BURN_IN_MS, end_guard_ms=END_GUARD_MS):
         """The arguments up to d_ms are the primary group's (name: its name; groups: further Group objects).
         restart (live): every minute's commit journals its high-water mark, and a start on a journal with one replays
         up to it with the journal's decisions (paper/restart.py). wall_clock (live, e.g. time.time): while the engine's
@@ -249,8 +252,10 @@ class Engine:
         self.clock = clock or Clock()
         lo, hi = dev_bounds or feed.meta_bounds
         self.dev = (lo, hi)
-        self.dlo, self.dhi = decision_bounds(self.cfg, lo, hi, self.clock)
-        self.burn_slot = lo + self.clock.slots(ms(324_000), lo)
+        # burn_in_ms / end_guard_ms: production's by default (BURN_IN_MS, END_GUARD_MS; pinned by test_truncation.py);
+        # the truncation harness (paper/truncation.py) sets the guard to 0 and its smoke a shorter burn-in, in both runs
+        self.dlo, self.dhi = decision_bounds(self.cfg, lo, hi, self.clock, burn_in_ms=burn_in_ms, end_guard_ms=end_guard_ms)
+        self.burn_slot = lo + self.clock.slots(burn_in_ms, lo) if burn_in_ms else lo
         self.ignore_risk, self.backup = ignore_risk, backup
         self.scn = Scenario.from_cfg("base", self.cfg)
         self.recent = defaultdict(deque)  # key -> recent legs
@@ -1398,9 +1403,8 @@ def groups_state(eng):
                                 "require_farm_complete": g.require_farm_complete} for g in eng.groups}, sort_keys=True)
 
 
-def main(argv=None):
-    from .feed import ReplayFeed
-
+def parser():
+    """paper.engine's arguments (its defaults pinned by tests/test_truncation.py where they are production's)."""
     ap = argparse.ArgumentParser()
     ap.add_argument("--from", dest="lo", type=int, help="replay: first slot")
     ap.add_argument("--to", dest="hi", type=int, help="replay: end slot (exclusive)")
@@ -1423,6 +1427,17 @@ def main(argv=None):
     ap.add_argument("--segments", default="", help="F7 only there, e.g. pool_reversed (default: everywhere)")
     ap.add_argument("--farm", choices=["all", "organic"], default="all", help="organic: skip triggers in farming pools")
     ap.add_argument("--no-backup", action="store_true")
+    ap.add_argument("--burn-in-ms", type=float, default=BURN_IN_MS,
+                    help="replay: the decision window's burn-in (default production's; the truncation harness only)")
+    ap.add_argument("--end-guard-ms", type=float, default=END_GUARD_MS,
+                    help="replay: the decision window's end guard (default production's; the truncation harness sets 0)")
+    return ap
+
+
+def main(argv=None):
+    from .feed import ReplayFeed
+
+    ap = parser()
     a = ap.parse_args(argv)
     if a.d is not None and a.d_ms is not None:
         ap.error("give the delay once: --d (slots) or --d-ms (milliseconds), not both")
@@ -1431,6 +1446,9 @@ def main(argv=None):
     if a.ignore_risk and (a.config or a.live):
         # A paper run (a config, or live data) always has its risk limits.
         ap.error("--ignore-risk is for replay parity runs only: not with --config or --live")
+    if (a.burn_in_ms, a.end_guard_ms) != (BURN_IN_MS, END_GUARD_MS) and (a.config or a.live):
+        # The decision window of a paper run is production's; another one is for the truncation harness's replays only.
+        ap.error("--burn-in-ms / --end-guard-ms are for the truncation harness's replays only: not with --config or --live")
     if a.live and not (a.store and os.path.isfile(a.store)):
         # Without the snapshot every pool created before the recorder started would be unknown.
         ap.error(f"--live needs a readable --store (the snapshot of tokens and pools; PAPER_STORE in live.env), got {a.store!r}")
@@ -1493,7 +1511,8 @@ def main(argv=None):
     # (paper/restart.py); the recorder's files are not rewritten while catching up.
     eng = Engine(feed, j, a.risk, variants=variants, d=a.d, d_ms=a.d_ms, q=a.q, ignore_risk=a.ignore_risk, n2_k=n2_k,
                  clock=clock, backup=not a.no_backup, segments=[x for x in a.segments.split(",") if x] or None, farm=a.farm,
-                 watchlist=watch, name=name, groups=groups, restart=bool(a.live), wall_clock=time.time if a.live else None)
+                 watchlist=watch, name=name, groups=groups, restart=bool(a.live), wall_clock=time.time if a.live else None,
+                 burn_in_ms=a.burn_in_ms, end_guard_ms=a.end_guard_ms)
     j.state("groups", groups_state(eng))
     # For the stop rule's basis (paper/stoprule.py assessment): live or replay, and the cost scenario the exits
     # were settled with.
