@@ -156,7 +156,7 @@ FIRST_DAY = "2026-09-21"  # pools from before the window are >= 10 days old by c
 MS_PER_SLOT = 267.3       # REF_MS: the 10-day age of an in-window pool in slots (approximation; the store's regimes are 266-317 ms)
 
 
-def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None):
+def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None, require_mint=False):
     """Signals of the 18 cells (S x D x T) from pool_hour.parquet: per pool and hour the trailing 7-day stats over the hours
     before it (median and p90 of the SOL volume over the traded hours, the number of traded hours); sleeping = median <= S
     (no traded hour counts as sleeping too) and >= 80 % of the 168 hours without a trade; a revival hour = sleeping before it,
@@ -164,8 +164,11 @@ def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None):
     which the hour's cumulative volume reached D (point in time; traders up to that leg are reported as traders_at_t: the spec's
     shift of t to the first slot with >= T traders needs the legs and is left to the markout step's caller). Age: a pool from
     before the window from FIRST_DAY on, an in-window pool from create_slot + 10 days; no mayhem pools. One signal per pool,
-    day and cell (the earliest hour). Writes signals.parquet in the parts' column layout (family REV, variant = the cell,
-    venue pool, segment by orientation, farm organic / flagged by the hour's farmer share >= 0.5) plus run-detect.json."""
+    day and cell (the earliest hour). Mayhem pools are excluded (not in the spec; the store's mayhem flag, as every other
+    exploration). Writes signals.parquet in the parts' column layout (family REV, variant = the cell, venue pool, segment by
+    orientation, farm organic / flagged by the hour's farmer share >= 0.5, mint from the store's pools table: NULL for most
+    pools from before the window, which have no creation event in the store; `mint_known` says so, run-detect.json counts them,
+    and require_mint drops them; markout keys pools on `pool`, so they stay in by default) plus run-detect.json."""
     con = connect(store or STORE, memory=os.environ.get("LAB_WALLETS_MEMORY", "1GB"), threads=int(os.environ.get("LAB_WALLETS_THREADS", "2")))
     os.makedirs(out_dir, exist_ok=True)
     ph, po = os.path.join(agg_dir, "pool_hour.parquet"), os.path.join(agg_dir, "pools.parquet")
@@ -208,10 +211,11 @@ def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None):
       COPY (SELECT 'REV' AS family, variant, mint, t, 'pool' AS venue, pool, orientation,
                    CASE WHEN orientation = 'reversed' THEN 'pool_reversed' ELSE 'pool_normal' END AS segment,
                    CASE WHEN farmer_share >= 0.5 THEN 'flagged' ELSE 'organic' END AS farm, day, 0.5 AS size_sol,
-                   NULL::VARCHAR AS ref_mint, NULL::BIGINT AS ref_t, NULL::VARCHAR AS trigger_trader,
+                   NULL::VARCHAR AS ref_mint, NULL::BIGINT AS ref_t, NULL::VARCHAR AS trigger_trader, mint IS NOT NULL AS mint_known,
                    s_sol, d_sol, t_min, hour, t_tx, traders_at_t, depth_at_t, sol_volume, traders, buyers, net_inflow, trades, farmer_share,
                    med_7d, p90_7d, hours_traded_7d, end_depth
-            FROM sig ORDER BY variant, pool, t) TO '{out}' (FORMAT parquet, COMPRESSION zstd)""")
+            FROM sig {"WHERE mint IS NOT NULL" if require_mint else ""} ORDER BY variant, pool, t) TO '{out}' (FORMAT parquet, COMPRESSION zstd)""")
+    null_mint, null_mint_pools = con.execute("SELECT sum((mint IS NULL)::INT), count(DISTINCT pool) FILTER (WHERE mint IS NULL) FROM sig").fetchone()
     per_cell = {r[0]: {"signals": r[1], "pools": r[2], "days": r[3], "reversed": r[4], "traders_at_t_ge_T": r[5]}
                 for r in con.execute("SELECT variant, count(*), count(DISTINCT pool), count(DISTINCT day), sum((orientation = 'reversed')::INT), "
                                      "sum((traders_at_t >= t_min)::INT) FROM sig GROUP BY 1 ORDER BY 1").fetchall()}
@@ -220,7 +224,8 @@ def detect(agg_dir, out_dir, first_day=FIRST_DAY, last_day=None, store=None):
     info = {"step": "detect", "aggregate": agg_dir, "store": store or STORE, "first_day": first_day, "last_day": last_day, "history_from_hour": hour_min,
             "cells": len(cells), "sleep_s_sol": list(SLEEP_S), "thresholds_sol": list(THRESHOLDS), "revive_t": list(REVIVE_T),
             "revive_p90_x": REVIVE_P90_X, "sleep_quiet_share": SLEEP_QUIET, "age_days": AGE_DAYS, "age_slots_in_window": age_slots,
-            "signals": n, "per_cell": per_cell, "sleeping_pools_per_day_with_trades": sleeping,
+            "signals": n, "signals_without_mint": int(null_mint or 0), "pools_without_mint": int(null_mint_pools or 0),
+            "require_mint": require_mint, "mayhem_excluded": True, "per_cell": per_cell, "sleeping_pools_per_day_with_trades": sleeping,
             "commit": git_commit(), "seconds": round(sum(PHASES.values()), 1), "phases_seconds": PHASES}
     with open(os.path.join(out_dir, "run-detect.json"), "w") as f:
         json.dump(info, f, indent=1)
@@ -237,17 +242,18 @@ F7_DEPTH_SOL = 150
 
 
 def liquidity(con, signals_path):
-    """Per cell: the SOL depth at t (p10 / p50 / p90), the share >= 150 SOL (F7's floor), the own price impact of a buy of
-    0.5 / 2 / 5 SOL on a constant-product pool with that SOL depth (impact = s / (x + s): a model assumption that ignores the
-    fee and the token side), and the size at which the impact reaches 1 % (x / 99)."""
+    """Per cell: the SOL depth x at t (p10 / p50 / p90), the share >= 150 SOL (F7's floor), and for a buy of 0.5 / 2 / 5 SOL
+    on a constant-product pool with that depth the pool share s / (x + s) and the average fill s / x above the mid (model
+    assumptions that ignore the fee and the token side), plus the size at which the pool share reaches 1 % (x / 99)."""
     rows = con.execute(f"""
       SELECT variant, count(*), quantile_cont(depth_at_t, 0.1) / 1e9, quantile_cont(depth_at_t, 0.5) / 1e9, quantile_cont(depth_at_t, 0.9) / 1e9,
              avg((depth_at_t >= {F7_DEPTH_SOL * SOL})::INT),
              {', '.join(f"quantile_cont({sz} / (depth_at_t / 1e9 + {sz}), 0.5)" for sz in IMPACT_SIZES)},
+             {', '.join(f"quantile_cont({sz} / (depth_at_t / 1e9), 0.5)" for sz in IMPACT_SIZES)},
              quantile_cont(depth_at_t / 1e9 / 99, 0.5), avg((traders_at_t >= t_min)::INT), avg((orientation = 'reversed')::INT),
              avg((farm = 'flagged')::INT)
       FROM read_parquet('{signals_path}') WHERE depth_at_t IS NOT NULL GROUP BY 1 ORDER BY 1""").fetchall()
-    keys = ["n", "depth_p10", "depth_p50", "depth_p90", "share_ge_150", *[f"impact_{sz}" for sz in IMPACT_SIZES], "size_1pct_p50",
+    keys = ["n", "depth_p10", "depth_p50", "depth_p90", "share_ge_150", *[f"impact_{sz}" for sz in IMPACT_SIZES], *[f"fill_{sz}" for sz in IMPACT_SIZES], "size_1pct_p50",
             "traders_at_t_ge_T", "reversed_share", "flagged_share"]
     return {r[0]: dict(zip(keys, r[1:])) for r in rows}
 
@@ -268,10 +274,15 @@ def report(out_path, signals_path, markout_dir=None, detect_json=None, boot=10_0
     liq, freq = liquidity(con, signals_path), frequency(con, signals_path)
     cells = sorted(liq)
     det = json.load(open(detect_json)) if detect_json else {}
-    L = ["## Revival (spec research/spec-revival-2026-10-19.md v0.1a): sleeping PumpSwap pools with a sudden inflow, dev 1033-2046".replace("2046", "1046"), "",
+    L = ["## Revival (spec research/spec-revival-2026-10-19.md v0.1a): sleeping PumpSwap pools with a sudden inflow, dev 1033-1046", "",
          f"Signals {signals_path}; cells S (7-day median SOL per traded hour <= S, >= 80 % of the hours quiet) x D (the hour's cumulative volume reaches D SOL; "
          f"t = that slot) x T (unique traders in the hour); one signal per pool, day and cell; pools from before the window from {det.get('first_day', FIRST_DAY)}, "
-         f"in-window pools from create_slot + {AGE_DAYS} days; no mayhem. Exploration on used dev data: a positive cell is a candidate trial, not a finding.", ""]
+         f"in-window pools from create_slot + {AGE_DAYS} days; mayhem pools excluded (not in the spec; the store's flag). "
+         f"**Point in time:** only the D crossing is known at t; `traders >= T` and `volume >= 10 x p90` are facts of the end of the hour. The main markout "
+         f"table per cell is therefore the subset with **traders at the D leg >= T** (`traders_at_t >= T`: known at t), with the dropped share beside it; "
+         f"the end-of-hour rows are shown as a second line and are a selection on the outcome (E39/E40 lesson), not a signal. "
+         f"Signals without a mint: {det.get('signals_without_mint', '?')} of {det.get('signals', '?')} (pre-window pools without a creation event; markout keys pools on pool). "
+         f"Exploration on used dev data: a positive cell is a candidate trial, not a finding.", ""]
     L += ["### Frequency: signals per day per cell", "", "| cell | " + " | ".join(sorted({d for v in freq.values() for d in v})) + " | total |",
           "|---|" + "---|" * (len({d for v in freq.values() for d in v}) + 1)]
     days = sorted({d for v in freq.values() for d in v})
@@ -280,13 +291,14 @@ def report(out_path, signals_path, markout_dir=None, detect_json=None, boot=10_0
     if det.get("sleeping_pools_per_day_with_trades"):
         for S, per in det["sleeping_pools_per_day_with_trades"].items():
             L.append(f"| sleeping pools (S{S}, traded that day) | " + " | ".join(str(per.get(d, "")) for d in days) + " | |")
-    L += ["", "### Liquidity at t (SOL depth of the pool after the D leg; impact = s / (x + s), a constant-product model assumption)", "",
-          "| cell | n | depth p10 / p50 / p90 (SOL) | >= 150 SOL | impact 0.5 / 2 / 5 SOL (median) | size at 1 % impact (median) | traders at t >= T | reversed | flagged |",
-          "|---|---|---|---|---|---|---|---|---|"]
+    L += ["", "### Liquidity at t (SOL depth x of the pool after the D leg; constant-product model assumption: pool share = s / (x + s), average fill = s / x above mid)", "",
+          "| cell | n | depth p10 / p50 / p90 (SOL) | >= 150 SOL | pool share 0.5 / 2 / 5 SOL (median) | average fill 0.5 / 2 / 5 SOL (median) | size at 1 % pool share (median) | traders at t >= T | reversed | flagged |",
+          "|---|---|---|---|---|---|---|---|---|---|"]
     for v in cells:
         q = liq[v]
         L.append(f"| {v} | {q['n']} | {q['depth_p10']:.1f} / {q['depth_p50']:.1f} / {q['depth_p90']:.1f} | {q['share_ge_150'] * 100:.0f}% | "
-                 + " / ".join(f"{q[f'impact_{sz}'] * 100:.1f}%" for sz in IMPACT_SIZES)
+                 + " / ".join(f"{q[f'impact_{sz}'] * 100:.1f}%" for sz in IMPACT_SIZES) + " | "
+                 + " / ".join(f"{q[f'fill_{sz}'] * 100:.1f}%" for sz in IMPACT_SIZES)
                  + f" | {q['size_1pct_p50']:.2f} SOL | {q['traders_at_t_ge_T'] * 100:.0f}% | {q['reversed_share'] * 100:.0f}% | {q['flagged_share'] * 100:.0f}% |")
     summary = {}
     if markout_dir:
@@ -294,26 +306,34 @@ def report(out_path, signals_path, markout_dir=None, detect_json=None, boot=10_0
             mr._pool(mr.workers())
         try:
             mr.load(con, markout_dir)
+            con.execute(f"CREATE OR REPLACE TEMP TABLE pit AS SELECT variant, pool, t, traders_at_t >= t_min AS pit FROM read_parquet('{signals_path}')")
             ds = [r[0] for r in con.execute("SELECT DISTINCT d FROM m WHERE family = 'REV' ORDER BY 1").fetchall()]
             L += ["", "### Markouts per cell (net after costs, 0.5 SOL round trip, base; trimmed mean with day CI; dead = the pool could not pay)", "",
-                  "| cell | d | " + " | ".join(f"n / net trim / CI / dead @ {h}" for h in H_SUMMARY) + " |", "|---|---|" + "---|" * len(H_SUMMARY)]
+                  "Main line = **point in time** (traders at the D leg >= T; `dropped` = the share of the cell's signals left out); second line = "
+                  "end of hour (all signals of the cell: a selection on the hour's outcome, not a signal).", "",
+                  "| cell | d | rows | dropped | " + " | ".join(f"n / net trim / CI / dead @ {h}" for h in H_SUMMARY) + " |", "|---|---|---|---|" + "---|" * len(H_SUMMARY)]
+            for v in cells:
+                n_all, n_pit = con.execute("SELECT count(*), sum(pit::INT) FROM pit WHERE variant = ?", [v]).fetchone()
+                dropped = 1 - (n_pit or 0) / n_all if n_all else None
+                for d in ds:
+                    for label, extra in (("point in time", f" AND (pool, t) IN (SELECT pool, t FROM pit WHERE variant = '{v}' AND pit)"), ("end of hour", "")):
+                        cols, key = [], f"{d}|{label}"
+                        summary.setdefault(v, {})[key] = {}
+                        for h in H_SUMMARY:
+                            st = mr.stats(con, f"family = 'REV' AND list_contains(variants, '{v}') AND d = {d} AND h = '{h}'{extra}", "net", boot)
+                            if st:
+                                summary[v][key][h] = {k: st[k] for k in ("n", "trim", "lo", "hi", "dead", "pos")}
+                                cols.append(f"{st['n']} / {mr.fmt(st['trim'], 1, True, True)} / {mr.fmt(st['lo'], 1, True, True)} … {mr.fmt(st['hi'], 1, True, True)} / {mr.fmt(st['dead'], 0, True)}")
+                            else:
+                                cols.append("–")
+                        L.append(f"| {v} | {d} | {label} | {'' if label == 'end of hour' or dropped is None else f'{dropped * 100:.0f}%'} | " + " | ".join(cols) + " |")
+            L.append("")
+            L.append("Cells with n < 30 at a horizon are counted, not read. The full per-cell tables (blocks and regimes) follow for the point-in-time subset only.")
+            L.append("")
             for v in cells:
                 for d in ds:
-                    cols, summary.setdefault(v, {})[str(d)] = [], {}
-                    for h in H_SUMMARY:
-                        st = mr.stats(con, f"family = 'REV' AND list_contains(variants, '{v}') AND d = {d} AND h = '{h}'", "net", boot)
-                        if st:
-                            summary[v][str(d)][h] = {k: st[k] for k in ("n", "trim", "lo", "hi", "dead", "pos")}
-                            cols.append(f"{st['n']} / {mr.fmt(st['trim'], 1, True, True)} / {mr.fmt(st['lo'], 1, True, True)} … {mr.fmt(st['hi'], 1, True, True)} / {mr.fmt(st['dead'], 0, True)}")
-                        else:
-                            cols.append("–")
-                    L.append(f"| {v} | {d} | " + " | ".join(cols) + " |")
-            L.append("")
-            L.append("Cells with n < 30 at a horizon are counted, not read. The full per-cell tables with blocks and regimes follow.")
-            L.append("")
-            for v in cells:
-                for d in ds:
-                    L.append(mr.table(con, f"REV · {v} · d = {d}", f"family = 'REV' AND list_contains(variants, '{v}') AND d = {d}", boot))
+                    L.append(mr.table(con, f"REV · {v} · d = {d} · point in time (traders at the D leg >= T)",
+                                      f"family = 'REV' AND list_contains(variants, '{v}') AND d = {d} AND (pool, t) IN (SELECT pool, t FROM pit WHERE variant = '{v}' AND pit)", boot))
         finally:
             mr.close_pool()
     md = "\n".join(L) + "\n"
@@ -335,6 +355,7 @@ def main():
     ap.add_argument("--store")
     ap.add_argument("--agg", help="detect: the aggregate directory (default --out)")
     ap.add_argument("--first-day", default=FIRST_DAY)
+    ap.add_argument("--require-mint", action="store_true", help="detect: drop signals whose pool has no mint in the store (most pre-window pools)")
     ap.add_argument("--last-day")
     ap.add_argument("--signals", help="report: detect's signals.parquet (default <out>/detect/signals.parquet)")
     ap.add_argument("--markout", help="report: the markout directory of the signals (markout-revival.parquet); without it: frequency and liquidity only")
@@ -351,7 +372,7 @@ def main():
         print(json.dumps({"out": out}))
         return
     if a.step == "detect":
-        info = detect(a.agg or a.out, a.out, a.first_day, a.last_day, a.store)
+        info = detect(a.agg or a.out, a.out, a.first_day, a.last_day, a.store, a.require_mint)
         print(json.dumps({k: info[k] for k in ("signals", "cells", "seconds")}))
         return
     info = aggregate(a.out, a.from_slot, a.to_slot, a.buckets, a.store)
