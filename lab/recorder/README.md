@@ -77,6 +77,12 @@ filtered during the whole segment: what every filter inside it had), `backfill/`
 and `_segment.json`, written last: seq, first/last slot, row counts, usage rows per minute and
 stream, the budget state, the filter level, reconnects, late rows and totals.
 
+**`new_reversed_noise`** in `_segment.json` (creation-filters spec v0.2 P2 step A, a diagnostic only): the
+`tx_new_reversed` transactions of the segment that decode no event, no anomaly and no `tx_ctx` row (74 % of the measuring hour's), their
+number and the 32 most frequent account keys of each kind with counts, static keys and loaded (lookup-table) addresses
+apart, each key once per transaction. Public addresses; no extra call. Step B's exclusions follow from it by the spec's
+fixed rules (at least 5 % of the noise transactions, in no creation, no guard account), after review.
+
 **Alpenglow** (epoch 1064, 2026-10-21).
 - **`block_footers/`:** every main request asks for Alpenglow block footers, without their certificates. Each footer becomes a `block_footers/` row: `slot`, `bank_id`, `block_producer_time_ns` (the producer's block time in nanoseconds), `received_unix_ns` and `created_unix_ns`. A footer is not gated by its slot's close, because the validator sends it when it reports it, which can be after the slot (and the next one) confirmed. Like the `vaults/` and `pool_accounts/` rows, it goes into the open segment. Join on (`slot`, `bank_id`); after a reconnect a footer can come twice.
 - **The switch:** the first footer a root ever receives marks it. It is logged, written to `<root>/alpenglow.json` and kept as an `anomalies/` row of its slot (program `recorder`, kind `alpenglow_first_footer`), once per root.
