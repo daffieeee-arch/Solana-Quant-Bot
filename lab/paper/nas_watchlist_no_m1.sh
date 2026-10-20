@@ -10,7 +10,7 @@
 #      without the flag, and this commit with --watchlist-no-m1;
 #   4. GREEN only when
 #      - the journals of all three are equal (paper.journal_diff; the risk paths in state 'groups' taken from lab/ on,
-#        as main sits in another checkout): the watchlist decides no trade;
+#        as main sits in another checkout) and hold signals: the watchlist decides no trade;
 #      - this commit's watchlist log without the flag is main's, line for line (the default is unchanged);
 #      - with the flag, per minute: no m1 pool, the same f7_rev count, tracked, archived, pruned and restored, and the
 #        pools on the list are the default's minus exactly its m1 pools (m1 is sol/normal, f7_rev reversed: no pool
@@ -141,7 +141,8 @@ for a, b in (("head", "main"), ("nom1", "head")):
     rows = {t: [v["rows_a"], v["rows_b"]] for t, v in r["tables"].items()}
     print(f"journals {a} vs {b}: rows {json.dumps(rows)}; unexplained {r['unexplained']}, state mismatch {mismatch}, "
           f"schema diff {bool(r['schema_diff'])}")
-    if r["unexplained"] or mismatch or r["schema_diff"] or not any(v["rows_a"] for v in r["tables"].values()):
+    # rows in learned or usage alone are no decisions (LAB review on #489): both journals need signals
+    if r["unexplained"] or mismatch or r["schema_diff"] or not (r["tables"]["signals"]["rows_a"] and r["tables"]["signals"]["rows_b"]):
         bad.append(f"journals {a} vs {b}")
 
 
