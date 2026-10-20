@@ -342,6 +342,12 @@ systemctl --user stop lab-paper lab-recorder
 **Group H off, K3 on.** Remove the `PAPER_ARGS` line from `live.env`, then run `systemctl --user restart lab-paper`.
 - After a restart the engine replays the retained segments (3 days) into the same journal; the README's known limitation covers this.
 - **Until the restart fix with the high-water mark is deployed** (`paper/restart.py`, its PR planned for 2026-10-18): no planned restarts after day 3 (from the start + about 2.5 days), and deploys are bundled. A restart within the first 3 days replays everything from the start with the same farmer seed, so the journal comes out the same; a deploy of the fix on day 1 or 2 is such a restart.
+- **Known limit of a restart past the replay window** (36 h; LAB review 2026-10-20, kept as is, M3-12).
+  - The journal keeps a token only once it graduates. A restart past the window therefore does not know a token created before it that did not graduate.
+  - Its curve rows are dropped and counted. The daily report's restart line names `unknown_mints` and the dropped rows.
+  - A pool of such a token takes its coin creator as F7's creator.
+  - The gap closes three days after the token's creation at the latest (`TOKEN_KEEP_DAYS`), when the uninterrupted run would drop the token too.
+  - The backtest does the same for a pool without a mints row (93 % of route B's pools).
 - K3's rows come out the same with or without H (`tests/test_arms_replay.py`).
 - H's rows so far stay in the journal.
 

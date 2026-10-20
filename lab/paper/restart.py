@@ -202,6 +202,10 @@ def restart_lines(journal, day):
         if c.get("restart_lost"):
             lines.append(f"  - {c['restart_lost']} open positions the replay could not carry, closed at their last mark "
                          "(exit_reason restart_lost)")
+        if r.get("unknown_mints") is not None:
+            lines.append(f"  - unknown mints at the resume: {r['unknown_mints']} ({r.get('unknown_mint_rows') or 0} curve rows "
+                         "dropped); among them any token created before the replay window that did not graduate, whose "
+                         "pools take the coin creator as F7's creator (a known limit, live.py)")
         cmp_ = r.get("compare_6h") or {}
         if cmp_.get("compared"):
             lines.append(f"  - the last 6 h before the HWM, the replay's own decisions: {cmp_.get('same', 0)} as journaled, "

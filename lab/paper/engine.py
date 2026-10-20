@@ -1205,8 +1205,11 @@ class Engine:
         beat = j.rows("heartbeat", "minute = ? AND note = ''", (rs.hwm.get("minute"),))
         if beat and beat[0]["events"] is not None:  # the heartbeat's event count goes on from the first run's
             self.events_seen = beat[0]["events"]
+        # the known restart limit (live.py, beside TOKEN_KEEP_DAYS): what the replay did not know at the resume
+        st = getattr(self.feed, "stats", None) or {}
         rec = {"hwm": rs.slot, "resumed_at": slot, "first_slot": rs.first_slot, "day": self.day,
-               "counts": dict(sorted(c.items())), "compare_6h": cmp_}
+               "counts": dict(sorted(c.items())), "compare_6h": cmp_,
+               "unknown_mints": st.get("unknown_mints"), "unknown_mint_rows": st.get("unknown_mint_rows")}
         j.state(RS.RESTARTS_KEY, json.dumps(json.loads(j.state(RS.RESTARTS_KEY) or "[]") + [rec], sort_keys=True))
         self._write_wallet(self.slot_block_time)
         self._keep_pools(force=True, now=True)  # the open positions' pools for the recorder during the catch-up

@@ -61,6 +61,13 @@
 //! journal's live mode, M3-12/M3-13), and polling for new segments (this source is a catch-up: the complete segments at
 //! its start). The injected restart of spec §4.3 (segments written again, one process) is
 //! lab/live/nas_m3_09b.sh's STEP=restart, with paper.restart_root.
+//!
+//! Known limit (LAB review 2026-10-20, kept as is; M3-12), as LiveFeed's (live.py, beside TOKEN_KEEP_DAYS): a token is
+//! known from the segments read, and a restart past the replay window (36 h) has no journal row of a token that did not
+//! graduate. Such a token's curve rows are dropped and counted (unknown_mints, unknown_mint_rows), and a pool of it takes
+//! its coin creator as F7's creator (lab/core, engine.py `_universe`); the uninterrupted run drops the token after
+//! TOKEN_KEEP_DAYS, so the gap closes three days after its creation at the latest. The backtest does the same for a pool
+//! without a mints row (93 % of route B's pools, LAB review).
 
 use crate::legs::{event_kind, event_line, pool_leg, pool_line, Keys, PoolRow, DAY_MS};
 use crate::legs_read::{each_row, read_curve, read_pool, Admission, Col, Counts, ReplayMem, CLEAN, POOL_NORMAL, POOL_OTHER, POOL_REVERSED};
