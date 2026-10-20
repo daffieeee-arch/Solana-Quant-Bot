@@ -13,7 +13,7 @@ Interactive-UI spec v0.3 §2.3 (`data-old-faithful-one/lab/research/ui-interacti
   - Hij mag precies de mappen **lezen** die de pagina's tonen, en verder niets.
   - Hij kan niet bij je instellingen of het token, kan geen services starten of stoppen, en kan de bot niet beïnvloeden.
 - **Pas daarna** kunnen knoppen die de bot raken (pauze, start/stop) veilig worden gebouwd.
-- **Wat jij doet:** eenmalig stap 1 en 3 hieronder, met `sudo`, zo'n 5 minuten werk. Stap 2 doet de coördinator of LAB ui, zonder sudo.
+- **Wat jij doet:** eenmalig stap 1 en 3 hieronder, met `sudo`, zo'n 5 minuten werk. Daarbij zet je ook het lijstje toestellen dat knoppen mag gebruiken (je telefoon en laptop) op zijn nieuwe plek; dat kan alleen met `sudo` (stap 3c). Stap 2 doet de coördinator of LAB ui, zonder sudo.
 - **Effect op de bot: geen.** Recorder en paper-bot draaien gewoon door. Alleen de webapp herstart een keer (ongeveer 5 seconden weg).
 
 ## Step 1 — the owner, with sudo (once)
@@ -35,6 +35,12 @@ bash lab/ops/ui-grant-read.sh --apply
 ```
 
 - **What it grants:** read (`rX`, with default ACLs so new files inherit) on exactly the trees the unit binds: the deploy worktree, the server's Python, `paper-run/lab/paper` (the risk files), and `lab/{analytics,store,journal,recorder,ui-cache,backtests,wallets/cases-v1,token_meta}`.
+- **What it may write (B0, the interactive UI):**
+  - `lab/control/audit/web`, the web app's own audit lines, and `lab/control/pairing`, where it consumes a pairing hash: `rwX`, with default ACLs so the owner's user reads what `lab-ui` creates.
+  - `lab/control/requests` itself, where it files a request: `rwX` on the directory only. The default ACL there is for the owner's user (the executor reads and moves the request), not for `lab-ui`.
+  - **Not writable:** the executor's audit (`lab/control/audit/*.jsonl`) and its handled requests (`lab/control/requests/done`). A broken web server can therefore never empty or rewrite the evidence of what was executed (LAB review on #457). The unit also binds both read-only; `requests/done` is bound read-only inside the writable `requests/`, because the request files there remain `lab-ui`'s own.
+  - The rest of `lab/control` is read-only too: results, notes, the NAS queue and status.
+- **Run again after the switch:** it skips the files `lab-ui` owns (its own requests and audit lines), so it never fails on them.
 - **What it never grants:**
   - a write;
   - a traverse (`x`) on the way down (`/home/chupa`, `.local`, …). systemd mounts the trees as root into the unit's empty home, so `lab-ui` needs no path through `/home/chupa`. An `x` there would open every world-readable file below it to `lab-ui` outside the sandbox.
@@ -72,7 +78,17 @@ bash lab/ops/ui-sandbox-run.sh /bin/sh -c "
   [ \$ok = 1 ] && echo 'ALL BLOCKED'"
 ```
 
-**3c. Switch.** Start the unit once without any traverse ACL; all five pages must answer 200.
+**3c. The devices that may act.** Under variant A the web app keeps its sessions and its actors file in `/var/lib/lab-ui` (the unit's `StateDirectory`, mode 0700, owned by `lab-ui`), not in `~/.config/solana-lab`. So the owner places `ui-actors.json` there with sudo: only the owner's phone and laptop, never the VPS node. Without the file every action is refused (403); the pages work as before.
+
+```bash
+sudo install -d -o lab-ui -g lab-ui -m 700 /var/lib/lab-ui
+sudo install -o lab-ui -g lab-ui -m 600 ~/.config/solana-lab/ui-actors.json /var/lib/lab-ui/ui-actors.json   # if you already have one under variant B
+sudo cat /var/lib/lab-ui/ui-actors.json                                    # only the phone and the laptop
+```
+
+Changing the devices later is the same `sudo install` again. Pairing codes keep working as before (`lab/ui/pair.py` as `chupa`, through `lab/control/pairing`). Sessions from variant B do not carry over: pair each device once more.
+
+**3d. Switch.** Start the unit once without any traverse ACL; all five pages must answer 200.
 
 ```bash
 sudo install -m 644 lab/ops/systemd/lab-ui-web.system.service /etc/systemd/system/lab-ui-web.service

@@ -185,7 +185,12 @@ class PrepareCommit(Base):
         events = [e["event"] for e in self.a.log()]
         self.assertIn("executed", events)
         self.assertIn("commit", events)
-        audit = "".join(read(os.path.join(self.a.CONTROL, "audit", n)) for n in os.listdir(os.path.join(self.a.CONTROL, "audit")))
+        # The web app's lines only in its own audit/web/ (the one audit path variant A lets it write), the executor's
+        # in audit/ beside it; the log reads both (LAB review on #457).
+        ad = os.path.join(self.a.CONTROL, "audit")
+        self.assertEqual({json.loads(ln)["source"] for ln in read(os.path.join(ad, "web", os.listdir(os.path.join(ad, "web"))[0])).splitlines()}, {"web"})
+        self.assertEqual({json.loads(ln)["source"] for n in os.listdir(ad) if n.endswith(".jsonl") for ln in read(os.path.join(ad, n)).splitlines()}, {"executor"})
+        audit = "".join(read(os.path.join(dp, n)) for dp, _, ns in os.walk(ad) for n in ns)
         self.assertNotIn(sid, audit)
         self.assertNotIn(csrf, audit)
 

@@ -19,6 +19,10 @@ User=lab-ui
 Group=lab-ui
 WorkingDirectory=/home/chupa/Solana-project/worktrees/lab-ui-deploy
 Environment=LAB_DATA_ROOT=/home/chupa/Solana-project/data-old-faithful-one/lab
+# The interactive UI's sessions and actors (lab/ui/actions.py): the web user's own state, 0700 (spec v0.3 §2.2).
+Environment=LAB_UI_STATE=/var/lib/lab-ui
+StateDirectory=lab-ui
+StateDirectoryMode=0700
 ExecStart=/home/chupa/.local/share/solana-quant/toolchains/columnar-query-313-duckdb155/bin/python -I lab/ui/server.py --host 100.112.193.63 --port 8501
 Restart=on-failure
 RestartSec=15
@@ -42,6 +46,18 @@ BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/ui-cache
 BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/backtests
 BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/wallets/cases-v1
 BindReadOnlyPaths=-/home/chupa/Solana-project/data-old-faithful-one/lab/token_meta
+BindReadOnlyPaths=-/home/chupa/Solana-project/data-old-faithful-one/lab/research/paper-expectations-2026-10-20.json
+BindReadOnlyPaths=-/home/chupa/Solana-project/data-old-faithful-one/lab/nas-results/ui
+# The interactive UI's control directory (spec v0.3 §2.3, B0): read-only as a whole (results, notes, the NAS queue
+# and status, the dispatcher's heartbeat, the alert thresholds, the executor's audit); writable only where the web
+# app files a request, appends its own audit lines (audit/web, never the executor's audit/ beside it) and consumes
+# a pairing hash. The executor's handled requests (requests/done) are read-only again inside the writable requests/
+# (systemd mounts the deeper path last). Nothing else under the home is writable.
+BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/control
+BindPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/control/requests
+BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/control/requests/done
+BindPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/control/audit/web
+BindPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/control/pairing
 ProtectSystem=strict
 PrivateTmp=yes
 PrivateDevices=yes

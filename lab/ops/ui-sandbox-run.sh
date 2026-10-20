@@ -11,5 +11,5 @@ UNIT=$(dirname "$0")/systemd/lab-ui-web.system.service
 props=()
 while IFS= read -r line; do
   props+=(-p "$line")
-done < <(grep -E '^(User|Group|ProtectHome|ProtectSystem|BindReadOnlyPaths|InaccessiblePaths|PrivateTmp|PrivateDevices|NoNewPrivileges|CapabilityBoundingSet|RestrictSUIDSGID|RestrictNamespaces|ProtectProc|ProcSubset|ProtectKernelTunables|ProtectKernelModules|ProtectControlGroups|SystemCallFilter|SystemCallArchitectures|RestrictAddressFamilies)=' "$UNIT")
+done < <(grep -E '^(User|Group|ProtectHome|ProtectSystem|BindReadOnlyPaths|BindPaths|InaccessiblePaths|PrivateTmp|PrivateDevices|NoNewPrivileges|CapabilityBoundingSet|RestrictSUIDSGID|RestrictNamespaces|ProtectProc|ProcSubset|ProtectKernelTunables|ProtectKernelModules|ProtectControlGroups|SystemCallFilter|SystemCallArchitectures|RestrictAddressFamilies)=' "$UNIT")
 exec sudo systemd-run --quiet --pipe --wait --collect "${props[@]}" -- "$@"

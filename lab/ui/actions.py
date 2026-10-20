@@ -14,7 +14,8 @@ which lab-control (lab/ops/control/executor.py, the owner's user) validates agai
 - Confirmation: prepare returns a single-use nonce (60 s) and the exact text; only commit files the request.
 - Rate: one action in flight and 10 per hour per node.
 - Exposure: actions are refused while Tailscale Funnel is on or any Serve entry points at this port.
-Every refusal is audited (audit/web-<YYYY-MM>.jsonl); the executor audits what it does (audit/<YYYY-MM>.jsonl).
+Every refusal is audited in the web app's own subdirectory (audit/web/<YYYY-MM>.jsonl, the only audit path it may
+write under variant A); the executor audits what it does (audit/<YYYY-MM>.jsonl, read-only for the web app).
 Secrets live in the state directory (LAB_UI_STATE; variant B: ~/.config/solana-lab, variant A: /var/lib/lab-ui),
 never in the repo or a log.
 """
@@ -227,12 +228,18 @@ def _month():
     return time.strftime("%Y-%m", time.gmtime())
 
 
+def _web_audit():
+    # The web app's own audit directory: under variant A the unit binds only this one writable, so a broken web
+    # server can never rewrite or delete the executor's audit beside it (LAB review on #457).
+    return os.path.join(CONTROL, "audit", "web")
+
+
 def audit(event, **fields):
-    """One line in audit/web-<YYYY-MM>.jsonl (append, fsync): the web server's own events and refusals."""
-    d = os.path.join(CONTROL, "audit")
+    """One line in audit/web/<YYYY-MM>.jsonl (append, fsync): the web server's own events and refusals."""
+    d = _web_audit()
     os.makedirs(d, exist_ok=True)
     line = json.dumps({"ts": int(time.time()), "source": "web", "event": event, **fields}, sort_keys=True) + "\n"
-    fd = os.open(os.path.join(d, f"web-{_month()}.jsonl"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o640)
+    fd = os.open(os.path.join(d, f"{_month()}.jsonl"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o640)
     try:
         os.write(fd, line.encode())
         os.fsync(fd)
@@ -477,7 +484,7 @@ def _rate(node, now):
         raise Refused(429, "another action is still being executed")
     n = 0
     try:
-        with open(os.path.join(CONTROL, "audit", f"web-{_month()}.jsonl")) as f:
+        with open(os.path.join(_web_audit(), f"{_month()}.jsonl")) as f:
             for line in f:
                 e = json.loads(line)
                 n += e.get("event") == "commit" and e.get("node") == node and e.get("ts", 0) > now - 3600
@@ -501,13 +508,15 @@ def result(rid):
 
 
 def log(limit=100):
-    """The last audit lines, web and executor, newest first (the read-only Logboek page)."""
-    d = os.path.join(CONTROL, "audit")
+    """The last audit lines, web and executor, newest first (the read-only Logboek page): the last two months of
+    each (audit/web/ and audit/; the latter also holds the web app's lines from before 2026-10-21, web-<YYYY-MM>)."""
     out = []
-    for name in sorted(os.listdir(d), reverse=True)[:4] if os.path.isdir(d) else []:
-        try:
-            with open(os.path.join(d, name)) as f:
-                out += [json.loads(line) for line in f if line.strip()]
-        except (OSError, ValueError):
-            continue
+    for d in (_web_audit(), os.path.join(CONTROL, "audit")):
+        names = sorted(n for n in os.listdir(d) if n.endswith(".jsonl")) if os.path.isdir(d) else []
+        for name in names[-4:]:
+            try:
+                with open(os.path.join(d, name)) as f:
+                    out += [json.loads(line) for line in f if line.strip()]
+            except (OSError, ValueError):
+                continue
     return sorted(out, key=lambda e: e.get("ts", 0), reverse=True)[:limit]
