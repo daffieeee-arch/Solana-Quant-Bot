@@ -49,11 +49,14 @@ BindReadOnlyPaths=-/home/chupa/Solana-project/data-old-faithful-one/lab/token_me
 BindReadOnlyPaths=-/home/chupa/Solana-project/data-old-faithful-one/lab/research/paper-expectations-2026-10-20.json
 BindReadOnlyPaths=-/home/chupa/Solana-project/data-old-faithful-one/lab/nas-results/ui
 # The interactive UI's control directory (spec v0.3 §2.3, B0): read-only as a whole (results, notes, the NAS queue
-# and status, the dispatcher's heartbeat, the alert thresholds); writable only where the web app files a request,
-# appends its own audit lines and consumes a pairing hash. Nothing else under the home is writable.
+# and status, the dispatcher's heartbeat, the alert thresholds, the executor's audit); writable only where the web
+# app files a request, appends its own audit lines (audit/web, never the executor's audit/ beside it) and consumes
+# a pairing hash. The executor's handled requests (requests/done) are read-only again inside the writable requests/
+# (systemd mounts the deeper path last). Nothing else under the home is writable.
 BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/control
 BindPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/control/requests
-BindPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/control/audit
+BindReadOnlyPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/control/requests/done
+BindPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/control/audit/web
 BindPaths=/home/chupa/Solana-project/data-old-faithful-one/lab/control/pairing
 ProtectSystem=strict
 PrivateTmp=yes
