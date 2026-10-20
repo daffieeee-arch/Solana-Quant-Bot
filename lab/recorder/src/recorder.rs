@@ -2,6 +2,7 @@
 //! and reconnects), so the tests drive it with synthetic updates.
 
 use crate::convert::{self, Converted};
+use crate::exclude::Excludes;
 use crate::extract::LabPlugin;
 use crate::idl::{Kind, Val};
 use crate::meter::{Decision, Meter};
@@ -48,6 +49,9 @@ const POOL_COLS: [(&str, Kind); 12] = [
 /// Slots past the last closed slot a backfill replays to, so it overlaps the probe's own
 /// transactions (LiveFeed deduplicates the overlap by event position).
 const BACKFILL_MARGIN_SLOTS: u64 = 150;
+
+/// The learned exclusions' scores and last trades are saved at least this often (and at each change and shutdown).
+const EXCLUDES_SAVE_SECS: u64 = 600;
 
 struct Backfill {
     pool: String,
@@ -108,7 +112,8 @@ const NOISE_TOP: usize = 32;
 const NOISE_MAX_KEYS: usize = 200_000;
 
 /// Creation-filters spec v0.2 P2 step A, a diagnostic only: the account keys of the `tx_new_reversed` transactions that
-/// decode no event and no anomaly (74 % of the measuring hour's), static keys and loaded addresses apart, each key once
+/// decode no event, no anomaly and no tx_ctx row (74 % of the measuring hour's; the extractor writes tx_ctx only beside an
+/// event, so the third test is the spec's wording made explicit), static keys and loaded addresses apart, each key once
 /// per transaction. Per segment into `_segment.json` `new_reversed_noise`; step B's exclusions follow from it by the
 /// spec's fixed rules (>= 5 % of the noise, in no creation, no guard account), after review.
 #[derive(Default)]
@@ -201,6 +206,10 @@ pub struct Recorder {
     /// Probes or new vaults expired: resubscribe with the rate limit.
     extra_stale: bool,
     noise: Noise,
+    /// `tx_new_reversed`'s learned exclusions (exclude.rs; off until main sets them).
+    excludes: Excludes,
+    excludes_checked_unix: u64,
+    excludes_saved_unix: u64,
 }
 
 fn val<'a>(r: &'a Row, name: &str) -> Option<&'a Val> {
@@ -219,6 +228,16 @@ fn val_u64(r: &Row, name: &str) -> Option<u64> {
         Some(Val::U64(v)) => Some(*v),
         _ => None,
     }
+}
+
+/// A transaction's full account keys: the message's static keys and the addresses its lookup tables loaded.
+fn tx_keys(info: &SubscribeUpdateTransactionInfo) -> Vec<String> {
+    let mut keys: Vec<String> =
+        info.transaction.as_ref().and_then(|t| t.message.as_ref()).map(|m| m.account_keys.iter().map(|k| b58(k)).collect()).unwrap_or_default();
+    if let Some(meta) = &info.meta {
+        keys.extend(meta.loaded_writable_addresses.iter().chain(&meta.loaded_readonly_addresses).map(|k| b58(k)));
+    }
+    keys
 }
 
 fn b58(b: &[u8]) -> String {
@@ -272,8 +291,38 @@ impl Recorder {
             extra_dirty: false,
             extra_stale: false,
             noise: Noise::default(),
+            excludes: Excludes::off(),
+            excludes_checked_unix: 0,
+            excludes_saved_unix: 0,
             cfg,
         }
+    }
+
+    /// The learned exclusions (main.rs, before the first subscription): the filter takes the saved set at once.
+    pub fn set_excludes(&mut self, ex: Excludes) {
+        self.excludes = ex;
+        self.active = self.filter(self.level);
+    }
+
+    /// Creation-filters spec v0.2 P1, from one transaction's rows: a creation's full keys first (rule b; a member among
+    /// them leaves at once, without the rate limit), then each trade's fee recipients.
+    fn learn_excludes(&mut self, rows: &[Row], keys: impl FnOnce() -> Vec<String>, now: u64) {
+        if rows.iter().any(|r| &*r.table == "pump_amm/CreatePoolEvent") && self.excludes.on_creation(keys()) {
+            self.meter.note("new_reversed excludes: a creation named a learned exclusion; it left".to_owned());
+            self.extra_dirty = true;
+        }
+        for r in rows.iter().filter(|r| matches!(&*r.table, "pump_amm/BuyEvent" | "pump_amm/SellEvent")) {
+            if let Some(j) = val_str(r, "ix_accounts") {
+                self.excludes.on_trade(&j, now);
+            }
+        }
+    }
+
+    fn save_excludes(&mut self, now: u64) {
+        if let Err(e) = self.excludes.save(now) {
+            log::error!("learned new_reversed excludes not saved: {e:#}");
+        }
+        self.excludes_saved_unix = now;
     }
 
     /// A pool created in this transaction (its CreatePoolEvent row): a probe at once when it holds
@@ -411,7 +460,11 @@ impl Recorder {
     }
 
     fn filter(&self, level: usize) -> Filter {
-        let extra = Extra { probes: self.probes.keys().cloned().collect(), fresh_vaults: self.fresh.keys().cloned().collect() };
+        let extra = Extra {
+            probes: self.probes.keys().cloned().collect(),
+            fresh_vaults: self.fresh.keys().cloned().collect(),
+            excludes: self.excludes.list(),
+        };
         Filter::new(&self.watch, &extra, level, &self.cfg.opts)
     }
 
@@ -435,9 +488,10 @@ impl Recorder {
                     Ok(Converted::Tx(tx)) => {
                         let mut rows = self.plugin.rows_for(&tx);
                         let now = now_ns / 1_000_000_000;
-                        if new_reversed && !rows.iter().any(|r| r.table.starts_with("pump/") || r.table.starts_with("pump_amm/") || &*r.table == "anomalies") {
+                        if new_reversed && !rows.iter().any(|r| r.table.starts_with("pump/") || r.table.starts_with("pump_amm/") || matches!(&*r.table, "anomalies" | "tx_ctx")) {
                             self.noise.add(info);
                         }
+                        self.learn_excludes(&rows, || tx_keys(info), now);
                         for r in rows.iter().filter(|r| &*r.table == "pump_amm/CreatePoolEvent") {
                             self.on_creation(r, now);
                         }
@@ -592,7 +646,9 @@ impl Recorder {
 
     /// A pool account update. `pool_accounts`: a pool's first update in this process (the account
     /// is written by every trade, so later updates carry nothing new). `pool_creations`: every
-    /// update (to verify the creation-only hypothesis); a new reversed pool's WSOL vault is followed.
+    /// update, a measurement only (`POOL_WRITE_PROBE`: it sees every pool write, old pools too).
+    /// Neither starts a probe or follows a vault (creation-filters spec v0.2 P3): only a decoded
+    /// CreatePoolEvent does (`on_creation`).
     fn pool_row(&mut self, a: &SubscribeUpdateAccount, now_ns: u64, stream: &str) -> Option<Row> {
         let acc = a.account.as_ref()?;
         let d = &acc.data;
@@ -600,11 +656,7 @@ impl Recorder {
             self.stats.short_accounts += 1;
             return None;
         }
-        if stream == "pool_creations" {
-            if b58(&d[0..32]) == WSOL {
-                self.follow_vault(b58(&d[96..128]), b58(&acc.pubkey), now_ns / 1_000_000_000, Some(a.slot));
-            }
-        } else if !self.seen_pools.insert(acc.pubkey.clone()) {
+        if stream != "pool_creations" && !self.seen_pools.insert(acc.pubkey.clone()) {
             return None;
         }
         let k = |i: usize| Val::Str(b58(&d[i..i + 32]));
@@ -653,6 +705,7 @@ impl Recorder {
         m.insert("budget".into(), self.meter.state());
         m.insert("filter".into(), self.active.summary());
         m.insert("new_reversed_noise".into(), self.noise.take());
+        m.insert("learned_excludes".into(), self.excludes.summary());
         m.insert("reconnects".into(), Value::Array(std::mem::take(&mut self.reconnects)));
         m.insert(
             "totals".into(),
@@ -711,6 +764,7 @@ impl Recorder {
     /// that segment, then budget.json. A failed save loses no closed slots (LAB review: it came
     /// first and returned before the segment); its reservation on disk still covers the spend.
     pub fn shut_down(&mut self) -> Result<()> {
+        self.save_excludes(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs()));
         self.meter.close_minute();
         self.close_segment(Some("shutdown"))?;
         if let Err(e) = self.meter.settle() {
@@ -755,6 +809,10 @@ impl Recorder {
                     let f = self.filter(self.level);
                     if !f.same_streams(&self.active) {
                         self.meter.note(format!("downscale to level {}: {} off ({reason})", self.level, DOWNSCALE[self.level - 1]));
+                        if self.active.new_reversed && !f.new_reversed {
+                            // creation-filters spec v0.2 M4: no new pool is created or probed from here on
+                            self.meter.note("creation detection off (downscale)".to_owned());
+                        }
                         return self.change(f, now_unix);
                     }
                 }
@@ -781,6 +839,19 @@ impl Recorder {
         self.fresh.retain(|_, (_, until, _)| *until > now_unix);
         if (self.probes.len(), self.fresh.len()) != (n_probes, n_fresh) {
             self.extra_stale = true;
+        }
+        // the learned exclusions: brought up to date once per rate-limit window; a change is noted and resubscribed
+        // with the rate limit (as expired probes)
+        if now_unix >= self.excludes_checked_unix + self.cfg.min_update_secs {
+            self.excludes_checked_unix = now_unix;
+            if let Some(note) = self.excludes.update(now_unix) {
+                self.meter.note(note);
+                self.extra_stale = true;
+                self.save_excludes(now_unix);
+            }
+        }
+        if self.excludes.enabled() && now_unix >= self.excludes_saved_unix + EXCLUDES_SAVE_SECS {
+            self.save_excludes(now_unix);
         }
         let rate_ok = now_unix >= self.last_update_unix + self.cfg.min_update_secs;
         if self.extra_dirty || (self.extra_stale && rate_ok) {
@@ -814,6 +885,7 @@ impl Recorder {
 mod tests {
     use super::*;
     use crate::convert::tests::{fake_key, plugin, sample};
+    use crate::watch::NEW_REVERSED_EXCLUDE;
     use std::path::{Path, PathBuf};
     use yellowstone_grpc_proto::prelude::{
         SubscribeUpdateAccountInfo, SubscribeUpdateSlot, SubscribeUpdateTransaction, UnixTimestamp,
@@ -978,6 +1050,27 @@ mod tests {
         r.meter.add("vaults", 30_000).unwrap(); // over 20x the sustainable rate: downscale at once
         assert!(matches!(r.on_tick(T0 + 5, None).unwrap(), Action::None)); // no level changes a stream
         assert_eq!((r.level, r.active.level), (DOWNSCALE.len(), DOWNSCALE.len()));
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn dropping_the_creation_detection_is_noted() {
+        // creation-filters spec v0.2 M4: with only tx_new_reversed on, the levels before it change nothing; its drop
+        // (after the probes) says that no new pool is detected from here on, in the same budget row.
+        let root = tmp("rec-creation-off");
+        let (segs, last) = Segments::open(&root, 1000, 3600).unwrap();
+        let meter = Meter::load(&root, 1_440_000, 1.0, T0).unwrap();
+        let watch = Watch::parse(Some(&json!({"pools": [], "wallets": [], "vaults": []})), None);
+        let cfg = Config { opts: Opts { backfill: false, new_reversed: true, ..Opts::default() }, ..Config::default() };
+        let mut r = Recorder::new(cfg, plugin(), segs, meter, watch, last, 1);
+        assert!(r.active.new_reversed);
+        r.meter.add("tx_new_reversed", 30_000).unwrap(); // over 20x the sustainable rate: downscale at once
+        assert!(matches!(r.on_tick(T0 + 5, None).unwrap(), Action::Resubscribe(..)));
+        assert!(!r.active.new_reversed && DOWNSCALE[r.active.level - 1] == "tx_new_reversed");
+        r.meter.close_minute();
+        let notes: Vec<String> = r.meter.take_usage().iter().filter(|u| u["stream"] == "budget").map(|u| u["note"].as_str().unwrap().to_owned()).collect();
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains(": tx_new_reversed off (") && notes[0].ends_with("; creation detection off (downscale)"), "{notes:?}");
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1173,14 +1266,22 @@ mod tests {
             }))
         };
         r.on_update(account("pool_accounts", data.clone()), 1).unwrap();
-        r.on_update(account("pool_accounts", data), 1).unwrap(); // the same pool again: no row
+        r.on_update(account("pool_accounts", data.clone()), 1).unwrap(); // the same pool again: no row
         r.on_update(account("vaults", 42u64.to_le_bytes().to_vec()), 1).unwrap();
+        // pool_creations: a row per update, and a reversed pool (WSOL base) follows no vault and starts no probe
+        // (creation-filters spec v0.2 P3: only a CreatePoolEvent does)
+        let mut reversed = data;
+        reversed[0..32].copy_from_slice(&bs58::decode(WSOL).into_vec().unwrap());
+        r.on_update(account("pool_creations", reversed.clone()), 1).unwrap();
+        r.on_update(account("pool_creations", reversed), 1).unwrap();
+        assert!(r.fresh.is_empty() && r.probes.is_empty() && !r.extra_dirty);
         for u in [meta(1000), confirmed(1000), confirmed(1001)] {
             r.on_update(u, 1).unwrap();
         }
         r.on_tick(T0 + 1, None).unwrap();
         let m = segment_meta(&root, 0);
         assert_eq!((m["rows"]["pool_accounts"].as_u64(), m["rows"]["vaults"].as_u64()), (Some(1), Some(1)));
+        assert_eq!(m["rows"]["pool_creations"].as_u64(), Some(2));
         std::fs::remove_dir_all(&root).unwrap();
     }
 
@@ -1201,6 +1302,51 @@ mod tests {
             Action::Resubscribe(m, v) => (m, v),
             other => panic!("expected a resubscribe, got {other:?}"),
         }
+    }
+
+    fn trade_row(table: &str, protocol: &str, buyback: Option<&str>) -> Row {
+        let mut ix = json!({"protocol_fee_recipient": protocol, "pool": POOL});
+        if let Some(b) = buyback {
+            ix["buyback_fee_recipient"] = json!(b);
+        }
+        Row { table: Arc::from(table), columns: columns(&[("ix_accounts", Kind::Utf8)]), values: vec![Val::Str(ix.to_string())] }
+    }
+
+    #[test]
+    fn trades_teach_the_exclusions_and_a_creation_takes_its_keys_out_at_once() {
+        // creation-filters spec v0.2 P1: learned from the trade rows' ix_accounts, applied at the next window with a note,
+        // and a creation transaction naming a member resubscribes without it at once; the set survives the shutdown.
+        let root = tmp("rec-excludes");
+        let (segs, last) = Segments::open(&root, 1000, 3600).unwrap();
+        let meter = Meter::load(&root, 25_000_000_000, 1.0, T0).unwrap();
+        let watch = Watch::parse(Some(&json!({"pools": [], "wallets": [], "vaults": []})), None);
+        let cfg = Config { opts: Opts { backfill: false, new_reversed: true, ..Opts::default() }, ..Config::default() };
+        let mut r = Recorder::new(cfg, plugin(), segs, meter, watch, last, 1);
+        let store = root.join("creation_accounts.txt");
+        std::fs::write(&store, format!("{}\n", b58(&fake_key(200)))).unwrap();
+        let (ex, notes) = Excludes::open(&root, &store, T0);
+        assert!(ex.enabled(), "{notes:?}");
+        r.set_excludes(ex);
+        let (p, b) = (b58(&fake_key(1)), b58(&fake_key(2)));
+        r.learn_excludes(&[trade_row("pump_amm/BuyEvent", &p, Some(&b)), trade_row("pump_amm/SellEvent", &p, None)], Vec::new, T0);
+        let (main, _) = resubscribe(r.on_tick(T0 + 61, None).unwrap());
+        let ex = &main.transactions["tx_new_reversed"].account_exclude;
+        assert_eq!((ex.len(), ex.contains(&p), ex.contains(&b)), (NEW_REVERSED_EXCLUDE.len() + 2, true, true));
+        // a creation transaction holding b: out at once
+        r.learn_excludes(&[creation("PC", WSOL, "MC", 1, "VC")], || vec![b.clone(), POOL.to_owned()], T0 + 62);
+        let (main, _) = resubscribe(r.on_tick(T0 + 63, None).unwrap());
+        let ex = &main.transactions["tx_new_reversed"].account_exclude;
+        assert_eq!((ex.len(), ex.contains(&p), ex.contains(&b)), (NEW_REVERSED_EXCLUDE.len() + 1, true, false));
+        // b trades again: rule (b) keeps it out for this run
+        r.learn_excludes(&[trade_row("pump_amm/BuyEvent", &b, None)], Vec::new, T0 + 64);
+        assert!(matches!(r.on_tick(T0 + 130, None).unwrap(), Action::None));
+        r.meter.close_minute();
+        let notes: Vec<String> = r.meter.take_usage().iter().filter(|u| u["stream"] == "budget").map(|u| u["note"].as_str().unwrap().to_owned()).collect();
+        assert_eq!(notes, ["new_reversed excludes: 2 learned (+2 -0); new_reversed excludes: a creation named a learned exclusion; it left"]);
+        r.save_excludes(T0 + 130); // as at a shutdown, a change and every EXCLUDES_SAVE_SECS
+        let (again, _) = Excludes::open(&root, &store, T0 + 200);
+        assert_eq!(again.list(), vec![p.clone()]);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

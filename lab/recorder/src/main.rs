@@ -16,6 +16,11 @@
 //!                [--fresh-vault-minutes 60] [--no-backfill] [--backfill-wait-secs 20]
 //!                [--reload-secs 10] [--min-update-secs 60] [--from-slot N] [--max-runtime-secs N]
 //!                [--no-downscale] [--budget-assume-spent YYYY-MM-DD=BYTES] [--dry-run]
+//!                [--creation-accounts FILE] [--no-learned-excludes]
+//!
+//! With --new-reversed the recorder learns tx_new_reversed's exclusions from the trades' fee recipients
+//! (exclude.rs; creation-filters spec v0.2 P1). Rule (c)'s file is --creation-accounts (default
+//! <root>/creation_accounts.txt, written by creation_accounts.py); without a valid one nothing is learned.
 //!
 //! The endpoint can also come from LAB_TRITON_GRPC_ENDPOINT; the token only from
 //! LAB_TRITON_X_TOKEN (never logged). Exit code 75: the day's budget is spent, or today's spend is
@@ -34,6 +39,7 @@ mod sink;
 mod extract;
 
 mod convert;
+mod exclude;
 mod meter;
 mod recorder;
 mod segment;
@@ -45,6 +51,7 @@ use futures::channel::oneshot;
 use futures::stream::{BoxStream, SelectAll};
 use futures::{SinkExt, StreamExt};
 use std::collections::HashMap;
+use exclude::Excludes;
 use meter::{BudgetWriteError, Meter, GB};
 use recorder::{Action, Config, Recorder};
 use segment::{SegmentWriteError, Segments};
@@ -101,6 +108,9 @@ struct Args {
     /// The owner's restart override for a day whose spend is unknown: (UTC day, bytes).
     budget_assume: Option<(u64, u64)>,
     dry_run: bool,
+    /// Rule (c)'s file for the learned exclusions (exclude.rs).
+    creation_accounts: PathBuf,
+    learned_excludes: bool,
 }
 
 fn parse_args() -> Result<Args> {
@@ -135,8 +145,10 @@ fn parse_args() -> Result<Args> {
         no_downscale: false,
         budget_assume: None,
         dry_run: false,
+        creation_accounts: PathBuf::new(),
+        learned_excludes: true,
     };
-    let (mut watchlist, mut open_pools) = (None, None);
+    let (mut watchlist, mut open_pools, mut creation_accounts) = (None, None, None);
     while let Some(flag) = it.next() {
         let mut val = || it.next().with_context(|| format!("{flag} needs a value"));
         match flag.as_str() {
@@ -144,6 +156,8 @@ fn parse_args() -> Result<Args> {
             "--endpoint" => a.endpoint = Some(val()?),
             "--watchlist" => watchlist = Some(PathBuf::from(val()?)),
             "--open-pools" => open_pools = Some(PathBuf::from(val()?)),
+            "--creation-accounts" => creation_accounts = Some(PathBuf::from(val()?)),
+            "--no-learned-excludes" => a.learned_excludes = false,
             "--budget-usd" => a.budget_usd = val()?.parse()?,
             "--usd-per-gb" => a.usd_per_gb = val()?.parse()?,
             "--wire-ratio" => a.wire_ratio = val()?.parse()?,
@@ -174,6 +188,7 @@ fn parse_args() -> Result<Args> {
     a.root = root.context("pass --root")?;
     a.watchlist = watchlist.unwrap_or_else(|| a.root.join("watchlist-current.json"));
     a.open_pools = open_pools.unwrap_or_else(|| a.root.join("open-pools.json"));
+    a.creation_accounts = creation_accounts.unwrap_or_else(|| a.root.join("creation_accounts.txt"));
     if !(a.budget_usd > 0.0 && a.usd_per_gb > 0.0 && a.wire_ratio > 0.0) {
         bail!("budget, price and wire ratio must be positive");
     }
@@ -249,12 +264,21 @@ fn opts(a: &Args) -> Opts {
 }
 
 /// F7's triggers come minutes after a reversed pool is created (99% the same day), so without
-/// creation detection (--pool-creations or --new-reversed) no new pool is probed or followed.
-fn creation_warning(a: &Args) -> Option<&'static str> {
-    (!a.pool_creations && !a.new_reversed).then_some(
-        "F7 coverage ~0% without creation detection: pass --pool-creations and/or --new-reversed \
-         (new reversed pools are found only through them; graduations alone cover M1, not F7)",
+/// creation detection (--new-reversed) no new pool is probed or followed. --pool-creations is a
+/// measurement of pool writes and starts nothing (creation-filters spec v0.2 P3).
+fn creation_warning(new_reversed: bool) -> Option<&'static str> {
+    (!new_reversed).then_some(
+        "F7 coverage ~0% without creation detection: pass --new-reversed (new reversed pools are found only \
+         through it; --pool-creations measures pool writes and starts nothing; graduations alone cover M1, not F7)",
     )
+}
+
+/// The learned exclusions for --new-reversed (off without it or with --no-learned-excludes), and the notes to log.
+fn excludes(a: &Args) -> (Excludes, Vec<String>) {
+    if !(a.new_reversed && a.learned_excludes) {
+        return (Excludes::off(), Vec::new());
+    }
+    Excludes::open(&a.root, &a.creation_accounts, unix())
 }
 
 fn unix() -> u64 {
@@ -432,7 +456,8 @@ async fn run(a: Args) -> Result<i32> {
     let mut files = Files::new(a.watchlist.clone(), a.open_pools.clone());
     let watch = files.reload().unwrap_or_default();
     if a.dry_run {
-        let f = Filter::new(&watch, &Extra::default(), 0, &opts(&a));
+        let (ex, ex_notes) = excludes(&a);
+        let f = Filter::new(&watch, &Extra { excludes: ex.list(), ..Extra::default() }, 0, &opts(&a));
         let main = f.request(a.from_slot);
         let vaults = f.vault_request();
         println!(
@@ -449,7 +474,9 @@ async fn run(a: Args) -> Result<i32> {
                 "vaults": {"accounts": vaults.accounts.values().map(|v| v.account.len()).sum::<usize>()},
                 "budget": meter.state(),
                 "watchlist_source": watch.source,
-                "warnings": creation_warning(&a).into_iter().collect::<Vec<_>>(),
+                "warnings": creation_warning(a.new_reversed).into_iter().collect::<Vec<_>>(),
+                "learned_excludes": ex.summary(),
+                "learned_excludes_notes": ex_notes,
                 "invalid_addresses": watch.invalid,
             }))?
         );
@@ -471,7 +498,7 @@ async fn run(a: Args) -> Result<i32> {
         } // an unknown spend is logged by the meter, with the override
         return Ok(EXIT_BUDGET);
     }
-    if let Some(w) = creation_warning(&a) {
+    if let Some(w) = creation_warning(a.new_reversed) {
         log::warn!("{w}");
     }
     // A configuration error reserves nothing (each failed start would add a reservation; LAB review).
@@ -498,6 +525,11 @@ async fn run(a: Args) -> Result<i32> {
     };
     let resume_from = a.from_slot.map(|s| s.saturating_sub(1)).or(last);
     let mut rec = Recorder::new(cfg, plugin, segs, meter, watch, resume_from, a.close_lag);
+    let (ex, ex_notes) = excludes(&a);
+    for n in ex_notes {
+        log::warn!("{n}");
+    }
+    rec.set_excludes(ex);
     let deadline = (a.max_runtime_secs > 0).then(|| Instant::now() + Duration::from_secs(a.max_runtime_secs));
     // failures: sessions in a row without data (transport errors included), for the backoff and
     // giving up. resume_failures: sessions whose resume subscription was accepted but brought no
@@ -573,7 +605,7 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_session, end_on, parse_assume, reserve_and_open, unix, BudgetWriteError, Meter, SegmentWriteError, SessionState, EXIT_SEGMENT};
+    use super::{count_session, creation_warning, end_on, parse_assume, reserve_and_open, unix, BudgetWriteError, Meter, SegmentWriteError, SessionState, EXIT_SEGMENT};
 
     #[test]
     fn the_budget_reservation_is_on_disk_before_the_segments_remove_an_unfinished_directory() {
@@ -615,6 +647,13 @@ mod tests {
         let b = BudgetWriteError("injected".into());
         assert_eq!(end_on(anyhow::Error::new(b).context("on_update"), &mut meter).unwrap(), EXIT_SEGMENT);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn only_the_new_reversed_stream_detects_creations() {
+        // creation-filters spec v0.2 P3: --pool-creations alone starts no probe, so it no longer silences the warning
+        assert!(creation_warning(false).is_some_and(|w| w.contains("--new-reversed")));
+        assert_eq!(creation_warning(true), None);
     }
 
     #[test]
