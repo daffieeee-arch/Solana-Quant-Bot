@@ -90,7 +90,11 @@ def test_the_restart_equals_the_plain_run_but_for_the_copies():
     for change, why in ((lambda v: v["stats"].update(duplicate_rows=0), "duplicate_rows 0, not above"),
                         (lambda v: v["windows"][0].__setitem__(4, "x"), "windows differ"),
                         (lambda v: v["usage"].update(count=99), "usage rows"),
-                        (lambda v: v["stats"].update(backfill_rows=7), "backfill_rows 7")):
+                        (lambda v: v["stats"].update(backfill_rows=7), "backfill_rows 7"),
+                        # spec v0.4: the key counts and the seeded pools equal, not at least as many
+                        (lambda v: v["stats"].update(unknown_pools=4), "unknown_pools 4, the plain run 3"),
+                        (lambda v: v["stats"].update(unknown_mints=3), "unknown_mints 3, the plain run 2"),
+                        (lambda v: v["stats"].update(seeded_pools=3), "seeded_pools 3, the plain run 2")):
         bad = lab_live(restarted(plain))
         change(bad)
         red, _ = acc.restart(plain, py, bad, 1, 3)

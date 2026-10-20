@@ -22,8 +22,14 @@ N more), and against the plain run's LiveFeed (OUT/py), for LiveFeed and lab-liv
   without the flag), flag_fixes, new_pools, the clock and the farm seed (the copies' duplicates change no flag);
 - the learned rows as many (those after the copies carry a seq N higher, so the digest differs by design);
 - the usage rows N segments' more: the copies' own (with their seqs);
-- the stats: segments N more, duplicate_rows more (the copies' admitted rows), late_rows, backfill_rows and
-  tokens_dropped equal, backfill_duplicates and the unknown counters at least as many (the copies' rows counted again).
+- the stats: segments N more, duplicate_rows more (the copies' admitted rows); late_rows, backfill_rows, tokens_dropped
+  and seeded_pools equal, and the unknown key counts unknown_pools and unknown_mints equal (the copies bring no new key);
+  backfill_duplicates and the unknown row counts at least as many. Those count rows seen and dropped: a segment read
+  again counts again, so unknown_pool_rows is never a count of distinct rows (spec v0.4).
+
+The restart it checks is a near one: the copies come right after segment AT + N - 1, within SEEN_KEEP_SLOTS (3,000
+slots) of what was read, so their rows are duplicates. Segments written again from further back are no duplicates but
+late rows (their slots were released), which this test does not cover (spec v0.4 §4.3).
 
 seed (M3-10 spec v0.2 §6.2): compare's rules on OUT/seed-py, -rs1, -rs2, a start inside the store (job 91 from a later
 segment, its own snapshot with the seed window's trades); EVENTS `-` takes LiveFeed's count (the input's hard count is
@@ -110,7 +116,7 @@ def restart(plain, py, rs, n, copied_usage):
             red.append(f"{name} on the restart: {s.get('segments')} segments, not {ps0.get('segments', 0) + n}")
         if not s.get("duplicate_rows", 0) > ps0.get("duplicate_rows", 0):
             red.append(f"{name} on the restart: duplicate_rows {s.get('duplicate_rows')}, not above the plain run's {ps0.get('duplicate_rows')}")
-        for k in ("late_rows", "backfill_rows", "tokens_dropped"):
+        for k in ("late_rows", "backfill_rows", "tokens_dropped", "seeded_pools", "unknown_pools", "unknown_mints"):
             if s.get(k) != ps0.get(k):
                 red.append(f"{name} on the restart: {k} {s.get(k)}, the plain run {ps0.get(k)}")
         for k in ("backfill_duplicates", "unknown_pool_rows", "unknown_pool_other_rows", "unknown_mint_rows"):
