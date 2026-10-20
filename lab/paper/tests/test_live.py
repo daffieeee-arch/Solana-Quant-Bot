@@ -145,23 +145,60 @@ def test_new_pools_are_classified_like_the_store(setup):
         assert feed.pools.get(p) == snapshot[p], p
 
 
-def test_pools_from_the_recorders_pool_account_streams(tmp_path):
-    """A pool the recorder only saw on its pool account stream (pool_creations) is known to
-    LiveFeed with the CreatePoolEvent's classification: reversed when the base is WSOL."""
+def test_a_pool_only_the_account_streams_name_is_not_learned(tmp_path):
+    """Creation-filters spec v0.2 M1: the recorder's pool account streams (pool_creations, pool_accounts) see every pool
+    write, old pools included, so a pool they alone name is not learned; it is counted once in
+    pools_seen_without_creation and the segment hands the engine a usage row with the count. A CreatePoolEvent of the
+    same pool, later, learns it with its own slot."""
     import pyarrow.parquet as pq
 
     from paper.live import WSOL
 
-    d = tmp_path / "segments" / "000000000"
-    (d / "pool_creations").mkdir(parents=True)
     rows = {"slot": [101, 105], "pool": ["P1", "P1"], "base_mint": [WSOL, WSOL], "quote_mint": ["M1", "M1"],
             "coin_creator": ["C1", "C1"], "is_mayhem_mode": [False, False]}
-    pq.write_table(pa.table(rows), str(d / "pool_creations" / "part-00000.parquet"))
-    (d / "_segment.json").write_text(json.dumps({"seq": 0, "first_slot": 100, "last_slot": 110, "complete": True}))
+    for seq in (0, 1):
+        d = tmp_path / "segments" / f"{seq:09d}"
+        (d / "pool_creations").mkdir(parents=True)
+        pq.write_table(pa.table(rows), str(d / "pool_creations" / "part-00000.parquet"))
+        (d / "_segment.json").write_text(json.dumps({"seq": seq, "first_slot": 100 + 100 * seq, "last_slot": 199 + 100 * seq, "complete": True}))
+    d = tmp_path / "segments" / "000000001" / "pump_amm" / "CreatePoolEvent"
+    d.mkdir(parents=True)
+    pq.write_table(pa.table({"slot": [150], "tx_index": [0], "pool": ["P2"], "base_mint": [WSOL], "quote_mint": ["M2"],
+                             "coin_creator": ["C2"], "is_mayhem_mode": [False]}), str(d / "part-00000.parquet"))
     feed = LiveFeed(str(tmp_path), follow=False, h24=1000, memory="200MB")
     assert list(feed.events()) == []
-    p = feed.pools["P1"]
-    assert (p.mint, p.orientation, p.quote_class, p.create_slot) == ("M1", "reversed", "reversed", 101)
+    assert "P1" not in feed.pools and "P1" not in feed.pool_class and feed.pools["P2"].create_slot == 150
+    assert feed.stats["pools_seen_without_creation"] == 1  # once, though both segments name it
+    usage = feed.drain_usage()
+    assert [(u["stream"], u["messages"], u["seq"]) for u in usage] == [("pools_seen_without_creation", 1, 0)]
+    assert [k for k, *_ in feed.drain_learned()] == ["pool"]  # P2 only
+    feed.close()
+
+
+def test_the_segment_notes_name_creation_detection_probes_and_late_probes(tmp_path):
+    """Creation-filters spec v0.2 M4, S3: a segment whose filter has no creation detection (new_reversed false), whose
+    probes a downscale dropped, or whose backfill reached past Triton's replay window hands the engine a usage row each;
+    a segment from before the filter summary (no new_reversed key) none."""
+    filt = {"new_reversed": False, "dropped": ["pool_accounts", "pool_creations", "new_vaults", "backfill", "tx_probes", "tx_new_reversed"]}
+    metas = [{"filter": filt, "backfills": [
+                 {"pool": "PB", "status": "failed", "rows": 0, "error": "code: 'Operation was attempted past the valid range', "
+                                                                        "message: \"broadcast from 5 is not available, last available: 9\""},
+                 {"pool": "PA", "status": "failed", "rows": 0, "error": "connect: timed out"},
+                 {"pool": "PC", "status": "complete", "rows": 3}]},
+             {"filter": {"tx_pools": 3, "tx_probes": 9}}]
+    for seq, extra in enumerate(metas):
+        d = tmp_path / "segments" / f"{seq:09d}"
+        d.mkdir(parents=True)
+        (d / "_segment.json").write_text(json.dumps({"seq": seq, "first_slot": 100 + 100 * seq, "last_slot": 199 + 100 * seq,
+                                                     "complete": True, "usage": [{"minute": 7, "stream": "tx_probes", "bytes": 5}], **extra}))
+    feed = LiveFeed(str(tmp_path), follow=False, h24=1000, memory="200MB")
+    list(feed.events())
+    usage = [(u["stream"], u["messages"] if "messages" in u else None, u["seq"]) for u in feed.drain_usage()]
+    assert usage == [("tx_probes", None, 0), ("creation_detection_off", 1, 0), ("probes_off", 1, 0), ("late_probe", 1, 0),
+                     ("tx_probes", None, 1)]
+    assert {k: feed.stats[k] for k in ("creation_detection_off_segments", "probes_off_segments", "late_probes")} == \
+        {"creation_detection_off_segments": 1, "probes_off_segments": 1, "late_probes": 1}
+    feed.close()
 
 
 def test_a_token_created_live_keeps_its_creator_and_old_ones_go(tmp_path):
