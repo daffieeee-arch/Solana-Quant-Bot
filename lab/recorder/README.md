@@ -37,13 +37,21 @@ PumpSwap trade's `protocol_fee_recipient` and `buyback_fee_recipient` (`ix_accou
 best go into `tx_new_reversed`'s `account_exclude` after the static list. The measuring hour of 2026-10-20: 12 protocol
 and 310 buyback recipients named all 52,787 of its trades on the stream, the 64 most frequent 99.0 %. A candidate is
 never learned when it is (a) a guard account (programs, PumpSwap's global_config and event_authority), (b) a key of a
-creation transaction of this run (static and loaded; a member named by one leaves at once) or (c) in
+creation transaction the recorder received (static and loaded; a member named by one leaves at once) or (c) in
 `--creation-accounts` (default `<root>/creation_accounts.txt`: every account of the reversed creations of epochs
 1053-1054, written by `creation_accounts.py`). Without a valid file nothing is learned (fail-closed, the static list
 only); `--no-learned-excludes` turns learning off. Scores halve every 6 h; a member is replaced only by a candidate
 scoring twice its own, and leaves after 7 days without a trade. Changes apply once per `--min-update-secs` with a
 `budget` note; the set is kept in `<root>/new_reversed_exclude.json` across restarts, and each segment's
-`_segment.json` has `learned_excludes` (enabled, learned, candidates, creation keys).
+`_segment.json` has `learned_excludes` (enabled, learned, candidates, creation keys, and `creation_accounts`: the
+file's address count and sha256, also in the start note).
+
+Rule (b) sees only what arrives: a learned member in a *direct* create_pool transaction makes the server leave that
+transaction out of `tx_new_reversed`, so (b) cannot fire for it. It catches creations on the other streams
+(`tx_new_pools`, probes and watchlist, backfills). For direct creations the guard is (a) and (c), the measuring hour's
+fixture, and the deploy's checks: `paper.reconcile` against OF1 and the `pool_creations` cross-check of the second
+measuring hour. Before that hour, `check_creation_accounts.py` verifies the file (sha256, count) and counts which of the
+hour's recipients it holds: those are never learned.
 
 **F7 needs creation detection.** 99% of the F7 triggers come in reversed pools created the same day,
 minutes after their creation (LAB research, watchlist measurement). Without `--new-reversed` no new

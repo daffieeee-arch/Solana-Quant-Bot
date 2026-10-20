@@ -6,9 +6,17 @@
 //! trades on `tx_new_reversed`, the 64 most frequent 99.0 % of them. The recipients' token accounts (the spec's third
 //! role) named no trade the two wallets did not, and took places in the cap (97.4 % with them): they are not learned.
 //!
-//! A candidate enters the set only if (a) it is no guard account, (b) no creation transaction of this run holds it
-//! (its full keys, static and loaded) and (c) it is not in `creation_accounts.txt` (every account of the forward
-//! store's reversed creations, 1053-1054). Without that file nothing is learned (fail-closed: the static list only).
+//! A candidate enters the set only if (a) it is no guard account, (b) no creation transaction this recorder received
+//! holds it (its full keys, static and loaded) and (c) it is not in `creation_accounts.txt` (every account of the
+//! forward store's reversed creations, 1053-1054; its sha256 and address count are in the start note and in each
+//! segment's `learned_excludes`). Without that file nothing is learned (fail-closed: the static list only).
+//!
+//! What rule (b) can and cannot see (LAB review on #476): a learned member in a direct create_pool transaction makes
+//! the server leave that transaction out of `tx_new_reversed`, so the recorder never receives it there and (b) cannot
+//! fire for it. (b) catches the creations that arrive on the other streams: `tx_new_pools` (graduations), the probe and
+//! watchlist streams, and backfills. For direct creations the guard is (a) and (c), the measuring hour's fixture (none of
+//! its recipients was a creation account), and the deploy's checks: `paper.reconcile` against OF1 (spec M2) and the
+//! `pool_creations` cross-check of the second measuring hour.
 //! The set holds up to 64 candidates by score (trades, halving every 6 h); a member leaves when an outsider scores
 //! twice its own, when a creation names it, or after 7 days without a trade. It is kept in
 //! `<root>/new_reversed_exclude.json` (written atomically), so a restart keeps it.
@@ -17,6 +25,7 @@ use crate::segment::write_json_atomic;
 use crate::watch::{valid, PUMP_AMM};
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
@@ -63,6 +72,8 @@ pub struct Excludes {
     path: Option<PathBuf>,
     /// Rule (c)'s accounts; None: learning is off.
     store_creations: Option<HashSet<String>>,
+    /// The sha256 of rule (c)'s file as read (the provable input).
+    store_sha256: Option<String>,
     run_creations: HashSet<String>,
     /// MAX_RUN_CREATION_KEYS reached: nothing new is learned this run.
     full: bool,
@@ -73,20 +84,29 @@ pub struct Excludes {
 impl Excludes {
     /// Learning off: nothing is learned and nothing written; the list stays empty.
     pub fn off() -> Self {
-        Self { path: None, store_creations: None, run_creations: HashSet::new(), full: false, cands: BTreeMap::new(), members: BTreeSet::new() }
+        Self {
+            path: None,
+            store_creations: None,
+            store_sha256: None,
+            run_creations: HashSet::new(),
+            full: false,
+            cands: BTreeMap::new(),
+            members: BTreeSet::new(),
+        }
     }
 
     /// `creation_accounts`: rule (c)'s file. `root`: where the set is kept. The notes say why learning is off, or
     /// what a start kept (the caller logs them).
     pub fn open(root: &Path, creation_accounts: &Path, now: u64) -> (Self, Vec<String>) {
-        let store = match read_accounts(creation_accounts) {
+        let (store, sha256) = match read_accounts(creation_accounts) {
             Ok(s) => s,
             Err(e) => return (Self::off(), vec![format!("learned new_reversed excludes off: {e:#}")]),
         };
-        let mut ex = Self { path: Some(root.join(FILE)), store_creations: Some(store), ..Self::off() };
+        let mut ex = Self { path: Some(root.join(FILE)), store_creations: Some(store), store_sha256: Some(sha256), ..Self::off() };
+        let input = format!("{} creation accounts from {} (sha256 {})", ex.store_len(), creation_accounts.display(), ex.store_sha256.as_deref().unwrap_or("-"));
         let note = match ex.load(now) {
-            Ok(n) => format!("learned new_reversed excludes on: {n} kept from {FILE}, {} creation accounts", ex.store_len()),
-            Err(e) => format!("learned new_reversed excludes start empty: {e:#}"),
+            Ok(n) => format!("learned new_reversed excludes on: {n} kept from {FILE}; {input}"),
+            Err(e) => format!("learned new_reversed excludes start empty: {e:#}; {input}"),
         };
         (ex, vec![note])
     }
@@ -234,8 +254,9 @@ impl Excludes {
     }
 
     pub fn summary(&self) -> Value {
+        let input = self.store_sha256.as_ref().map(|sha| json!({"count": self.store_len(), "sha256": sha}));
         json!({"enabled": self.enabled(), "learned": self.members.len(), "candidates": self.cands.len(),
-               "run_creation_keys": self.run_creations.len(), "full": self.full})
+               "run_creation_keys": self.run_creations.len(), "full": self.full, "creation_accounts": input})
     }
 
     /// Written atomically (nothing when learning is off).
@@ -247,10 +268,13 @@ impl Excludes {
     }
 }
 
-/// `creation_accounts.txt`: one address per line; blank lines and `#` comments are skipped. Refused: an unreadable
-/// file, one without an address (an empty input is no evidence) and a line that is no address.
-pub fn read_accounts(path: &Path) -> Result<HashSet<String>> {
-    let text = std::fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+/// `creation_accounts.txt`: one address per line; blank lines and `#` comments are skipped. Its addresses and the sha256
+/// of its bytes (the input as read, for the start note and each segment). Refused: an unreadable file, one that is not
+/// UTF-8, one without an address (an empty input is no evidence) and a line that is no address.
+pub fn read_accounts(path: &Path) -> Result<(HashSet<String>, String)> {
+    let bytes = std::fs::read(path).with_context(|| format!("read {}", path.display()))?;
+    let sha256 = hex::encode(Sha256::digest(&bytes));
+    let text = String::from_utf8(bytes).with_context(|| format!("{} is not UTF-8", path.display()))?;
     let mut set = HashSet::new();
     for (i, line) in text.lines().map(str::trim).enumerate() {
         if line.is_empty() || line.starts_with('#') {
@@ -260,7 +284,7 @@ pub fn read_accounts(path: &Path) -> Result<HashSet<String>> {
         set.insert(line.to_owned());
     }
     anyhow::ensure!(!set.is_empty(), "{} holds no address", path.display());
-    Ok(set)
+    Ok((set, sha256))
 }
 
 #[cfg(test)]
@@ -379,6 +403,21 @@ mod tests {
         // a restart past the expiry: dropped as well
         let late = on(&root, &[addr(255)], T0 + 86_400 + EXPIRE_SECS);
         assert!(late.list().is_empty());
+        std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn the_start_note_and_the_summary_name_the_inputs_sha256_and_count() {
+        // LAB review on #476: the input is provable from the recorder's own output
+        let root = tmp("ex-input");
+        let f = root.join("creation_accounts.txt");
+        let body = format!("# header\n{}\n\n{}\n", addr(1), addr(2));
+        std::fs::write(&f, &body).unwrap();
+        let sha = hex::encode(Sha256::digest(body.as_bytes()));
+        let (ex, notes) = Excludes::open(&root, &f, T0);
+        assert_eq!(notes, [format!("learned new_reversed excludes on: 0 kept from {FILE}; 2 creation accounts from {} (sha256 {sha})", f.display())]);
+        assert_eq!(ex.summary()["creation_accounts"], json!({"count": 2, "sha256": sha}));
+        assert_eq!(Excludes::off().summary()["creation_accounts"], Value::Null);
         std::fs::remove_dir_all(&root).unwrap();
     }
 
