@@ -29,7 +29,8 @@ def write(d, table, rows):
 
 def recording(root):
     """One complete segment of 100 slots: six tokens created, all completed and migrated in reverse name order of their
-    slots, two pools by CreatePoolEvent and six by pool_creations only (each seen twice, at two slots)."""
+    slots, two pools by CreatePoolEvent and six by pool_creations only (each seen twice, at two slots; not learned since
+    creation-filters spec v0.2 M1, only counted)."""
     d = os.path.join(root, "segments", f"{0:09d}")
     write(d, "blocks", [{"slot": s, "block_time": 1_790_000_000 + s // 3, "skipped": False} for s in range(1_000_000, 1_000_100, 10)])
     write(d, "pump/CreateEvent", [{"mint": m, "slot": s - 10, "tx_index": 0, "user": "U", "is_mayhem_mode": False,
@@ -50,7 +51,8 @@ def learned(root):
 
     f = LiveFeed(root, follow=False)
     list(f.events())
-    out = {"learned": [[k, key] for k, key, *_ in f.drain_learned()], "new_pools": list(f.new_pools)}
+    out = {"learned": [[k, key] for k, key, *_ in f.drain_learned()], "new_pools": list(f.new_pools),
+           "without_creation": f.stats["pools_seen_without_creation"]}
     f.close()
     return out
 
@@ -60,12 +62,12 @@ def test_the_learned_order_is_first_slot_then_key(tmp_path):
     recording(root)
     got = learned(root)
     by_slot = [m for m, _ in sorted(MINTS, key=lambda x: (x[1], x[0]))]
-    pools = [p for p, _ in sorted(POOLS[:2], key=lambda x: (x[1], x[0]))] + [p for p, _ in sorted(POOLS[2:], key=lambda x: (x[1], x[0]))]
-    # completions (slot order), then migrations (slot order), then CreatePoolEvent's pools, then pool_creations' pools;
-    # the epoch's first block last (segment_events learns it after _new_tokens_and_pools)
+    pools = [p for p, _ in sorted(POOLS[:2], key=lambda x: (x[1], x[0]))]
+    # completions (slot order), then migrations (slot order), then CreatePoolEvent's pools (pool_creations' pools are not
+    # learned: M1); the epoch's first block last (segment_events learns it after _new_tokens_and_pools)
     want = [["token", m] for m in by_slot] * 2 + [["pool", p] for p in pools] + [["epoch", "2"]]
     assert got["learned"] == want
-    assert got["new_pools"] == pools
+    assert got["new_pools"] == pools and got["without_creation"] == len(POOLS) - 2
 
 
 def test_fresh_processes_learn_in_one_order(tmp_path):

@@ -49,3 +49,23 @@ def test_the_stop_rule_and_the_backtest_share_the_minimum():
     from paper import stoprule
 
     assert stoprule.MIN_TRADES == backtest_report.MIN_TRADES == MIN_TRADES == 200
+
+
+def test_the_detection_section_counts_the_days_usage_rows(tmp_path):
+    """Creation-filters spec v0.2 M1, M4, S3: LiveFeed's usage rows of the day (minutes without creation detection or
+    probes, pools not learned, late probes) become the report's Detection section; a day without them has none."""
+    from paper.journal import Journal
+    from paper.report import detection_lines
+
+    j = Journal(str(tmp_path / "j"))
+    day = "2026-10-21"
+    for minute, stream, n in ((100, "creation_detection_off", 1), (100, "probes_off", 1), (101, "creation_detection_off", 1),
+                              (101, "pools_seen_without_creation", 3), (102, "pools_seen_without_creation", 2), (102, "late_probe", 1),
+                              (102, "tx_pools", 99)):
+        j.put("usage", minute=minute, day=day, stream=stream, bytes=0, messages=n, seq=1)
+    lines = detection_lines(j, day)
+    assert lines[:3] == ["", "## Detection", ""]
+    assert lines[3].startswith("- 2 minutes without creation detection") and lines[4].startswith("- 1 minutes without probes")
+    assert lines[5].startswith("- 5 pools named only by the pool account streams") and lines[6].startswith("- 1 probes whose backfill")
+    assert detection_lines(j, "2026-10-22") == []
+    j.close()
