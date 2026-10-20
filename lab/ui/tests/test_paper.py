@@ -608,6 +608,51 @@ class WalletAndTriton(unittest.TestCase):
         self.assertEqual(sum(t["latency"]["hist"]), t["latency"]["n"])
         self.assertTrue(any(s["dropped"] for s in t["streams"]))
 
+    def test_live_pool_candles_from_the_recorder_segments(self):
+        """A live pool newer than the store: 1-minute candles from the recorder's pump_amm Buy/SellEvent parquet, in
+        SOL per token as the store's (reversed pool: SOL reserve / token reserve / 1000), token buys on the right
+        side, and only segments around the bot's trades; none from the sample recorder."""
+        import duckdb
+        pool, t0 = "Poo1111111111111111111111111111111111111111", 1_792_497_600
+        with tempfile.TemporaryDirectory() as root:
+            def segment(seq, slot, events):
+                d = os.path.join(root, "segments", f"{seq:09d}")
+                for ev, rows in events.items():
+                    os.makedirs(os.path.join(d, "pump_amm", ev))
+                    base, quote = ("base_amount_out", "quote_amount_in") if ev == "BuyEvent" else ("base_amount_in", "quote_amount_out")
+                    values = ", ".join(f"({s}::UBIGINT, {i}::UBIGINT, 0::UBIGINT, 0::UBIGINT, {ts}::BIGINT, '{p}', {b}::UBIGINT, {q}::UBIGINT, {ba}::UBIGINT, {qa}::UBIGINT)"
+                                       for s, i, ts, p, b, q, ba, qa in rows)
+                    duckdb.sql(f"COPY (SELECT * FROM (VALUES {values}) t(slot, tx_index, outer_ix, inner_ix, \"timestamp\", pool, "
+                               f"pool_base_token_reserves, pool_quote_token_reserves, {base}, {quote})) "
+                               f"TO '{os.path.join(d, 'pump_amm', ev, 'part-00000.parquet')}' (FORMAT parquet)")
+                with open(os.path.join(d, "_segment.json"), "w") as f:
+                    json.dump({"seq": seq, "first_slot": slot, "last_slot": slot + 149, "complete": True, "written_unix": t0 - 600 + seq,
+                               "usage": []}, f)
+            sol = 1_000_000_000
+            # Reversed pool (base WSOL): a BuyEvent buys SOL with the token (a token sale), a SellEvent sells SOL (a token buy).
+            segment(1, 470_000_000, {"BuyEvent": [(470_000_010, 1, t0, pool, 30 * sol, 100_000_000_000_000, 1 * sol, 3_000_000_000_000)],
+                                     "SellEvent": [(470_000_020, 2, t0 + 30, pool, 32 * sol, 95_000_000_000_000, 2 * sol, 5_000_000_000_000),
+                                                   (470_000_030, 1, t0 + 70, "Other11111111111111111111111111111111111111", 1, 1, 1, 1)]})
+            segment(2, 480_000_000, {"SellEvent": [(480_000_010, 1, t0 + 9000, pool, 40 * sol, 90_000_000_000_000, 1 * sol, 1)]})  # far away
+            with open(os.path.join(root, "budget.json"), "w") as f:
+                json.dump({"day": t0 // 86_400, "spent_bytes": 1, "cap_bytes": 25_000_000_000}, f)
+            os.environ["LAB_RECORDER_ROOT"] = root
+            try:
+                c = paper.live_pool_candles(pool, [470_000_015, 470_000_025], True, now=t0)
+            finally:
+                del os.environ["LAB_RECORDER_ROOT"]
+        (k,) = c
+        self.assertEqual((k["time"], k["trades"]), (t0, 2))
+        self.assertAlmostEqual(k["open"], 30 * sol / 100_000_000_000_000 / 1000)  # 3e-7 SOL per token
+        self.assertAlmostEqual(k["close"], 32 * sol / 95_000_000_000_000 / 1000)
+        self.assertAlmostEqual(k["volume_quote"], 3.0)  # the SOL side: 1 + 2
+        self.assertAlmostEqual(k["buy_quote"], 2.0)  # the SellEvent is the token buy in a reversed pool
+        os.environ["LAB_RECORDER_ROOT"] = "/nonexistent"  # the sample recorder: no live candles
+        try:
+            self.assertEqual(paper.live_pool_candles(pool, [470_000_015], True, now=t0), [])
+        finally:
+            del os.environ["LAB_RECORDER_ROOT"]
+
     def test_wallet_has_each_groups_own_wallet_and_risk(self):
         """K3's wallet.json and H's wallet-h.json side by side, each with the risk file the journal records for its
         group (state 'groups', absolute paths next to the configs), H's trades its own variants only; a paper
