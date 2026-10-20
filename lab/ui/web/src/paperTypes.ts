@@ -82,4 +82,6 @@ export interface PaperRecorder {
   level: number | null; dropped: string[]; last_segment_unix: number | null; segments_today: number; reconnects: number;
   notes: { unix: number; note: string }[];
 }
-export interface PaperData { journal: PaperJournal | null; recorder: PaperRecorder | null; now_unix: number }
+// Display-only markings from the owner's thresholds (lab/ui/paper.py alerts; no push, no action).
+export interface PaperAlert { key: string; level: "warn" | "alert"; text: string }
+export interface PaperData { journal: PaperJournal | null; recorder: PaperRecorder | null; alerts?: PaperAlert[]; now_unix: number }
