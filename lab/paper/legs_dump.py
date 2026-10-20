@@ -38,7 +38,9 @@ events, each as a count and the sha256 of its lines:
   arrivals: each event's position and (received ns, created ns, segment written) when it has them. The dump drains usage
   and learned at every slot end, the engine at every live minute (engine.py `_live_minute`): the same rows, usage in the
   same order (first in, first out, with no `at`), so only how often they are taken differs;
-and LiveFeed's stats and its farmer seed (without the store's path).
+the clock (M3-09b spec v0.2 §4.1): `per_epoch`, LiveFeed's ms per slot by epoch at the end, and `h24`, its farmer window
+as `[seq, value]` each time it changed, taken at the same drain points with the segment read by then; and LiveFeed's
+stats and its farmer seed (without the store's path).
 """
 
 import argparse
@@ -226,6 +228,7 @@ def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0,
                     seed_farmers=True)
     side = {k: _Digest() for k in SIDE}
     pools_seen = [0]  # new_pools taken so far
+    clock_h24 = []  # [seq, h24] at each drain point where it changed
 
     def drain(at):
         for pool, legs in feed.drain_history():
@@ -243,6 +246,9 @@ def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0,
         pools_seen[0] = len(feed.new_pools)
         for u in feed.drain_usage():
             side["usage"].add(json.dumps(u, sort_keys=True))
+        h24_now = feed._h24()
+        if not clock_h24 or clock_h24[-1][1] != h24_now:
+            clock_h24.append([feed.seq, h24_now])
 
     try:
         events = feed.events() if max_rss_mb is None else capped(feed.events(), max_rss_mb)
@@ -250,8 +256,9 @@ def dump_segments(root, store, lo, hi=None, window=10_000, out=None, out_from=0,
         seed = {k: v for k, v in (feed.farm_seed or {}).items() if k != "store"} or None
         windows = res.pop("windows")
         res.update({k: side[k].result() for k in SIDE})
+        clock = {"per_epoch": {str(e): ms for e, ms in sorted(feed.clock.per_epoch.items())}, "h24": clock_h24}
         res.update({"stats": dict(sorted(feed.stats.items())), "farm_seed": seed, "snapshot_before": snapshot_before,
-                    "h24": h24, "windows": windows})
+                    "h24": h24, "clock": clock, "windows": windows})
     finally:
         feed.close()
     read = res["stats"].get("segments", 0)
