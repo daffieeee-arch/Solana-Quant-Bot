@@ -290,5 +290,56 @@ class Unit(unittest.TestCase):
         self.assertRegex(self.text, r"(?m)^NoNewPrivileges=yes$")
 
 
+
+class SystemUnit(unittest.TestCase):
+    """lab/ops/systemd/lab-ui-web.system.service (variant A): the same app and bind as the user unit, as the system
+    user lab-ui with the home hidden except read-only binds; no write path, no user bus, no secrets; and the ACL
+    script only ever grants read."""
+    OPS = os.path.join(os.path.dirname(SERVER), "..", "ops")
+
+    def setUp(self):
+        with open(os.path.join(self.OPS, "systemd", "lab-ui-web.system.service")) as f:
+            self.text = f.read()
+        with open(os.path.join(self.OPS, "systemd", "lab-ui-web.service")) as f:
+            self.user = f.read()
+
+    def test_same_command_as_the_user_unit(self):
+        user_exec = re.search(r"^ExecStart=(.*)$", self.user, re.M).group(1).replace("%h", "/home/chupa")
+        self.assertEqual(re.search(r"^ExecStart=(.*)$", self.text, re.M).group(1), user_exec)
+        self.assertRegex(self.text, r"(?m)^WorkingDirectory=/home/chupa/Solana-project/worktrees/lab-ui-deploy$")
+
+    def test_own_user_and_sandbox(self):
+        for line in ("User=lab-ui", "ProtectHome=tmpfs", "ProtectSystem=strict", "InaccessiblePaths=/run/user",
+                     "NoNewPrivileges=yes", "CapabilityBoundingSet=", "PrivateTmp=yes", "IPAddressDeny=any", "MemoryMax=1G"):
+            self.assertRegex(self.text, rf"(?m)^{re.escape(line)}$")
+        self.assertNotRegex(self.text, r"(?m)^ReadWritePaths=")  # read-only until B0 adds the requests directory
+        binds = re.findall(r"(?m)^BindReadOnlyPaths=-?(\S+)$", self.text)
+        self.assertTrue(binds and all(b.startswith("/home/chupa/") for b in binds))
+        self.assertFalse(any(".config" in b or b.rstrip("/") in ("/home/chupa", "/home/chupa/Solana-project") for b in binds))
+        self.assertNotRegex(self.text, r"(?m)^BindPaths=")
+
+    def test_grant_script_reads_only_the_bound_trees(self):
+        """Read (rX) on exactly the trees the unit binds; no traverse ACL on the way down (LAB review on #438: an
+        x on /home/chupa would open every world-readable file below it to lab-ui outside the sandbox)."""
+        with open(os.path.join(self.OPS, "ui-grant-read.sh")) as f:
+            sh = f.read()
+        acls = re.findall(r'setfacl[^\n]*"(d?:?u:\$U:[^"]*)"', sh)
+        self.assertTrue(acls)
+        self.assertTrue(all(a.split(":")[-1] == "rX" for a in acls), acls)
+        loop = sh[sh.index("# Read (rX)"):sh.index("# Never:")]
+        paths = {p.replace("$H", "/home/chupa").replace("$P", "/home/chupa/Solana-project")
+                 .replace("$L", "/home/chupa/Solana-project/data-old-faithful-one/lab") for p in re.findall(r'"(\$[HPL][^"]*)"', loop)}
+        binds = set(re.findall(r"(?m)^BindReadOnlyPaths=-?(\S+)$", self.text))
+        self.assertEqual(paths, binds)
+        code = [ln for ln in sh.split("# Never:")[0].splitlines() if not ln.lstrip().startswith("#")]
+        self.assertFalse([ln for ln in code if ".config" in ln])
+
+    def test_sandbox_check_uses_the_units_own_lines(self):
+        with open(os.path.join(self.OPS, "ui-sandbox-run.sh")) as f:
+            sh = f.read()
+        self.assertIn("systemd/lab-ui-web.system.service", sh)
+        for key in ("User", "ProtectHome", "BindReadOnlyPaths", "InaccessiblePaths", "ProtectSystem"):
+            self.assertIn(key, sh)
+
 if __name__ == "__main__":
     unittest.main()
