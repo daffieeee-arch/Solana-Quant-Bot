@@ -21,9 +21,16 @@
 #                m3_09b_accept.py restart: the strict tier on it, and both equal the plain run but for the copies (its
 #                module doc).
 #
+#   STEP=reaccept FROM=DIR (the lab Python 3.13 runner; seconds): this commit's rules (m3_09b_accept.py compare and
+#                restart) on the summaries of an earlier run of both steps in DIR (an m3-09b-<commit7> directory: py, rs1,
+#                rs2, restart-root, restart-py, restart-rs1, restart-rs2), read-only. For a change to the rules alone: no
+#                pass runs again, and DIR's summaries were written by its own commit's code.
+#
 #   STEP=build LAB_DATA_ROOT=/lab/data-old-faithful-one/lab bash lab/live/nas_m3_09b.sh      (bookworm runner)
 #   STEP=compare LAB_PY=/lab/venv/bin/python bash lab/live/nas_m3_09b.sh                    (lab runner; kort)
 #   STEP=restart LAB_PY=/lab/venv/bin/python bash lab/live/nas_m3_09b.sh                    (lab runner; kort, after compare)
+#   STEP=reaccept FROM=/lab/data-old-faithful-one/lab/backtests/m3-09b-<c7> LAB_PY=/lab/venv/bin/python bash lab/live/nas_m3_09b.sh
+#                                                                                          (lab runner; seconds)
 #
 # Writes to $DATA/backtests/m3-09b-<commit7>/ (job.log, pytest.log, snap/, py/, rs1/, rs2/, restart-root/, restart-py/,
 # restart-rs1/, restart-rs2/, acceptance.log, restart-acceptance.log).
@@ -32,11 +39,11 @@ set -euo pipefail
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 DATA=${LAB_DATA_ROOT:-/home/chupa/Solana-project/data-old-faithful-one/lab}
 COMMIT=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || cat "$REPO/COMMIT")
-: "${STEP:?STEP=build, compare or restart}"
+: "${STEP:?STEP=build, compare, restart or reaccept}"
 if [ "$STEP" = build ]; then
   STEP=build exec bash "$REPO/lab/live/nas_m1c4.sh"
 fi
-case "$STEP" in compare | restart) ;; *) echo "unknown STEP=$STEP"; exit 2 ;; esac
+case "$STEP" in compare | restart | reaccept) ;; *) echo "unknown STEP=$STEP"; exit 2 ;; esac
 OUT=$DATA/backtests/m3-09b-${COMMIT:0:7}
 mkdir -p "$OUT"
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$OUT/job.log"; }
@@ -54,6 +61,29 @@ LO=454896000
 HI=455760000
 MAX_RSS_GB=${MAX_RSS_GB:-8}
 ACCEPT=$REPO/lab/live/m3_09b_accept.py
+if [ "$STEP" = reaccept ]; then
+  : "${FROM:?FROM=the m3-09b-<commit7> directory of an earlier run}"
+  for d in py rs1 rs2 restart-py restart-rs1 restart-rs2; do
+    [ -f "$FROM/$d/summary.json" ] || { log "M3-09b reaccept: no $FROM/$d/summary.json"; exit 1; }
+  done
+  [ -d "$FROM/restart-root/segments" ] || { log "M3-09b reaccept: no restart root under $FROM"; exit 1; }
+  log "reaccept: this commit's rules (m3_09b_accept.py $(sha256sum "$ACCEPT" | cut -c1-16)) on $FROM's summaries"
+  rc=0
+  for step in compare restart; do
+    if [ $step = compare ]; then
+      set -- compare "$FROM" "$JOB91_SEGMENTS" "$JOB91_EVENTS"
+    else
+      set -- restart "$FROM" "$((JOB91_SEGMENTS + RESTART_N))" "$JOB91_EVENTS" "$FROM/restart-root" "$RESTART_AT" "$RESTART_N"
+    fi
+    r=0
+    "$PY" "$ACCEPT" "$@" > "$OUT/reaccept-$step.log" 2>&1 || r=$?
+    tee -a "$OUT/job.log" < "$OUT/reaccept-$step.log"
+    [ "$r" = 0 ] || rc=1
+  done
+  [ "$rc" = 0 ] || exit 1
+  log "done"
+  exit 0
+fi
 [ -x "$BIN" ] || { log "no binary at $BIN: run STEP=build first"; exit 1; }
 [ -f "$STORE" ] || { log "no store at $STORE"; exit 1; }
 [ -d "$REC/segments" ] || { log "M3-09b: RED: no segments/ under $REC"; exit 1; }
