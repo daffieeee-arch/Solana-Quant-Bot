@@ -57,7 +57,7 @@ def select_wallets(con, money_dir):
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE sel AS
       SELECT wallet, cash - fees AS net_fit, buy AS buy_fit, legs AS legs_fit, (cash - fees) / buy AS margin_fit, ndays AS days_fit,
-             row_number() OVER (ORDER BY cash - fees DESC) AS rank_fit
+             row_number() OVER (ORDER BY cash - fees DESC, wallet) AS rank_fit  -- deterministic tie-break (the top-5 exclusion of §5 rule 4 depends on it)
       FROM fitw WHERE ndays >= {MIN_DAYS} AND legs >= {MIN_LEGS} AND mb BETWEEN {MB[0]} AND {MB[1]} AND buy >= 0.8 * sell AND buy > 0 AND (cash - fees) / buy >= {MARGIN}""")
     return con.execute("SELECT count(*) FROM sel").fetchone()[0]
 

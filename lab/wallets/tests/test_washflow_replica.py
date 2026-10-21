@@ -62,7 +62,7 @@ def _money(tmp_path):
     d.mkdir()
     rows = []
     for day in range(11, 21):  # fit half: A and B qualify (4+ farmer-pool days, 10k legs, margin 1 %); C fails the margin; D the legs
-        for w, legs, cash in (("A", 3000, 10 * SOL), ("B", 3000, 10 * SOL), ("C", 3000, -1 * SOL), ("D", 100, 10 * SOL)):
+        for w, legs, cash in (("A", 3000, 10 * SOL), ("B", 3000, 9 * SOL), ("C", 3000, -1 * SOL), ("D", 100, 10 * SOL)):  # A outranks B on fit net
             rows.append({"wallet": w, "day": f"2026-09-{day:02d}", "cash": float(cash), "fees": 1e6, "buy_sol": float(100 * SOL), "sell_sol": float(100 * SOL),
                          "n_pool_legs": float(legs), "n_farmer_legs": float(legs), "median_buy_sol": float(0.3 * SOL)})
     rows.append({"wallet": "E", "day": "2026-09-25", "cash": 1e12, "fees": 0.0, "buy_sol": 1e12, "sell_sol": 1e11, "n_pool_legs": 50000.0, "n_farmer_legs": 50000.0, "median_buy_sol": 0.3e9})  # test half only: never selected
@@ -135,6 +135,20 @@ def test_guards_red_on_missing_scale_factor_short_test_half_and_row_loss(tmp_pat
     monkeypatch.setattr("sys.argv", ["washflow_replica", str(tmp_path / "o3")])
     with pytest.raises(SystemExit, match="the rule needs all 10"):
         wr.main()
+
+
+def test_rank_fit_breaks_ties_by_wallet(tmp_path):
+    """Two wallets with the same fit net: the rank is deterministic (wallet order), whatever the thread count (NAS run 99zzzzy went RED on a tie)."""
+    d = tmp_path / "money"
+    d.mkdir()
+    rows = [{"wallet": w, "day": f"2026-09-{day:02d}", "cash": 10e9, "fees": 1e6, "buy_sol": 100e9, "sell_sol": 100e9, "n_pool_legs": 3000.0, "n_farmer_legs": 3000.0, "median_buy_sol": 0.3e9}
+            for day in range(11, 21) for w in ("B", "A", "C")]
+    pq.write_table(pa.Table.from_pylist(rows), d / "wallet-day-0.parquet")
+    for threads in (1, 6):
+        con = duckdb.connect()
+        con.execute(f"SET threads TO {threads}")
+        assert wr.select_wallets(con, str(d)) == 3
+        assert con.execute("SELECT wallet, rank_fit FROM sel ORDER BY rank_fit").fetchall() == [("A", 1), ("B", 2), ("C", 3)]
 
 
 def test_value_sql_and_day_boot():
