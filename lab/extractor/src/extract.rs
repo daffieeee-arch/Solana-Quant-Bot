@@ -1096,9 +1096,12 @@ pub const DBC_OLDER_IDLS: [(&str, &str); 4] = [
 ];
 
 /// Context columns before the IDL fields in every venue event table (`<label>/<Event>`).
-pub const VENUE_EVENT_CONTEXT: [(&str, Kind); 17] = [
+pub const VENUE_EVENT_CONTEXT: [(&str, Kind); 18] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
+    // The transaction failed: the runtime recorded this event before the failure (an arb route that failed after
+    // its swap) and rolled its state back. Not a trade; kept for failed attempts (smoke 99zzzzs).
+    ("failed", Kind::Bool),
     // The event CPI's position: its top-level instruction and its index among that one's inner instructions.
     ("outer_ix", Kind::U64),
     ("inner_ix", Kind::U64),
@@ -1298,8 +1301,9 @@ impl Venues {
             || meta.inner_instructions.as_deref().unwrap_or(&[]).iter().any(|g| g.instructions.iter().any(|ix| is_venue(ix.instruction.program_id_index)))
     }
 
-    /// The venue rows of one transaction: an event row per venue event self-CPI (or an unknown-event row), a graduation
-    /// row per graduation instruction of a successful transaction.
+    /// The venue rows of one transaction: an event row per venue event self-CPI (or an unknown-event row; the events a
+    /// failed transaction recorded before its failure are kept, flagged failed), a graduation row per graduation
+    /// instruction of a successful transaction.
     pub fn rows(&self, v: &TxView) -> VenueRows {
         let b58 = |b: &[u8]| bs58::encode(b).into_string();
         let mut out = VenueRows { rows: Vec::new(), events: 0, graduations: 0, unknown_events: 0 };
@@ -1364,6 +1368,7 @@ impl Venues {
                 values.extend([
                     Val::U64(v.slot),
                     Val::U64(v.tx_index),
+                    Val::Bool(v.failed),
                     Val::U64(outer),
                     inner.map_or(Val::Null, Val::U64),
                     Val::U64(out.events),
@@ -2825,7 +2830,7 @@ mod tests {
                 assert_eq!(d.values.len(), ev.fields.len());
             }
         }
-        assert_eq!(VENUE_EVENT_CONTEXT.len(), 17);
+        assert_eq!(VENUE_EVENT_CONTEXT.len(), 18);
     }
 
     fn ix_disc(text: &str, name: &str) -> Vec<u8> {
@@ -2879,10 +2884,13 @@ mod tests {
             "decode_status", "payload_len", "ix_trader", "ix_pool", "ix_base_mint", "ix_quote_mint"].iter().map(|c| col(r, c).clone()).collect();
         assert_eq!(ctx, vec![Val::U64(5), Val::U64(2), Val::U64(0), Val::U64(0), Val::U64(0), st(&b58(&payer)), st(&b58(&launchlab)),
             st("buy_exact_in"), st("ok"), Val::U64(body.len() as u64), st(&b58(&payer)), st(&b58(&pool)), st(&b58(&base)), st(WSOL)]);
-        // The parent is the top-level buy: no inner index, its discriminator.
-        assert_eq!((col(r, "parent_inner_ix"), col(r, "parent_ix_disc")), (&Val::Null, &st(&hex::encode(&buy[..8]))));
+        // The parent is the top-level buy: no inner index, its discriminator; the transaction succeeded.
+        assert_eq!((col(r, "parent_inner_ix"), col(r, "parent_ix_disc"), col(r, "failed")), (&Val::Null, &st(&hex::encode(&buy[..8])), &Val::Bool(false)));
         assert_eq!((col(r, "pool_state"), col(r, "total_base_sell"), col(r, "virtual_base")), (&st(&b58(&pool)), &Val::U64(1), &Val::U64(2)));
         assert_eq!((col(r, "trade_direction"), col(r, "pool_status"), col(r, "exact_in")), (&st("Buy"), &st("Trade"), &Val::Bool(true)));
+        // A failed transaction keeps the events the runtime recorded before the failure, flagged (not a trade).
+        let failed = Venues::new().unwrap().rows(&TxView { failed: true, ..view });
+        assert_eq!((failed.events, col(&failed.rows[0], "failed")), (1, &Val::Bool(true)));
     }
 
     #[test]

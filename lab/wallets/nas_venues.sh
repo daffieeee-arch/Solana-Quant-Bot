@@ -11,9 +11,11 @@
 #                counts no venue event of an unknown discriminator;
 #              - per venue, the successful transactions' swap instructions in venue_census (DBC swap/swap2(+hook), DAMM
 #                v2 swap/swap2, LaunchLab buy_exact_*/sell_exact_*) and the distinct swapping parents of the swap events
-#                (slot, tx_index, outer_ix, parent_inner_ix; DBC emits EvtSwap and EvtSwap2 for one swap) differ by at
-#                most 1 %; no swap event comes from a non-swap or unknown parent; no venue event is unknown to the IDLs
-#                (venue_unknown_events lists them by discriminator to be named).
+#                of successful transactions (slot, tx_index, outer_ix, parent_inner_ix; DBC emits EvtSwap and EvtSwap2
+#                for one swap) differ by at most 1 % (the events a failed transaction recorded before its failure are
+#                counted apart; where the counts differ, the first 10 transactions are listed); no swap event comes
+#                from a non-swap or unknown parent; no venue event is unknown to the IDLs (venue_unknown_events lists
+#                them by discriminator to be named).
 #              Prints rows and MB per 1,000 slots per table and the epoch extrapolation.
 #   STEP=epoch (lang, ~1.5-2.5 h): dev epoch 1045 with LAB_VENUES=1 and LAB_VENUE_CENSUS=1 into $DATA/events/venues-v1/chunks
 #              (ops' extract_epochs.sh, THREADS=3), then the same decode and count checks per chunk.
@@ -95,18 +97,37 @@ for venue, (ixs, events) in SWAPS.items():
     sw = ", ".join(f"'{x}'" for x in ixs)
     if files:
         src = f"read_parquet({lit(files)}, union_by_name = true)"
-        n_ev, n_par = con.execute(f"""SELECT count(*), count(DISTINCT (slot, tx_index, outer_ix, parent_inner_ix))
-                                      FROM {src} WHERE parent_ix_name IN ({sw})""").fetchone()
+        # like with like: the census counts swap instructions of successful transactions; events the runtime recorded
+        # before a transaction failed (state rolled back) are counted apart (smoke 99zzzzs: DAMM v2's +458)
+        n_ev, n_par, n_fail = con.execute(f"""SELECT count(*) FILTER (WHERE NOT failed),
+                                                     count(DISTINCT (slot, tx_index, outer_ix, parent_inner_ix)) FILTER (WHERE NOT failed),
+                                                     count(*) FILTER (WHERE failed)
+                                              FROM {src} WHERE parent_ix_name IN ({sw})""").fetchone()
         other = con.execute(f"""SELECT COALESCE(parent_ix_name, '(unknown)'), parent_ix_disc, count(*) FROM {src}
                                 WHERE parent_ix_name IS NULL OR parent_ix_name NOT IN ({sw}) GROUP BY 1, 2 ORDER BY 3 DESC""").fetchall()
     else:
-        n_ev, n_par, other = 0, 0, []
+        n_ev, n_par, n_fail, other = 0, 0, 0, []
     print(f"{venue}: swap instructions {n_ix:,}, swapping parents {n_par:,} ({n_ev:,} swap events, "
-          f"{n_ev / n_par if n_par else 0:.2f} per swap); census instructions unknown to the IDL ('?'): {n_q:,}")
+          f"{n_ev / n_par if n_par else 0:.2f} per swap); swap events of failed transactions (not trades) {n_fail:,}; "
+          f"census instructions unknown to the IDL ('?'): {n_q:,}")
     for name, disc, n in other:
         print(f"  swap events from a non-swap parent: {name} {disc}: {n:,}")
     if not n_par or abs(n_par - n_ix) > 0.01 * max(n_ix, 1):
         bad.append(f"{venue}: {n_par} swapping parents against {n_ix} swap instructions")
+        # where they differ: per successful transaction, the census's swap instructions against the swapping parents
+        if census and files:
+            for slot, txi, c_ix, e_par, parents, dex in con.execute(f"""
+                    WITH c AS (SELECT slot, tx_index, count(*) AS n_ix, any_value(dex_ixs) AS dex
+                               FROM (SELECT slot, tx_index, dex_ixs, unnest(string_split(dex_ixs, ';')) AS x
+                                     FROM read_parquet({lit(census)}) WHERE NOT failed)
+                               WHERE split_part(x, ':', 1) || ':' || split_part(x, ':', 2) IN ({names}) GROUP BY 1, 2),
+                         e AS (SELECT slot, tx_index, count(DISTINCT (outer_ix, parent_inner_ix)) AS n_par,
+                                      string_agg(DISTINCT outer_ix::VARCHAR || '.' || COALESCE(parent_inner_ix::VARCHAR, '-'), ',') AS parents
+                               FROM {src} WHERE parent_ix_name IN ({sw}) AND NOT failed GROUP BY 1, 2)
+                    SELECT slot, tx_index, COALESCE(c.n_ix, 0), COALESCE(e.n_par, 0), e.parents, left(c.dex, 300)
+                    FROM c FULL JOIN e USING (slot, tx_index) WHERE COALESCE(c.n_ix, 0) <> COALESCE(e.n_par, 0)
+                    ORDER BY slot, tx_index LIMIT 10""").fetchall():
+                print(f"  differs: slot {slot} tx {txi}: census swap instructions {c_ix}, swapping parents {e_par} ({parents}); census {dex}")
     if other:
         bad.append(f"{venue}: {sum(n for *_, n in other)} swap events from non-swap or unknown parents")
 unk = tables.get("venue_unknown_events", [])
