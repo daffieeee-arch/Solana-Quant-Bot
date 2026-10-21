@@ -130,7 +130,7 @@ rc_p1=0
 p1 explain --journal-a "$OUT/j-a" --journal-b "$OUT/j-b" --removed "$OUT/removed/removed.parquet" --lo "$LO" --hi "$HI" \
   --journal-diff-path "$BASE_REPO/lab" --out "$OUT/diff-p1" > "$OUT/diff-p1.log" 2>&1 || rc_p1=$?
 log "P1 (A against B): $(sed -n 3p "$OUT/diff-p1/explain.md" 2>/dev/null || echo 'no report')"
-grep -E '^- removed transactions' "$OUT/diff-p1/explain.md" | tee -a "$OUT/job.log" || true
+grep -E '^- (removed transactions|causes)' "$OUT/diff-p1/explain.md" | tee -a "$OUT/job.log" || true
 n_sig=$("$PY" - "$OUT/j-a" "$LO" "$HI" <<'EOF'
 import os, sqlite3, sys
 db = sqlite3.connect(f"file:{os.path.join(sys.argv[1], 'journal.sqlite')}?mode=ro", uri=True)
@@ -154,6 +154,9 @@ bad=()
 [ "$CONTROL" = 0 ] || [ "$rc_control" = 0 ] || bad+=("the control A against C differs (the replay is not deterministic)")
 [ "$rc_p1" = 0 ] || bad+=("A against B has unexplained differences (diff-p1/explain.md)")
 [ "$n_sig" -gt 0 ] || bad+=("A has no signal in the window (no evidence)")
+# LAB review on eaa5626: hour 2 ran without tx_pools (no watchlist), so its learned set is not the one a P1 production
+# recorder would learn; B is the counterfactual of hour 2's set, and the day-1 gate (spec §5.3) stays.
+log "caveat: B removes what hour 2's recorder (no watchlist, its own learned set) missed; not a production P1 set"
 if [ ${#bad[@]} = 0 ]; then
   log "GREEN: every difference P1's hour-2 exclusions make in the paper run is explained"
 else

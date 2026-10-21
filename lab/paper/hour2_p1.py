@@ -336,15 +336,37 @@ def cmd_explain(a):
     res["first_excluded_t"] = first_root
     res["removed_classes"] = {c: sum(1 for x in rem if x[2] == c) for c in sorted({x[2] for x in rem})}
     res["before_lo"] = sum(1 for x in calls if int(x["key"][3]) < a.lo)
+    # per cause; cascade_capacity is the widest rule (LAB review on eaa5626): the strict variant also needs the reasons
+    # to differ between A and B (a row in one journal only counts as differing), and a share above 10 % is flagged
+    by_cause = {}
+    for x in calls:
+        c = x["cause"].split(":")[0]
+        by_cause[c] = by_cause.get(c, 0) + 1
+    cc = [x for x in calls if x["cause"] == "cascade_capacity"]
+
+    def strict(x):
+        ra, rb = (x["a"] or {}).get("reason"), (x["b"] or {}).get("reason")
+        return (x["a"] is None or x["b"] is None or ra != rb) and bool({ra, rb} & set(CAPACITY))
+
+    n_strict = sum(1 for x in cc if strict(x))
+    res["by_cause"] = by_cause
+    res["cascade_capacity"] = {"n": len(cc), "strict": n_strict, "share": round(len(cc) / len(calls), 4) if calls else 0.0,
+                               "over_10pct": bool(calls) and len(cc) > 0.1 * len(calls)}
+    res["green_strict"] = res["green"] and n_strict == len(cc)
     os.makedirs(a.out, exist_ok=True)
     with open(os.path.join(a.out, "explain.json"), "w") as f:
         json.dump(res, f, indent=1, default=str)
     lines = journal_diff.report(res)
+    ccs = res["cascade_capacity"]
     lines += ["", f"- removed transactions by class: {res['removed_classes']}; first 'excluded' difference at t={first_root}; "
-              f"differences before LO: {res['before_lo']}", "", "| table | key | cause | pool removed (classes) |",
-              "|---|---|---|---|"]
+              f"differences before LO: {res['before_lo']}",
+              f"- causes: {by_cause}; cascade_capacity {ccs['n']} ({ccs['share']:.1%} of the differences"
+              + (", OVER 10 %" if ccs["over_10pct"] else "") + f"), strict (reasons differ A/B) {ccs['strict']}; "
+              f"GREEN {'yes' if res['green'] else 'no'}, strict GREEN {'yes' if res['green_strict'] else 'no'}",
+              "", "| table | key | cause | A reason | B reason | pool removed (classes) |", "|---|---|---|---|---|---|"]
     for x in calls:
-        lines.append(f"| {x['table']} | {x['key']} | {x['cause']} | {x['pool_removed']} {x['pool_removed_classes']} |")
+        ra, rb = (x["a"] or {}).get("reason", "-") if x["a"] else "(none)", (x["b"] or {}).get("reason", "-") if x["b"] else "(none)"
+        lines.append(f"| {x['table']} | {x['key']} | {x['cause']} | {ra} | {rb} | {x['pool_removed']} {x['pool_removed_classes']} |")
     with open(os.path.join(a.out, "explain.md"), "w") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines[:3]))
