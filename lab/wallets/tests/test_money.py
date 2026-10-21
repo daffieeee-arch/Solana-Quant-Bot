@@ -63,12 +63,12 @@ def test_money_on_the_mini_store(tmp_path):
     wd = {(r[0], r[1]): dict(zip([c[0] for c in con.execute(f"SELECT * FROM '{tmp_path / 'out' / 'wallet-day-0.parquet'}' LIMIT 0").description], r))
           for r in con.execute(f"SELECT * FROM '{tmp_path / 'out' / 'wallet-day-0.parquet'}'").fetchall()}
     assert info["wallets"] == 4 and info["marks"] == 6 and info["days"] == ["2026-09-11", "2026-09-12", "2026-09-13"]  # T and U x 3 days (carried)
-    # W1 day 1: paid 2 SOL (two legs of one tx), fee once (6000), inventory 2e10 tokens marked at the day's last price (W2's sell state)
+    # W1 day 1: paid 2 SOL (two legs of one tx), fee once (5000: the tx_fee, which already holds the 1000 priority fee), inventory 2e10 tokens marked at the day's last price (W2's sell state)
     w1 = wd[("W1", "2026-09-11")]
-    assert w1["cash"] == -2 * SOL and w1["fees"] == 6000 and w1["n_legs"] == 2 and w1["n_opened"] == 1
+    assert w1["cash"] == -2 * SOL and w1["fees"] == 5000 and w1["n_legs"] == 2 and w1["n_opened"] == 1  # tx_fee once per tx; its priority fee (1000) is inside tx_fee, not added again (#468)
     assert w1["regime"] == "400ms" and abs(w1["ms_per_slot"] - 400.0) < 1e-9  # from the store meta, per day
     price_d1 = (102475 * SOL // 1000 - 404_000_000) / (975 * 10**9 + 5 * 10**9)
-    assert w1["value_end"] == pytest.approx(2 * 10**10 * price_d1) and w1["pnl"] == pytest.approx(-2 * SOL - 6000 + 2 * 10**10 * price_d1)
+    assert w1["value_end"] == pytest.approx(2 * 10**10 * price_d1) and w1["pnl"] == pytest.approx(-2 * SOL - 5000 + 2 * 10**10 * price_d1)
     # W1 day 2: no trade, the position is carried and marked at the collapsed price; the fall is day 2's loss
     w1b = wd[("W1", "2026-09-12")]
     price_d2 = (102071 * SOL // 1000 - 60_600_000_000) / (98 * 10**10 + 5 * 10**11)
@@ -95,7 +95,7 @@ def test_money_on_the_mini_store(tmp_path):
     assert con.execute(f"SELECT wallet, day FROM '{tmp_path / 'out' / 'creators.parquet'}' ORDER BY 1").fetchall() == [("CR", "2026-09-11"), ("CR2", "2026-09-11")]
     flows = dict((r[0], r) for r in con.execute(f"SELECT venue, venue_fees, network_fees, cash_all, sol_start, sol_end, external_in FROM '{tmp_path / 'out' / 'venue_flows.parquet'}'").fetchall())
     assert flows["curve"][1] == 26_000_000 + 19_500_000 and flows["pool"][2] is None  # network fees live in the wallet-days (once per tx)
-    assert con.execute(f"SELECT sum(fees) FROM '{tmp_path / 'out' / 'wallet-day-0.parquet'}'").fetchone()[0] == 6000 + 10000 + 5000 + 6000 + 5000
+    assert con.execute(f"SELECT sum(fees) FROM '{tmp_path / 'out' / 'wallet-day-0.parquet'}'").fetchone()[0] == 5000 + 10000 + 5000 + 6000 + 5000  # W1 5000 (priority inside tx_fee), W2 2 x 5000, W3 5000, S 5000 + tip 1000, S 5000
     v, c, s0, s1, ext = flows["pool"][1], flows["pool"][3], flows["pool"][4], flows["pool"][5], flows["pool"][6]
     assert ext == -20 * SOL and s0 == 100 * SOL and s1 == 21471 * 10**6  # the opening deposit is the first trade's pre-depth; the LP withdrawal is external
     assert abs(c + v + (s1 - s0) - ext) < 1e-6  # the books close on P
