@@ -17,7 +17,10 @@
 #      - every journal pair (deploy vs c1e36a0, flag vs no flag, restart flag vs restart control) is equal in
 #        paper.journal_diff (0 unexplained), in its schema, and in every state key but 'watchlist_rules' (checkout paths
 #        taken as <repo>), and both journals hold signals;
-#      - both restarts' records have counts {};
+#      - the flag's restart record equals c1e36a0's (the control), field by field: hwm, counts and compare_6h; one record
+#        each, at the part run's HWM (LAB review on 99zzzzj: c1e36a0's own restart may count differences, e.g.
+#        exits_forced_from_journal; the deploy commit must count the same, so counts {} is no criterion here; it stays
+#        the day-1 pass of the real deploy);
 #      - 'watchlist_rules': none from c1e36a0; m1 true / false from the deploy commit's plain runs (from_hwm_slot null);
 #        m1 false with the part run's HWM after the flag's restart;
 #      - watchlist logs: the deploy commit's without the flag is c1e36a0's line for line; with the flag (plain and
@@ -260,13 +263,22 @@ for a, b in (("nof", "base"), ("flag", "nof"), ("rflag", "rbase")):
 con = db("first")
 hwm = json.loads(con.execute("SELECT v FROM state WHERE k = 'hwm'").fetchone()[0])["slot"]
 con.close()
+records = {}
 for side in ("rbase", "rflag"):
     con = db(side)
-    rec = json.loads(con.execute("SELECT v FROM state WHERE k = 'restarts'").fetchone()[0])
+    raw = con.execute("SELECT v FROM state WHERE k = 'restarts'").fetchone()
     con.close()
-    print(f"restart {side}: {len(rec)} record(s), the last {json.dumps(rec[-1], sort_keys=True)}")
-    if len(rec) != 1 or rec[-1]["counts"] != {} or rec[-1]["hwm"] != hwm:
-        bad.append(f"the {side} restart is not one record at the part run's HWM {hwm} with counts {{}}")
+    records[side] = json.loads(raw[0]) if raw else []
+    rec = records[side]
+    print(f"restart {side}: {len(rec)} record(s)" + (f", the last {json.dumps(rec[-1], sort_keys=True)}" if rec else ""))
+    if len(rec) != 1 or rec[0].get("hwm") != hwm:
+        bad.append(f"the {side} restart is not one record at the part run's HWM {hwm}")
+if len(records["rbase"]) == 1 and len(records["rflag"]) == 1:
+    # LAB review on 99zzzzj: the flag's restart record is the control's, field by field (not counts {})
+    differ = [f for f in ("hwm", "counts", "compare_6h") if records["rflag"][0].get(f) != records["rbase"][0].get(f)]
+    print(f"restart records rflag vs rbase (hwm, counts, compare_6h): {'equal' if not differ else 'differ in ' + ', '.join(differ)}")
+    if differ:
+        bad.append(f"the flag's restart record differs from c1e36a0's in {differ}")
 want = {"base": None, "first": None, "rbase": None,
         "nof": [{"from_hwm_slot": None, "watchlist": True, "m1": True}],
         "flag": [{"from_hwm_slot": None, "watchlist": True, "m1": False}],
