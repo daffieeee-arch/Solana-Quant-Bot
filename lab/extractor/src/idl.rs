@@ -30,6 +30,9 @@ pub enum Ty {
     I32,
     I64,
     I128,
+    // IEEE floats (Meteora DAMM v1's IDL has f64 fields): decoded to JSON numbers, as text columns.
+    F32,
+    F64,
     Pubkey,
     String,
     Bytes,
@@ -169,6 +172,8 @@ fn parse_ty(j: &J) -> Result<Ty> {
             "i32" => Ty::I32,
             "i64" => Ty::I64,
             "i128" => Ty::I128,
+            "f32" => Ty::F32,
+            "f64" => Ty::F64,
             "pubkey" | "publicKey" => Ty::Pubkey,
             "string" => Ty::String,
             "bytes" => Ty::Bytes,
@@ -212,6 +217,13 @@ fn account_names(j: &J) -> Vec<String> {
     out
 }
 
+/// Named fields: every element is an object with a "name" (`{"name": .., "type": ..}`). Otherwise the fields are a
+/// tuple of types, which can be objects themselves (`[{"defined": {"name": "X"}}]`: Raydium LaunchLab's
+/// PlatformConfigParam variants, Orca's DynamicTick::Initialized).
+fn named_fields(j: &J) -> bool {
+    j.as_array().is_some_and(|a| a.iter().all(|f| f.is_object() && f.get("name").is_some_and(J::is_string)))
+}
+
 fn parse_fields(j: &J) -> Result<Vec<Field>> {
     j.as_array()
         .ok_or_else(|| anyhow!("fields must be an array"))?
@@ -236,7 +248,7 @@ impl Idl {
             let body = &t["type"];
             let def = match body["kind"].as_str() {
                 Some("struct") => TypeDef::Struct(match body.get("fields") {
-                    Some(f) if f.as_array().is_some_and(|a| a.iter().all(J::is_object)) => parse_fields(f)?,
+                    Some(f) if named_fields(f) => parse_fields(f)?,
                     Some(f) if f.is_array() => {
                         // Tuple struct: unnamed fields.
                         f.as_array()
@@ -254,7 +266,7 @@ impl Idl {
                         let vname = v["name"].as_str().unwrap_or("?").to_owned();
                         let fields = match v.get("fields") {
                             None => VariantFields::Unit,
-                            Some(f) if f.as_array().is_some_and(|a| a.iter().all(J::is_object)) => {
+                            Some(f) if named_fields(f) => {
                                 VariantFields::Named(parse_fields(f)?)
                             }
                             Some(f) => VariantFields::Tuple(
@@ -450,6 +462,9 @@ impl Idl {
             Ty::I32 => json!(i32::from_le_bytes(cur.array()?)),
             Ty::I64 => json!(i64::from_le_bytes(cur.array()?)),
             Ty::I128 => J::String(i128::from_le_bytes(cur.array()?).to_string()),
+            // NaN and infinities are no JSON numbers: null.
+            Ty::F32 => serde_json::Number::from_f64(f64::from(f32::from_le_bytes(cur.array()?))).map_or(J::Null, J::Number),
+            Ty::F64 => serde_json::Number::from_f64(f64::from_le_bytes(cur.array()?)).map_or(J::Null, J::Number),
             Ty::Pubkey => J::String(bs58::encode(cur.take(32)?).into_string()),
             Ty::String => J::String(cur.string()?),
             Ty::Bytes => {
