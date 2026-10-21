@@ -263,7 +263,7 @@ pub mod tests {
         use crate::sink::Sink;
         use std::sync::Arc;
         let dir = std::env::temp_dir().join(format!("lab-recorder-test-sink-{}", std::process::id()));
-        LabPlugin::new(Arc::new(Sink::start(dir)), Arc::new(Coverage::new(0, 0))).unwrap()
+        LabPlugin::for_recorder(Arc::new(Sink::start(dir)), Arc::new(Coverage::new(0, 0))).unwrap()
     }
 
     fn rows(info: &SubscribeUpdateTransactionInfo) -> Vec<crate::sink::Row> {
