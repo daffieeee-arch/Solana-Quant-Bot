@@ -24,12 +24,12 @@ COLS = [("slot", pa.uint64()), ("tx_index", pa.uint64()), ("failed", pa.bool_())
         ("signer_sol_delta", pa.int64()), ("signer_token_deltas", pa.string()), ("mints", pa.string()), ("n_dex_ixs", pa.uint64())]
 
 
-def tx(slot, idx, payer, ixs, sol, tokens=None, failed=False, fee=5_000, tip=0, top=None):
+def tx(slot, idx, payer, ixs, sol, tokens=None, failed=False, fee=5_000, tip=0, top=None, mints=None):
     venues = sorted({x.split(":")[0] for x in ixs})
     return {"slot": slot, "tx_index": idx, "failed": failed, "fee_payer": payer, "tx_fee": fee, "priority_fee": fee - 5_000,
             "jito_tip": tip, "cu_consumed": 100_000, "venues": ",".join(venues), "n_dex": len(venues),
             "top_programs": top or venues[0], "dex_ixs": ";".join(ixs), "signer_sol_delta": sol, "signer_token_deltas": tokens,
-            "mints": None, "n_dex_ixs": len(ixs)}
+            "mints": mints, "n_dex_ixs": len(ixs)}
 
 
 @pytest.fixture
@@ -38,8 +38,11 @@ def chunks(tmp_path):
     os.makedirs(c / "venue_census")
     os.makedirs(c / "blocks")
     rows = [
-        tx(S, 0, "U1", ["raydium_cpmm:swap_base_input:P1"], -2 * SOL - 5_000, "MintX:500"),
-        tx(S, 1, "B1", ["raydium_cpmm:swap_base_input:P1", "meteora_dlmm:swap:L1"], 50_000_000, None, tip=1_000_000),
+        tx(S, 0, "U1", ["raydium_cpmm:swap_base_input:P1"], -2 * SOL - 5_000, "MintXpump:500", mints=f"MintXpump;{V.WSOL}"),
+        tx(S, 1, "B1", ["raydium_cpmm:swap_base_input:P1", "meteora_dlmm:swap:L1"], 50_000_000, None, tip=1_000_000,
+           mints=f"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v;{V.WSOL}"),
+        # a volume bot: buy and sell back on one pool, flat, + about one closed account's rent: a round trip, no arb
+        tx(S + 7, 0, "W1", ["pump_amm:buy:AP1", "pump_amm:sell:AP1"], 2_000_000),
         tx(S + 1, 0, "B2", ["meteora_dlmm:swap:L1", "meteora_dlmm:remove_liquidity:L1", "raydium_cpmm:swap_base_input:P1"], 80_000_000),
         tx(S + 2, 0, "B3", ["raydium_cpmm:swap_base_input:P1", "meteora_dlmm:swap:L1"], 10_000_000, "MintX:7"),
         tx(S + 3, 0, "B4", ["raydium_cpmm:swap_base_input:P1", "meteora_dlmm:swap:L1"], -1),
@@ -75,12 +78,19 @@ def test_the_census_counts_venues_and_finds_the_backrun_arb_only(chunks, tmp_pat
     assert (cpmm.failed_attempts, cpmm.failed_attempt_cost_sol) == (1, pytest.approx(5_000 / SOL))
     assert cpmm.tips_sol == pytest.approx(0.0005) and cpmm.pool_creations == 1
     assert (row("pump", d1).launches, row("raydium_launchlab", d1).graduations) == (1, 1)
+    # v1: the same-pool round trip is no arb; both real arbs clear one rent; pools counted for launches and graduations.
+    amm = row("pump_amm", d1)
+    assert (amm.arbs, amm.roundtrips, amm.roundtrip_net_sol) == (0, 1, pytest.approx(0.002))
+    assert (cpmm.arbs_over_rent, cpmm.arb_net_over_rent_sol) == (1, pytest.approx(0.025))
+    assert (row("pump", d1).launch_pools, row("raydium_launchlab", d1).graduation_pools) == (1, 1)
+    # Memecoin share over CPMM's successful swap transactions (A, B, C, D, E): only A touches a non-major (pump) mint.
+    assert (cpmm.non_major_share, cpmm.launchpad_mint_share) == (pytest.approx(0.2), pytest.approx(0.2))
     # Day 2: the unlabelled bot's arb has no preceding swap on its pool: no backrun.
     orca = row("orca_whirlpool", d2)
     assert (orca.arbs, orca.arb_net_sol, orca.backruns, orca.txs) == (1, pytest.approx(0.005), 0, 2)
     assert row("raydium_amm_v4", d2).arb_net_sol == pytest.approx(0.005)
     summary = json.loads((out / "venue_census.json").read_text())
-    assert summary["rows"] == 10 and [p[0] for p in summary["unknown_programs"]] == [BOT_PROGRAM]
+    assert summary["rows"] == 11 and [p[0] for p in summary["unknown_programs"]] == [BOT_PROGRAM]
     # Coverage by block time: day 1 spans 100 s, day 2 2 s; per-day columns divide by the covered days, not by 2.
     assert [c["hours"] for c in summary["coverage"]] == [pytest.approx(100 / 3600), pytest.approx(2 / 3600)]
     assert summary["covered_days"] == pytest.approx(102 / 86_400, rel=0.01)
@@ -94,3 +104,17 @@ def test_hold_out_and_clean_epochs_are_refused(chunks, tmp_path):
     for e in (1047, 1051, 1055, 1063):
         with pytest.raises(SystemExit):
             V.main(["--chunks", chunks, "--epoch", str(e), "--out", str(tmp_path / "x")])
+
+
+def test_swap_names_are_venue_instructions():
+    """Every SWAP_NAMES entry is an instruction of some venue (src/venue_ix.rs, AMM v4's tags), and the non-swaps a name
+    pattern would take are out."""
+    import re
+
+    here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    with open(os.path.join(here, "extractor", "src", "venue_ix.rs")) as f:
+        names = set(re.findall(r'\("[a-z_0-9]+", \[[0-9, ]+\], "([a-z_0-9]+)", ', f.read()))
+    names |= {"swap_base_in", "swap_base_out", "swap_base_in_v2", "swap_base_out_v2"}  # AMM_V4_IXS
+    assert len(names) > 300 and set(V.SWAP_NAMES) <= names
+    for not_a_swap in ("migrate_to_cpswap", "set_pre_activation_swap_address", "update_buyback_config", "boost_buy_and_burn"):
+        assert not_a_swap in names and not_a_swap not in V.SWAP_NAMES
