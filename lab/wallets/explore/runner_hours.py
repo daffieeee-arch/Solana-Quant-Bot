@@ -10,6 +10,7 @@ Per (pool, UTC hour) from the store's pool legs (the hour of a leg via the block
   depth      the real quote side after the hour's last leg of any kind (LP legs included): normal / other pools the vault
              (e + e_delta - vq for a trade, vault -/+ quote_user for a withdraw / deposit), reversed pools b after the leg;
              in the quote's units / 1e9 (SOL for sol and reversed pools);
+  fee_bps    the venue fee tier (lp + protocol + creator + cashback bps) of the hour's last trade;
   trades, buys, farmer_trades, volume (sum of sol_amount of the hour's trades, quote units / 1e9).
 Hours without a leg are absent (the census carries the previous close and depth forward and labels it). Buckets of sorted
 pool ranges (LAB_MARKOUT_BUCKETS) bound the working set, as markout.paid_buyers. Writes hours.parquet, pools.parquet
@@ -46,20 +47,21 @@ def build(con, out, buckets):
     pools = [r[0] for r in con.execute("SELECT pool FROM pm ORDER BY pool").fetchall()]
     nb = max(1, min(buckets, len(pools)))
     bounds = [pools[i * len(pools) // nb] for i in range(nb)] + [None]
-    con.execute("CREATE OR REPLACE TEMP TABLE hours (pool VARCHAR, hour BIGINT, close DOUBLE, depth DOUBLE, trades BIGINT, buys BIGINT, farmer_trades BIGINT, volume DOUBLE, last_slot BIGINT)")
+    con.execute("CREATE OR REPLACE TEMP TABLE hours (pool VARCHAR, hour BIGINT, close DOUBLE, depth DOUBLE, fee_bps INTEGER, trades BIGINT, buys BIGINT, farmer_trades BIGINT, volume DOUBLE, last_slot BIGINT)")
     for b in range(nb):
         lo, hi = bounds[b], bounds[b + 1]
         rng = f"p.pool >= '{lo}'" + (f" AND p.pool < '{hi}'" if hi is not None else "")
         con.execute(f"""
           INSERT INTO hours
           SELECT pool, hour,
-                 arg_max(price, ord) FILTER (WHERE price IS NOT NULL) AS close, arg_max(depth, ord) AS depth,
+                 arg_max(price, ord) FILTER (WHERE price IS NOT NULL) AS close, arg_max(depth, ord) AS depth, arg_max(bps, ord) FILTER (WHERE price IS NOT NULL) AS fee_bps,
                  count(*) FILTER (WHERE is_trade) AS trades, count(*) FILTER (WHERE is_trade AND p_token_buy) AS buys,
                  count(*) FILTER (WHERE is_trade AND farmer) AS farmer_trades, sum(CASE WHEN is_trade THEN sol ELSE 0 END) / 1e9 AS volume, max(slot) AS last_slot
           FROM (
             SELECT p.pool, hb.hour, p.slot, (p.slot * 1000000000 + p.tx_index * 100000 + COALESCE(p.outer_ix, 0) * 1000 + COALESCE(p.inner_ix, 0))::BIGINT AS ord,
                    p.kind IN ('buy', 'sell', 'boost') AS is_trade, COALESCE(p.token_buy, false) AS p_token_buy, COALESCE(p.farmer, false) AS farmer, COALESCE(p.sol_amount, 0) AS sol,
-                   CASE WHEN p.kind IN ('buy', 'sell', 'boost') AND p.b > 0 AND p.e > 0 THEN {TRADE_PRICE} END AS price, {DEPTH_POST} AS depth
+                   CASE WHEN p.kind IN ('buy', 'sell', 'boost') AND p.b > 0 AND p.e > 0 THEN {TRADE_PRICE} END AS price, {DEPTH_POST} AS depth,
+                   (COALESCE(p.lp_bps, 0) + COALESCE(p.protocol_bps, 0) + COALESCE(p.creator_bps, 0) + COALESCE(p.cashback_bps, 0))::INTEGER AS bps
             FROM pool p JOIN pm po USING (pool) ASOF JOIN hour_bounds hb ON p.slot >= hb.from_slot
             WHERE {rng} AND p.kind IN ('buy', 'sell', 'boost', 'withdraw', 'deposit')) x
           GROUP BY pool, hour""")

@@ -21,7 +21,7 @@ def _store(path):
     con.execute("CREATE TABLE pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR, quote_mint VARCHAR, mint VARCHAR, create_slot BIGINT)")
     con.execute("INSERT INTO pools VALUES ('N', 'sol', 'normal', 'So1', 'MN', ?), ('R', 'reversed', 'reversed', NULL, 'MR', ?), ('O', 'other', 'normal', 'USDC', 'MO', ?)", [S0, S0, S0])
     con.execute("CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, token_buy BOOLEAN, sol_amount BIGINT, farmer BOOLEAN, "
-                "b BIGINT, e BIGINT, vault BIGINT, vq BIGINT, base BIGINT, e_delta BIGINT, quote_user BIGINT)")
+                "b BIGINT, e BIGINT, vault BIGINT, vq BIGINT, base BIGINT, e_delta BIGINT, quote_user BIGINT, lp_bps INTEGER, protocol_bps INTEGER, creator_bps INTEGER, cashback_bps INTEGER)")
     H = 9000
     rows = [
         # N, hour 0: a buy (post e 101, b 0.99e12, vq 1 SOL -> depth 100 SOL real, price 101e9/0.99e12), then a sell later in the hour (post e 100, b 1e12)
@@ -35,7 +35,8 @@ def _store(path):
         # O (USDC quote), hour 0: a buy with the quote in USDC units (6 decimals): post e 1,010 USDC, b 0.99e12
         ("buy", "O", S0 + 30, 1, 0, 0, True, 10 * 10**6, False, 10**12, 1000 * 10**6, 1000 * 10**6, 0, 10**10, 10 * 10**6, 10 * 10**6),
     ]
-    con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 20, 5, 0, NULL)", [r for r in rows if r[0] != "withdraw"])
+    con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)", [r for r in rows if r[0] == "withdraw"])
     con.close()
 
 
@@ -51,9 +52,9 @@ def test_hours_on_the_mini_store(tmp_path, monkeypatch, capfd):
     assert set(h) == {("N", 0), ("N", 1), ("R", 2), ("O", 0)}
     n0 = h[("N", 0)]
     assert n0["close"] == pytest.approx(100 * SOL / 1e12) and n0["depth"] == pytest.approx(100.0 - 1.0)  # after the sell: e 100 incl. 1 SOL virtual -> 99 real
-    assert n0["trades"] == 2 and n0["buys"] == 1 and n0["farmer_trades"] == 1 and n0["volume"] == pytest.approx(2.0)
+    assert n0["trades"] == 2 and n0["buys"] == 1 and n0["farmer_trades"] == 1 and n0["volume"] == pytest.approx(2.0) and n0["fee_bps"] == 25
     n1 = h[("N", 1)]
-    assert n1["close"] == pytest.approx(102 * SOL / 0.98e12) and n1["depth"] == pytest.approx(51.0) and n1["trades"] == 1  # the withdraw sets the depth, not the close
+    assert n1["close"] == pytest.approx(102 * SOL / 0.98e12) and n1["depth"] == pytest.approx(51.0) and n1["trades"] == 1 and n1["fee_bps"] == 25  # the withdraw sets the depth, not the close or the fee tier
     r2 = h[("R", 2)]
     assert r2["close"] == pytest.approx(110 * SOL / 0.9e15) and r2["depth"] == pytest.approx(110.0) and r2["buys"] == 1
     o0 = h[("O", 0)]
