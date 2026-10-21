@@ -297,7 +297,7 @@ impl Meter {
     /// one on disk a new one is saved first; when that fails the recorder ends (`BudgetWriteError`),
     /// with every byte so far below the reservation on disk.
     pub fn add(&mut self, stream: &str, bytes: usize) -> Result<()> {
-        let b = (bytes as f64 * self.wire_ratio).ceil() as u64;
+        let b = crate::wire::metered(bytes, self.wire_ratio);
         let e = self.current.entry(stream.to_owned()).or_insert((0, 0));
         e.0 += b;
         e.1 += 1;

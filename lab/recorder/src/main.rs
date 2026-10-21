@@ -44,6 +44,7 @@ mod meter;
 mod recorder;
 mod segment;
 mod watch;
+mod wire;
 
 use anyhow::{bail, Context, Result};
 use extract::{Coverage, LabPlugin};
