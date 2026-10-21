@@ -24,6 +24,8 @@ const SLOTS_PER_EPOCH: u64 = 432_000;
 const IDL_SOURCE_COMMIT: &str = "2293f9a66c654e9fe82dc5e8f4618538f24bb35f";
 /// Keep in sync with the git rev pinned in Cargo.toml.
 const JETSTREAMER_SOURCE: &str = "https://github.com/anza-xyz/jetstreamer@1f9d30600fb479acdd5eb956ea2e19455c903590";
+/// The venue census's instruction table (generated from the pinned IDLs), for its sha256 in the manifest.
+const VENUE_IX_SRC: &str = include_str!("venue_ix.rs");
 
 struct Args {
     out: PathBuf,
@@ -82,6 +84,11 @@ fn main() -> Result<()> {
                            "spec": "spec-token-transfers-2026-10-15.md v3 (sha256 611a6327)"})
     });
     let learning = plugin.transfers.clone();
+    // The venue census (LAB_VENUE_CENSUS=1): its instruction table, pinned by the generated file's sha256.
+    let census = plugin.census.as_ref().map(|_| {
+        serde_json::json!({"table": "venue_census", "anchor_instructions": extract::VENUE_IXS.len(), "amm_v4_tags": extract::AMM_V4_IXS.len(),
+                           "venue_ix_sha256": hex::encode(Sha256::digest(VENUE_IX_SRC.as_bytes())), "idl_sources": "lab/extractor/idl/venues/SOURCES.md"})
+    });
     let fatal = plugin.fatal.clone();
 
     let started = Instant::now();
@@ -163,6 +170,7 @@ fn main() -> Result<()> {
             v["learned_mints_file"] = serde_json::json!("_learned_mints.txt");
             v
         }),
+        "venue_census": census,
         "error": result.as_ref().err().map(|e| e.to_string()),
         "sink_error": tables.as_ref().err().map(|e| format!("{e:#}")),
         "rows": tables.as_ref().ok(),
@@ -178,6 +186,7 @@ fn main() -> Result<()> {
             "firehose_errors": c(&counters.firehose_errors),
             "http_429": c(&counters.http_429),
             "missing_meta": c(&counters.missing_meta),
+            "census_rows": c(&counters.census_rows),
             // Rewards of a type the firehose does not know (Alpenglow's VATDebit): skipped, not fatal.
             "rewards_unknown_type_skipped": c(&jetstreamer_firehose::firehose::UNKNOWN_REWARD_TYPES_SKIPPED),
         },
