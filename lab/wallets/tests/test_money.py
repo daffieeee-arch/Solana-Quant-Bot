@@ -63,6 +63,7 @@ def test_money_on_the_mini_store(tmp_path):
     wd = {(r[0], r[1]): dict(zip([c[0] for c in con.execute(f"SELECT * FROM '{tmp_path / 'out' / 'wallet-day-0.parquet'}' LIMIT 0").description], r))
           for r in con.execute(f"SELECT * FROM '{tmp_path / 'out' / 'wallet-day-0.parquet'}'").fetchall()}
     assert info["wallets"] == 4 and info["marks"] == 6 and info["days"] == ["2026-09-11", "2026-09-12", "2026-09-13"]  # T and U x 3 days (carried)
+    assert sum(r[2] for r in info["mark_ranges"]) == 5 and info["mark_ranges"][0][0] == SLOT0 and info["mark_ranges"][-1][1] == SLOT0 + 3 * DAY_SLOTS  # token-days per range (T: 3 days, U: 2), contiguous
     # W1 day 1: paid 2 SOL (two legs of one tx), fee once (5000: the tx_fee, which already holds the 1000 priority fee), inventory 2e10 tokens marked at the day's last price (W2's sell state)
     w1 = wd[("W1", "2026-09-11")]
     assert w1["cash"] == -2 * SOL and w1["fees"] == 5000 and w1["n_legs"] == 2 and w1["n_opened"] == 1  # tx_fee once per tx; its priority fee (1000) is inside tx_fee, not added again (#468)

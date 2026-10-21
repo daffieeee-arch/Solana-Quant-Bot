@@ -133,12 +133,14 @@ def lp_sql(lo, hi):
 MARK_CHUNK_DAYS = int(os.environ.get("LAB_MONEY_MARK_DAYS", "2"))
 
 
-def build_marks(con, lo, hi, days, chunk_days=MARK_CHUNK_DAYS):
+def build_marks(con, lo, hi, days, chunk_days=MARK_CHUNK_DAYS, ranges=None):
     """token x UTC day from the token's first trading day to the period end: the last price and real SOL
     depth at the day's end (any wallet, curve and pool together), carried forward over days without a trade.
     Aggregated over day-aligned slot ranges of chunk_days days: a (mint, day) group lies inside its day's slots and
     the legs are row-local, so the ranges give exactly the rows of one query over [lo, hi) with a bounded working set
-    (money-v2's first NAS run, 2026-10-21: one query over the development period spilled past its 16 GB cap)."""
+    (money-v2's first NAS run, 2026-10-21: one query over the development period spilled past its 16 GB cap).
+    ranges: a list that gets [from_slot, to_slot, token-day rows] per range (the run's log and run-money.json show the
+    input per range, LAB research on #511)."""
     starts = [s for (s,) in con.execute("SELECT from_slot FROM day_bounds WHERE from_slot > ? AND from_slot < ? ORDER BY from_slot",
                                         [lo, hi]).fetchall()]
     cuts = sorted({lo, hi, *(starts[chunk_days - 1::chunk_days] if chunk_days > 0 else ())})
@@ -152,7 +154,12 @@ def build_marks(con, lo, hi, days, chunk_days=MARK_CHUNK_DAYS):
       GROUP BY mint, day"""
 
     for i, (a, b) in enumerate(zip(cuts, cuts[1:])):
+        before = con.execute("SELECT count(*) FROM marks_raw").fetchone()[0] if i else 0
         con.execute(("CREATE OR REPLACE TEMP TABLE marks_raw AS " if i == 0 else "INSERT INTO marks_raw ") + agg(a, b))
+        n = con.execute("SELECT count(*) FROM marks_raw").fetchone()[0] - before
+        if ranges is not None:
+            ranges.append([a, b, n])
+        print(f"marks range {i + 1}/{len(cuts) - 1} [{a}, {b}): {n} token-days", file=sys.stderr)
     con.execute("""
       CREATE OR REPLACE TEMP TABLE marks AS
       SELECT g.mint, g.day, r.price, r.depth, r.venue, r.last_slot, r.day = g.day AS traded
@@ -300,7 +307,8 @@ def run(lo, hi, out_dir, buckets=8, store=None):
     os.makedirs(out_dir, exist_ok=True)
     day_bounds(con)
     days = period_days(con, lo, hi)
-    n_marks = build_marks(con, lo, hi, days)
+    mark_ranges = []
+    n_marks = build_marks(con, lo, hi, days, ranges=mark_ranges)
     con.execute(f"COPY marks TO '{os.path.join(out_dir, 'marks.parquet')}' (FORMAT PARQUET)")
     build_side_tables(con, lo, hi)
     for name in ("payers", "creators", "venue_flows", "lp_legs"):
@@ -313,7 +321,8 @@ def run(lo, hi, out_dir, buckets=8, store=None):
             con.execute(f"DROP TABLE IF EXISTS {t}")
         counts.append((n_rows, n_wallets))
         print(f"bucket {b}: {n_rows} wallet-days, {n_wallets} wallets, {time.time() - t0:.0f}s", file=sys.stderr)
-    info = {"slots": [lo, hi], "buckets": buckets, "marks": n_marks, "days": days, "wallet_days": sum(c[0] for c in counts),
+    info = {"slots": [lo, hi], "buckets": buckets, "marks": n_marks, "mark_ranges": mark_ranges, "days": days,
+            "wallet_days": sum(c[0] for c in counts),
             "wallets": sum(c[1] for c in counts), "dust_lamports": DUST, "snipe_slots": SNIPE_SLOTS, "exit_share": EXIT_SHARE,
             "commit": git_commit(), "seconds": round(time.time() - t0, 1)}
     with open(os.path.join(out_dir, "run-money.json"), "w") as f:
