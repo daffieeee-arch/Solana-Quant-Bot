@@ -4,7 +4,9 @@ price and are left out), from every trade in the store:
 
   cash        SOL received for sells - SOL paid for buys, user side (pool: sol_amount; curve: q plus the
               curve and creator fee on a buy, minus them on a sell)
-  fees        tx_fee + priority_fee + jito_tip once per transaction (slot, tx_index), to the trader of
+  fees        tx_fee + jito_tip once per transaction (slot, tx_index), to the trader of the transaction's legs; the
+              store's tx_fee already holds the priority fee (base fee + priority: never add priority_fee again, the
+              E43 / #468 double count; fixed 2026-10-21, money-v1 ran with it), to the trader of
               the transaction's legs; `paid_by_other` counts transactions whose fee payer differs
   inventory   tokens bought - sold per wallet x token, floor 0 (tokens from before the period or from a
               transfer are not ours to count)
@@ -78,7 +80,7 @@ def legs_sql(lo, hi, bucket=None, buckets=1, fees=True):
         FROM curve c LEFT JOIN mints m ON m.mint = c.mint
         WHERE c.slot >= {lo} AND c.slot < {hi} AND c.vt > 0 AND m.quote_mint IN ({",".join(f"'{q}'" for q in SOL_QUOTES)}) {b}),
       legs AS (SELECT * FROM pl UNION ALL SELECT * FROM cl)
-      SELECT *, {"CASE WHEN row_number() OVER (PARTITION BY slot, tx_index, wallet ORDER BY venue, mint) = 1 THEN tx_fee + prio + tip ELSE 0 END" if fees else "0::BIGINT"} AS fee_once,
+      SELECT *, {"CASE WHEN row_number() OVER (PARTITION BY slot, tx_index, wallet ORDER BY venue, mint) = 1 THEN tx_fee + tip ELSE 0 END" if fees else "0::BIGINT"} AS fee_once,  -- tx_fee includes the priority fee (#468)
              fee_payer IS NOT NULL AND fee_payer <> wallet AS paid_by_other
       FROM legs"""
 
