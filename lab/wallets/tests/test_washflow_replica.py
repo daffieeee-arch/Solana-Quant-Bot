@@ -98,10 +98,43 @@ def test_replica_on_the_mini_store(tmp_path, monkeypatch, capfd):
     res = json.load(open(out / "washflow.json"))
     c = res["cells"]["k3_i_base_all"]
     assert c["days"] == 10 and c["legs"] == len(sh) and res["input"]["wallets"] == 2
+    assert "legs per day over 2 wallets" in (out / "washflow.md").read_text() and "own later legs" in (out / "washflow.md").read_text()
     assert res["verdict"]["outcome"] in ("LEAD LIVES", "CLOSED") and set(res["verdict"]) == {"outcome", "net_per_leg_positive", "lower_bound_positive", "pos_days_ok", "without_top5_positive"}
     md = (out / "washflow.md").read_text()
     assert "**Outcome:" in md and "| 3 | iii | base | all |" in md and "| 1 | A" in md
     assert "selected 2 wallets" in capfd.readouterr().err
+
+
+def test_guards_red_on_missing_scale_factor_short_test_half_and_row_loss(tmp_path, monkeypatch):
+    _store(tmp_path / "s.duckdb")
+    money = _money(tmp_path)
+    monkeypatch.setattr(wr, "STORE", str(tmp_path / "s.duckdb"))
+    monkeypatch.setattr(wr, "MONEY", money)
+    monkeypatch.setenv("BOOT", "100")
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    con = duckdb.connect(str(tmp_path / "s.duckdb"))
+    # a selected wallet without buy legs in the fit half: no scale factor, RED (C qualifies on the wallet-days once its margin is positive)
+    con.execute("UPDATE pool SET trader = 'Z' WHERE trader = 'B' AND slot < ?", [EPOCH0 + 10 * 1000])
+    con.close()
+    monkeypatch.setattr("sys.argv", ["washflow_replica", str(tmp_path / "o1")])
+    with pytest.raises(SystemExit, match="without buy legs in the fit half"):
+        wr.main()
+    con = duckdb.connect(str(tmp_path / "s.duckdb"))
+    con.execute("UPDATE pool SET trader = 'B' WHERE trader = 'Z'")
+    # a leg in a pool without a pools row: silent row loss, RED
+    con.execute("INSERT INTO pool VALUES ('buy', 'Q', ?, 1, 0, 0, 'A', true, 100000000, 1000000000000, 100000000000, 1000000000, 100000000, true)", [EPOCH0 + 10 * 1000 + 300])
+    con.close()
+    monkeypatch.setattr("sys.argv", ["washflow_replica", str(tmp_path / "o2")])
+    with pytest.raises(SystemExit, match="silent row loss"):
+        wr.main()
+    con = duckdb.connect(str(tmp_path / "s.duckdb"))
+    con.execute("DELETE FROM pool WHERE pool = 'Q'")
+    # fewer than 10 test days with legs: RED (rule 3 needs all ten)
+    con.execute("DELETE FROM pool WHERE slot >= ? AND slot < ?", [EPOCH0 + 19 * 1000, EPOCH0 + 20 * 1000])
+    con.close()
+    monkeypatch.setattr("sys.argv", ["washflow_replica", str(tmp_path / "o3")])
+    with pytest.raises(SystemExit, match="the rule needs all 10"):
+        wr.main()
 
 
 def test_value_sql_and_day_boot():

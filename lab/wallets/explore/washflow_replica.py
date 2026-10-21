@@ -41,7 +41,8 @@ BASE_LAMPORTS, MIN_LAMPORTS = 720_618, 5_000
 KS = (1, 2, 3)
 TOP = 5
 SEED = 7
-RULE = {"fit": FIT, "test": TEST, "min_days": MIN_DAYS, "min_legs": MIN_LEGS, "margin": MARGIN, "median_buy_sol": MB, "size_sol": SIZE, "scale": "min(1, size / p90 buy leg in fit)",
+TEST_DAYS = 10
+RULE = {"fit": FIT, "test": TEST, "test_days": TEST_DAYS, "min_days": MIN_DAYS, "min_legs": MIN_LEGS, "margin": MARGIN, "median_buy_sol": MB, "size_sol": SIZE, "scale": "min(1, size / p90 buy leg in fit)",
         "base_lamports": BASE_LAMPORTS, "min_lamports": MIN_LAMPORTS, "ks": KS, "primary": {"variant": "iii", "k": 3, "fees": "base"}, "top": TOP, "min_pos_days": 7, "seed": SEED}
 
 
@@ -82,7 +83,10 @@ def scale_factors(con, fit_lo, fit_hi):
       SELECT s.wallet, least(1.0, {SIZE} / greatest(quantile_cont(p.sol_amount / 1e9, 0.9), 1e-9)) AS f_w, quantile_cont(p.sol_amount / 1e9, 0.9) AS p90_buy_fit
       FROM pool p JOIN sel s ON s.wallet = p.trader
       WHERE p.kind IN ('buy', 'sell') AND p.token_buy AND p.slot BETWEEN {fit_lo} AND {fit_hi} GROUP BY s.wallet""")
-    con.execute("CREATE OR REPLACE TEMP TABLE sel2 AS SELECT s.*, COALESCE(f.f_w, 1.0) AS f_w, f.p90_buy_fit FROM sel s LEFT JOIN sf f USING (wallet)")
+    missing = con.execute("SELECT count(*) FROM sel s LEFT JOIN sf f USING (wallet) WHERE f.f_w IS NULL").fetchone()[0]
+    if missing:
+        raise SystemExit(f"{missing} selected wallet(s) without buy legs in the fit half: no scale factor (pre-reg §4 allows no fallback)")
+    con.execute("CREATE OR REPLACE TEMP TABLE sel2 AS SELECT s.*, f.f_w, f.p90_buy_fit FROM sel s JOIN sf f USING (wallet)")
 
 
 def extract(con, test_lo, test_hi):
@@ -90,7 +94,7 @@ def extract(con, test_lo, test_hi):
     in the test half (+ 400 slots) with the pre-trade price and SOL-side depth."""
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE wl AS
-      SELECT p.trader AS wallet, p.pool, s.orientation, p.slot, (p.slot * 1000000 + p.tx_index * 100 + COALESCE(p.outer_ix, 0) * 10 + COALESCE(p.inner_ix, 0))::BIGINT AS k0,
+      SELECT p.trader AS wallet, p.pool, s.orientation, p.slot, (p.slot * 1000000000 + p.tx_index * 100000 + COALESCE(p.outer_ix, 0) * 1000 + COALESCE(p.inner_ix, 0))::BIGINT AS k0,
              p.kind, p.token_buy, p.sol_amount / 1e9 AS sol, COALESCE(p.farmer, false) AS farmer,
              CASE WHEN s.orientation = 'reversed' THEN p.b::DOUBLE / p.e ELSE p.e::DOUBLE / p.b END AS p0,
              CASE WHEN s.orientation = 'reversed' THEN (CASE WHEN p.kind = 'sell' THEN p.b + p.base ELSE p.b - p.base END)::DOUBLE / (p.e + p.e_delta)
@@ -101,12 +105,15 @@ def extract(con, test_lo, test_hi):
       WHERE p.kind IN ('buy', 'sell') AND p.b > 0 AND p.e > 0 AND p.slot BETWEEN {test_lo} AND {test_hi}""")
     con.execute(f"""
       CREATE OR REPLACE TEMP TABLE o AS
-      SELECT p.pool, p.slot, (p.slot * 1000000 + p.tx_index * 100 + COALESCE(p.outer_ix, 0) * 10 + COALESCE(p.inner_ix, 0))::BIGINT AS k,
+      SELECT p.pool, p.slot, (p.slot * 1000000000 + p.tx_index * 100000 + COALESCE(p.outer_ix, 0) * 1000 + COALESCE(p.inner_ix, 0))::BIGINT AS k,
              CASE WHEN s.orientation = 'reversed' THEN p.b::DOUBLE / p.e ELSE p.e::DOUBLE / p.b END AS p,
              (CASE WHEN s.orientation = 'reversed' THEN p.b ELSE p.e END)::DOUBLE / 1e9 AS dsol
       FROM pool p SEMI JOIN (SELECT DISTINCT pool FROM wl) k ON k.pool = p.pool JOIN pools s USING (pool)
       WHERE p.kind IN ('buy', 'sell') AND p.b > 0 AND p.e > 0 AND p.slot BETWEEN {test_lo} AND {test_hi} + 400""")
-    return con.execute("SELECT count(*), count(DISTINCT wallet), count(DISTINCT pool) FROM wl").fetchone(), con.execute("SELECT count(*) FROM o").fetchone()[0]
+    lost_pools = con.execute(f"""SELECT count(*) FROM pool p JOIN sel2 w ON w.wallet = p.trader LEFT JOIN pools s USING (pool)
+                                   WHERE p.kind IN ('buy', 'sell') AND p.b > 0 AND p.e > 0 AND p.slot BETWEEN {test_lo} AND {test_hi} AND s.pool IS NULL""").fetchone()[0]
+    lost_blocks = con.execute("SELECT count(*) FROM wl LEFT JOIN blocks b USING (slot) WHERE b.slot IS NULL").fetchone()[0]
+    return con.execute("SELECT count(*), count(DISTINCT wallet), count(DISTINCT pool) FROM wl").fetchone(), con.execute("SELECT count(*) FROM o").fetchone()[0], {"legs_without_pools_row": lost_pools, "legs_outside_blocks": lost_blocks}
 
 
 def shift(con, buckets=4):
@@ -116,7 +123,7 @@ def shift(con, buckets=4):
     for b in range(buckets):
         con.execute(f"CREATE OR REPLACE TEMP TABLE wb AS SELECT * FROM wl WHERE hash(pool) % {buckets} = {b}")
         con.execute(f"CREATE OR REPLACE TEMP TABLE ob AS SELECT * FROM o WHERE hash(pool) % {buckets} = {b}")
-        joins = " ".join(f"ASOF LEFT JOIN ob r{k} ON r{k}.pool = w.pool AND r{k}.k >= (w.slot + {k}) * 1000000" for k in KS)
+        joins = " ".join(f"ASOF LEFT JOIN ob r{k} ON r{k}.pool = w.pool AND r{k}.k >= (w.slot + {k}) * 1000000000" for k in KS)
         cols = ", ".join(f"COALESCE(r{k}.p, w.ppost) AS p{k}, COALESCE(r{k}.dsol, w.dsol0) AS d{k}" for k in KS)  # no later leg: no move, the pool's own post-depth
         con.execute(f"INSERT INTO sh SELECT w.wallet, w.pool, w.orientation, w.slot, w.k0, w.kind, w.token_buy, w.sol, w.farmer, w.p0, w.ppost, w.sg, w.f_w, w.s, w.dsol0, {cols} FROM wb w {joins}")
     return con.execute("SELECT count(*) FROM sh").fetchone()[0]
@@ -147,6 +154,8 @@ def analyse(con, boot, log=lambda m: None):
                      WHERE slot IN (SELECT DISTINCT slot FROM sh)""")
     con.execute("CREATE OR REPLACE TEMP TABLE shd AS SELECT sh.*, d.day, w.rank_fit FROM sh JOIN days d USING (slot) JOIN sel2 w USING (wallet)")
     n_legs, n_w, n_days, turnover, own = con.execute("SELECT count(*), count(DISTINCT wallet), count(DISTINCT day), sum(s) FILTER (WHERE token_buy), sum(sg * sol) FROM shd").fetchone()
+    if n_days != TEST_DAYS:
+        raise SystemExit(f"the test half has {n_days} days with legs, the rule needs all {TEST_DAYS} (pre-reg §5 rule 3)")
     res = {"rule": RULE, "input": {"legs": n_legs, "wallets": n_w, "days": n_days, "turnover_scaled_buy_sol": turnover, "own_cash_test": own,
                                    "own_cash_scaled_test": con.execute("SELECT sum(sg * s) FROM shd").fetchone()[0]}, "cells": {}}
     log(f"{n_legs:,} legs of {n_w} wallets over {n_days} days; own cash in the test half {own:+.1f} SOL; scaled buy turnover {turnover:,.0f} SOL")
@@ -181,7 +190,10 @@ def markdown(res, out_dir):
     L = [f"## E59 wash-flow population replica ({os.path.basename(out_dir.rstrip('/'))})", "",
          f"Selection on {r['fit'][0]} .. {r['fit'][1]} (margin >= {r['margin'] * 100:.1f} %, >= {r['min_days']} farmer-pool days, >= {r['min_legs']:,} legs); replica on {r['test'][0]} .. {r['test'][1]}: "
          f"{i['legs']:,} legs of {i['wallets']} wallets over {i['days']} days; their own cash in the test half {i['own_cash_test']:+.1f} SOL (scaled {i['own_cash_scaled_test']:+.1f}); "
-         f"scaled buy turnover {i['turnover_scaled_buy_sol']:,.0f} SOL; size {r['size_sol']} SOL via f_w = {r['scale']}; fees base {r['base_lamports']:,} / min {r['min_lamports']:,} lamports per leg.", "",
+         f"scaled buy turnover {i['turnover_scaled_buy_sol']:,.0f} SOL; size {r['size_sol']} SOL via f_w = {r['scale']}; fees base {r['base_lamports']:,} / min {r['min_lamports']:,} lamports per leg. "
+         f"p_k = the pre-trade price of the first leg in the pool at slot >= s + k; the candidates include the wallet's own later legs (pre-reg §4).", "",
+         f"Primary (variant iii, k 3, base fees, all): {res['cells']['k3_iii_base_all']['total'] / max(i['turnover_scaled_buy_sol'], 1e-9):+.5f} SOL per SOL traded (scaled buy turnover); "
+         f"{i['legs'] / max(i['days'], 1):,.0f} legs per day over {i['wallets']} wallets.", "",
          f"**Outcome: {v['outcome']}** (primary = variant iii, k 3, base fees, all wallets): net per leg > 0: {v['net_per_leg_positive']}; lower bound > 0: {v['lower_bound_positive']}; "
          f">= {r['min_pos_days']} of {i['days']} days > 0: {v['pos_days_ok']}; without the top {r['top']} > 0: {v['without_top5_positive']}.", "",
          "| k | variant | fees | scope | SOL/day | 95 % day CI | days > 0 | net per leg (SOL) | legs |", "|---|---|---|---|---|---|---|---|---|"]
@@ -211,10 +223,12 @@ def main():
     fit_lo, fit_hi, test_lo, test_hi = slot_bounds(con)
     scale_factors(con, fit_lo, fit_hi)
     con.execute(f"COPY sel2 TO '{out}/selected.parquet' (FORMAT PARQUET)")
-    (n_wl, n_w, n_pools), n_o = extract(con, test_lo, test_hi)
-    log(f"legs: {n_wl:,} of {n_w} wallets in {n_pools:,} pools; pool legs {n_o:,}")
+    (n_wl, n_w, n_pools), n_o, lost = extract(con, test_lo, test_hi)
+    log(f"legs: {n_wl:,} of {n_w} wallets in {n_pools:,} pools; pool legs {n_o:,}; lost {lost}")
     if n_wl == 0 or n_o == 0:
         raise SystemExit("empty extract")
+    if any(v > 0 for v in lost.values()):
+        raise SystemExit(f"silent row loss: {lost} (a leg without a pools row or outside blocks)")
     n_sh = shift(con, buckets=int(os.environ.get("LAB_MARKOUT_BUCKETS", "4")))
     log(f"shifted {n_sh:,} legs")
     con.execute(f"COPY sh TO '{out}/legs-shift.parquet' (FORMAT PARQUET)")
@@ -223,7 +237,7 @@ def main():
         f.write(markdown(res, out))
     with open(f"{out}/washflow.json", "w") as f:
         json.dump(res, f, indent=1, default=float)
-    info = {"selected": n_sel, "legs": n_wl, "pool_legs": n_o, "slots": {"fit": [fit_lo, fit_hi], "test": [test_lo, test_hi]}, "store": STORE, "money": MONEY, "commit": git_commit(),
+    info = {"selected": n_sel, "legs": n_wl, "pool_legs": n_o, "lost": lost, "slots": {"fit": [fit_lo, fit_hi], "test": [test_lo, test_hi]}, "store": STORE, "money": MONEY, "commit": git_commit(),
             "outcome": res["verdict"]["outcome"], "seconds": round(time.time() - t0, 1)}
     with open(f"{out}/run-washflow.json", "w") as f:
         json.dump(info, f, indent=1)
