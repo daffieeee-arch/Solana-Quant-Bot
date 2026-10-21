@@ -3,6 +3,7 @@
 # over the development period, then the report (labels, groups, placebo, Holm, zero-sum).
 #
 #   LAB_SPILL_DIR=/lab/tmp/nas-money LAB_SPILL_MAX=16GB MEMORY=12GB REPORT_MEMORY=6GB bash lab/wallets/nas_money.sh
+#   MONEY_OUT=$DATA/wallets/money-v2-<sha7> ... bash lab/wallets/nas_money.sh      (a rerun into a new directory; money-v1 stays)
 #
 # Tunables (env): FROM/TO slots (development only), BUCKETS (wallet hash buckets, bounds the window working set),
 # MEMORY (DuckDB limit), BOOT, PLACEBO.
@@ -18,7 +19,7 @@ TO=${TO:-452304000}
 BUCKETS=${BUCKETS:-8}
 BOOT=${BOOT:-10000}
 PLACEBO=${PLACEBO:-100}
-MO=$OUT/money-v1
+MO=${MONEY_OUT:-$OUT/money-v1}   # MONEY_OUT: another output directory (the fee-fix rerun of 2026-10-21 writes money-v2-<sha7>, never over money-v1)
 CL=$OUT/clusters-v1
 LOG=$MO/log
 
