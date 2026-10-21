@@ -343,9 +343,14 @@ def pool_universe_sql():
     return "p.quote_class IN ('sol', 'reversed') AND NOT COALESCE(p.mayhem, false)"
 
 
-def decision_bounds(cfg, dev_start, dev_end, clock=None):
+def decision_bounds(cfg, dev_start, dev_end, clock=None, burn_in_ms=BURN_IN_MS, end_guard_ms=END_GUARD_MS):
+    """The decision window [dev_start + burn-in, dev_end - end guard]. The defaults are production's (pinned by
+    paper/tests/test_truncation.py); the truncation harness (paper/truncation.py) sets end_guard_ms to 0 in both of its
+    runs, and its VPS smoke shortens the burn-in in both."""
     clock = clock or Clock()
-    return dev_start + clock.slots(BURN_IN_MS, dev_start), dev_end - clock.slots(END_GUARD_MS, dev_end - 1)
+    lo = dev_start + clock.slots(burn_in_ms, dev_start) if burn_in_ms else dev_start
+    hi = dev_end - clock.slots(end_guard_ms, dev_end - 1) if end_guard_ms else dev_end
+    return lo, hi
 
 
 # ----------------------------------------------------------------------------- F7
