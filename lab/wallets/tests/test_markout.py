@@ -175,6 +175,20 @@ def test_markouts_on_the_mini_store(tmp_path, capfd):
     assert info["paid_window_ms"] == 60_000 and info["paid_min_lamports"] == 5_000 and info["paid_window_slots_per_epoch"] == {str(SLOT0 // 432_000): 150}
 
 
+def test_curve_only_run_leaves_the_paid_columns_null(tmp_path):
+    """--families with curve signals only (no pool signal): paid_buyers() has nothing to count and must not fail (LAB review on #496)."""
+    _store(tmp_path / "s.duckdb")
+    _parts(str(tmp_path / "parts"))
+    import pyarrow.compute as pc
+    t = pq.read_table(os.path.join(tmp_path, "parts", "part-0.parquet"))
+    os.makedirs(tmp_path / "cparts")
+    pq.write_table(t.filter(pc.equal(t["segment"], "curve")), os.path.join(tmp_path, "cparts", "part-0.parquet"))
+    info = markout.run(str(tmp_path / "cparts"), "c", str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), cfg_path=_cfg(tmp_path))
+    R = pq.read_table(str(tmp_path / "out" / "markout-c.parquet")).to_pylist()
+    assert info["signals"] == 2 and len(R) == 2 * 2 * 8 and all(r["segment"] == "curve" for r in R)
+    assert all(r["paid_buyers_60s"] is None and r["paid_max_60s"] is None for r in R) and info["paid_window_slots_per_epoch"] == {str(SLOT0 // 432_000): 150}
+
+
 def test_buckets_do_not_change_the_markouts(tmp_path, monkeypatch, capfd):
     """The venue-state match per key-hash bucket (LAB_MARKOUT_BUCKETS, the NAS setting for the big runs) and a
     one-row flush of the round trips give the same parquet as the unbucketed run."""

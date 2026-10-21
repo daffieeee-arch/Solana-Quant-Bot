@@ -240,6 +240,9 @@ def paid_buyers(con, clock):
     con.execute(f"CREATE OR REPLACE TEMP TABLE paid_sig AS SELECT sid, pool, t, t - ({w_case}) AS lo FROM sig WHERE venue = 'pool' AND pool IS NOT NULL")
     con.execute("CREATE OR REPLACE TEMP TABLE paid_cnt (sid BIGINT, n INTEGER, mx BIGINT)")
     pools = [r[0] for r in con.execute("SELECT DISTINCT pool FROM paid_sig ORDER BY pool").fetchall()]
+    if not pools:  # a curve-only run (e.g. --families F1): nothing to count, the columns stay NULL
+        con.execute("DROP TABLE paid_cnt; DROP TABLE paid_sig")
+        return per_epoch, default
     nb = max(1, min(buckets(), len(pools)))
     bounds = [pools[i * len(pools) // nb] for i in range(nb)] + [None]
     for b in range(nb):
