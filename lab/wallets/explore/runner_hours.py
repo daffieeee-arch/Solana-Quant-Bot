@@ -1,5 +1,8 @@
-"""E58 runner census, step 1 (research/spec-runner-census-2026-10-21.md §3): the pool-hour series of EVERY PumpSwap pool in
-the store, all quote classes (sol, reversed, other), for the census and the pre-declared momentum markouts on the VPS.
+"""E58 runner census, step 1 (research/spec-runner-census-2026-10-21.md §3): the pool-hour series of every PumpSwap pool in
+the store for the census and the pre-declared momentum markouts on the VPS. Store v2 (dev2) holds pool legs for the SOL
+markets only (quote_class sol and reversed): the 'other' class (USDC / PUMP / no quote mint, 6,345 pools) is in `pools` but
+has no legs, so it gets no hours here (a store with non-SOL market legs is a separate store-build decision); pools.parquet
+keeps every pool, so the 'other' pools stay countable as "not seen".
 NAS job (run with PYTHONPATH=lab in a scope; LAB_DATA for the data root, LAB_STORE for the store):
 
   python -m wallets.explore.runner_hours OUT_DIR
@@ -18,6 +21,7 @@ pool ranges (LAB_MARKOUT_BUCKETS) bound the working set, as markout.paid_buyers.
 """
 import json
 import os
+import re
 import sys
 import time
 
@@ -43,6 +47,8 @@ def hour_bounds(con):
 
 def build(con, out, buckets):
     prefix = os.environ.get("LAB_RUNNER_POOL_PREFIX", "")  # smoke tests on the VPS: only the pools whose address starts with it
+    if not re.fullmatch(r"[A-Za-z0-9]*", prefix):
+        raise SystemExit(f"LAB_RUNNER_POOL_PREFIX must be base58 characters only, got {prefix!r}")
     con.execute(f"CREATE OR REPLACE TEMP TABLE pm AS SELECT pool, quote_class, orientation, quote_mint, mint, create_slot FROM pools WHERE pool LIKE '{prefix}%'")
     pools = [r[0] for r in con.execute("SELECT pool FROM pm ORDER BY pool").fetchall()]
     nb = max(1, min(buckets, len(pools)))
@@ -65,7 +71,7 @@ def build(con, out, buckets):
             FROM pool p JOIN pm po USING (pool) ASOF JOIN hour_bounds hb ON p.slot >= hb.from_slot
             WHERE {rng} AND p.kind IN ('buy', 'sell', 'boost', 'withdraw', 'deposit')) x
           GROUP BY pool, hour""")
-    n = con.execute("SELECT count(*), count(DISTINCT pool) FROM hours").fetchone()
+    n = con.execute("SELECT count(*), count(DISTINCT pool), count(*) FILTER (WHERE close IS NULL) FROM hours").fetchone()
     con.execute(f"COPY (SELECT * FROM hours ORDER BY pool, hour) TO '{out}/hours.parquet' (FORMAT PARQUET)")
     con.execute(f"COPY (SELECT * FROM pm ORDER BY pool) TO '{out}/pools.parquet' (FORMAT PARQUET)")
     con.execute(f"COPY (SELECT * FROM hour_bounds ORDER BY hour) TO '{out}/hour_bounds.parquet' (FORMAT PARQUET)")
@@ -81,8 +87,9 @@ def main():
     guard(end_slot)  # development only: the store ends before the hold-out
     nh, h0, h1 = hour_bounds(con)
     print(f"{nh} hours in blocks", file=sys.stderr, flush=True)
-    n_rows, n_pools = build(con, out, int(os.environ.get("LAB_MARKOUT_BUCKETS", "4")))
-    info = {"rows": n_rows, "pools": n_pools, "hours": nh, "pool_prefix": os.environ.get("LAB_RUNNER_POOL_PREFIX", ""), "hour_first": h0, "hour_last": h1, "store": STORE, "slot_end_exclusive": end_slot, "commit": git_commit(), "seconds": round(time.time() - t0, 1)}
+    n_rows, n_pools, n_null_close = build(con, out, int(os.environ.get("LAB_MARKOUT_BUCKETS", "4")))
+    per_class = dict(con.execute("SELECT po.quote_class, count(*) FROM hours h JOIN pm po USING (pool) GROUP BY 1").fetchall())
+    info = {"rows": n_rows, "pools": n_pools, "null_close_hours": n_null_close, "pool_hours_per_class": per_class, "hours": nh, "pool_prefix": os.environ.get("LAB_RUNNER_POOL_PREFIX", ""), "hour_first": h0, "hour_last": h1, "store": STORE, "slot_end_exclusive": end_slot, "commit": git_commit(), "seconds": round(time.time() - t0, 1)}
     with open(f"{out}/run-runner-hours.json", "w") as f:
         json.dump(info, f, indent=1)
     print(json.dumps(info))
