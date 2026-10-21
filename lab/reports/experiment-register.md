@@ -87,7 +87,7 @@ Let op: 1055–1063 is de laatste schone periode met de oude slottijd. Elke anal
 | datum | bug | geraakt | fix | regressietest |
 |---|---|---|---|---|
 | 2026-10-10 | boost-cranks dubbel toegepast | E01 | v1.1 | ja (store) |
-| 2026-10-21 | priority fee dubbel geteld in `money.py` (`tx_fee` bevat hem al; E43/#468-patroon) | E10 (money-v1 fees/pnl te pessimistisch; de follow-the-money-populatie van 21 okt conservatief) | #504 | ja (test_money: fee-som 31.000, W1 5.000) |
+| 2026-10-21 | priority fee dubbel geteld in `money.py` (`tx_fee` bevat hem al; E43/#468-patroon) | E10 (money-v1 fees/pnl per transactie de priority fee te pessimistisch), E24 (dezelfde 41,8 M wallet-dagen: de −5,73 M / +5,17 M SOL-cijfers en de winnaarspersistentie), de groepslabels achter E39/E40 (groep C), en de follow-the-money-populatie van 21 okt (conservatief); conclusies ongewijzigd in afwachting van de NAS-herrun (de correctie is één priority fee per transactie, ordes kleiner dan die bedragen) | #504 | ja (test_money: fee-som 31.000, W1 5.000) |
 | 2026-10-12 | exact-in-buys verkeerd geclassificeerd | replay pool-buys | #171 | ja |
 | 2026-10-12 | `Insiders.share()` afhankelijk van het stream-venster | E07 V_ins | #235 (fail-closed) | ja |
 | 2026-10-14 | tijdzone-dagen (lokale tijd i.p.v. UTC) | dagindelingen | #228, #230 | ja (`test_summary_utc`) |
