@@ -17,8 +17,10 @@
 //!
 //! Bytes are counted as the recorder's meter counts them (`wire.rs`: `encoded_len` × `--wire-ratio`, rounded up);
 //! `--max-bytes` is in those metered bytes, the unit of the recorder's daily budget. The endpoint comes from
-//! `--endpoint` or LAB_TRITON_GRPC_ENDPOINT, the token only from LAB_TRITON_X_TOKEN (recorder.env); neither is
-//! printed, logged or written to the output.
+//! `--endpoint` or LAB_TRITON_GRPC_ENDPOINT, the token only from LAB_TRITON_X_TOKEN (recorder.env). The token is never
+//! printed, logged or written to the output; the endpoint (URL, host and host:port) is replaced by `<endpoint>` in
+//! every error the probe logs or writes. `--out` is refused when it is named budget.json or its directory holds one
+//! (a recorder root): the atomic write would replace the recorder's meter state.
 //!
 //! The output JSON is written atomically at the start, every minute and at the end, so a kill keeps the data up to
 //! the last minute. Exit codes: 0 the run reached --minutes; 76 the metered bytes reached --max-bytes (hard stop);
@@ -118,6 +120,7 @@ fn parse_args(args: impl IntoIterator<Item = String>, endpoint: Option<String>) 
         return Ok(a);
     }
     a.out = out.context("pass --out FILE")?;
+    refuse_budget(&a.out)?;
     a.minutes = minutes.filter(|m| *m > 0).context("pass --minutes N (N > 0)")?;
     a.max_bytes = max_bytes.filter(|b| *b > 0).context("pass --max-bytes B (B > 0): the hard stop")?;
     if let Some(m) = dry_minutes {
@@ -127,6 +130,33 @@ fn parse_args(args: impl IntoIterator<Item = String>, endpoint: Option<String>) 
         a.dry_minutes = Some(m);
     }
     Ok(a)
+}
+
+/// The recorder's meter state is never the output, nor beside it: an --out named budget.json, or in a directory
+/// that holds one (a recorder root), is refused (LAB review on #501).
+fn refuse_budget(out: &Path) -> Result<()> {
+    if out.file_name().is_some_and(|n| n.eq_ignore_ascii_case("budget.json")) {
+        bail!("--out {}: budget.json is the recorder's meter state; write the probe's output elsewhere", out.display());
+    }
+    let dir = out.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    if dir.join("budget.json").exists() {
+        bail!("--out {}: its directory holds a budget.json (a recorder root); write the probe's output elsewhere", out.display());
+    }
+    Ok(())
+}
+
+/// `text` with the endpoint (the URL as given, its host:port and its host) replaced by `<endpoint>`.
+fn redact(text: &str, endpoint: &str) -> String {
+    let authority = endpoint.split_once("://").map_or(endpoint, |(_, rest)| rest).split(['/', '?']).next().unwrap_or("");
+    let authority = authority.rsplit_once('@').map_or(authority, |(_, host)| host);
+    let host = authority.rsplit_once(':').map_or(authority, |(host, _)| host);
+    let mut out = text.to_owned();
+    for s in [endpoint.trim_end_matches('/'), authority, host] {
+        if !s.is_empty() {
+            out = out.replace(s, "<endpoint>");
+        }
+    }
+    out
 }
 
 /// `name=<program id>`: a short name ([A-Za-z0-9_]) and a base58 address of 32 bytes.
@@ -475,8 +505,9 @@ async fn run(a: Args) -> Result<i32> {
     write_json_atomic(&a.out, &probe.report("connecting", None, unix_ns()))?; // an unwritable --out fails before any byte
     // The recorder's client settings (main.rs session): TLS with the native roots, zstd, the token as x-token.
     let token = std::env::var("LAB_TRITON_X_TOKEN").ok();
+    let shown = |text: String| redact(&text, &endpoint);
     let connected = async {
-        let mut client = GeyserGrpcClient::build_from_shared(endpoint)?
+        let mut client = GeyserGrpcClient::build_from_shared(endpoint.clone())?
             .x_token(token)?
             .tls_config(ClientTlsConfig::new().with_native_roots())?
             .accept_compressed(CompressionEncoding::Zstd)
@@ -495,8 +526,9 @@ async fn run(a: Args) -> Result<i32> {
     let (_client, (_sink, mut stream)) = match connected {
         Ok(s) => s,
         Err(e) => {
-            log::error!("{e:#}");
-            write_json_atomic(&a.out, &probe.report(&format!("not started: {e:#}"), Some(EXIT_INCOMPLETE), unix_ns()))?;
+            let why = shown(format!("not started: {e:#}"));
+            log::error!("{why}");
+            write_json_atomic(&a.out, &probe.report(&why, Some(EXIT_INCOMPLETE), unix_ns()))?;
             return Ok(EXIT_INCOMPLETE);
         }
     };
@@ -504,6 +536,8 @@ async fn run(a: Args) -> Result<i32> {
     log::info!("subscribed ({} mode); writing {}", if a.mode == Mode::Slots { "slots" } else { "tx" }, a.out.display());
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
+    let ctrl_c = tokio::signal::ctrl_c();
+    tokio::pin!(ctrl_c);
     let (mut last_update, mut last_write) = (Instant::now(), Instant::now());
     let (status, code) = loop {
         tokio::select! {
@@ -514,7 +548,7 @@ async fn run(a: Args) -> Result<i32> {
                         break stop.end();
                     }
                 }
-                Some(Err(status)) => break (format!("stream: {status}"), EXIT_INCOMPLETE),
+                Some(Err(status)) => break (shown(format!("stream: {status}")), EXIT_INCOMPLETE),
                 None => break ("the stream ended".into(), EXIT_INCOMPLETE),
             },
             _ = tick.tick() => {
@@ -532,7 +566,7 @@ async fn run(a: Args) -> Result<i32> {
                 }
             }
             _ = term.recv() => break ("terminated".into(), EXIT_INCOMPLETE),
-            _ = tokio::signal::ctrl_c() => break ("interrupted".into(), EXIT_INCOMPLETE),
+            _ = &mut ctrl_c => break ("interrupted".into(), EXIT_INCOMPLETE),
         }
     };
     write_json_atomic(&a.out, &probe.report(&status, Some(code), unix_ns()))?;
@@ -552,8 +586,8 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_args, quantile, request, wire, write_json_atomic, Args, Mode, Probe, Stop, EXIT_MAX_BYTES, EXIT_PROJECTED,
-        NS_PER_SEC,
+        parse_args, quantile, redact, request, wire, write_json_atomic, Args, Mode, Probe, Stop, EXIT_MAX_BYTES,
+        EXIT_PROJECTED, NS_PER_SEC,
     };
     use serde_json::Value;
     use yellowstone_grpc_proto::prelude::{
@@ -763,15 +797,21 @@ mod tests {
     }
 
     #[test]
-    fn a_run_writes_only_its_own_output_and_never_the_recorders_budget() {
-        // lab-probe has no meter state: run beside the recorder's root, its budget.json stays byte for byte.
+    fn the_output_is_never_the_recorders_budget_nor_beside_it_and_a_run_writes_only_its_own_file() {
+        // LAB review on #501: an --out named budget.json, or in a directory holding one (a recorder root), would let the
+        // atomic write replace the recorder's meter state. Both are refused; elsewhere the budget stays byte for byte.
         let root = std::env::temp_dir().join(format!("lab-probe-out-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(root.join("probe")).unwrap();
+        std::fs::create_dir_all(root.join("other")).unwrap();
         let budget = br#"{"day": 20747, "spent_bytes": 123, "reserved_bytes": 456}"#;
         std::fs::write(root.join("budget.json"), budget).unwrap();
-        let out = root.join("probe.json");
-        let a = args(&format!("--tx-program pump={PUMP} --out {} --minutes 60 --max-bytes 1000000", out.display())).unwrap();
+        let run = |out: &std::path::Path| args(&format!("--tx-program pump={PUMP} --out {} --minutes 60 --max-bytes 1000000", out.display()));
+        for refused in [root.join("budget.json"), root.join("probe.json"), root.join("other/budget.json"), root.join("other/Budget.JSON")] {
+            assert!(run(&refused).is_err(), "{}", refused.display());
+        }
+        let out = root.join("probe/probe.json");
+        let a = run(&out).unwrap();
         let mut p = Probe::new(&a, T0);
         write_json_atomic(&out, &p.report("connecting", None, T0)).unwrap();
         for i in 0..50 {
@@ -781,12 +821,28 @@ mod tests {
             }
         }
         write_json_atomic(&out, &p.report("done", Some(0), T0 + MIN)).unwrap();
-        let mut names: Vec<_> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
-        names.sort();
-        assert_eq!(names, ["budget.json", "probe.json"]); // no temporary file left, nothing else written
+        let names = |d: &std::path::Path| {
+            let mut n: Vec<_> = std::fs::read_dir(d).unwrap().map(|e| e.unwrap().file_name().into_string().unwrap()).collect();
+            n.sort();
+            n
+        };
+        assert_eq!(names(&root), ["budget.json", "other", "probe"]);
+        assert_eq!(names(&root.join("probe")), ["probe.json"]); // no temporary file left, nothing else written
+        assert!(names(&root.join("other")).is_empty());
         assert_eq!(std::fs::read(root.join("budget.json")).unwrap(), budget);
         let v: Value = serde_json::from_slice(&std::fs::read(&out).unwrap()).unwrap();
         assert_eq!((v["status"].as_str(), v["total"]["messages"].as_u64()), (Some("done"), Some(50)));
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn errors_name_no_endpoint() {
+        let e = "https://grpc.example-node.net:443/";
+        let text = "connect: transport error: dns error for grpc.example-node.net:443 (https://grpc.example-node.net:443) at grpc.example-node.net";
+        let shown = redact(text, e);
+        assert!(!shown.contains("example-node"), "{shown}");
+        assert_eq!(shown, "connect: transport error: dns error for <endpoint> (<endpoint>) at <endpoint>");
+        assert_eq!(redact("stream: status: Unavailable", "http://10.0.0.1:10000"), "stream: status: Unavailable");
+        assert!(!redact("refused by 10.0.0.1", "http://10.0.0.1:10000").contains("10.0.0.1"));
     }
 }

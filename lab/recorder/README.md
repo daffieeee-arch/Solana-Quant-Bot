@@ -227,7 +227,9 @@ A second binary in this crate (`src/bin/lab-probe.rs`) for short, capped measure
 only counts and receive times: no segments, no decoding, and no `budget.json` (it never reads or writes the
 recorder's meter state; a test pins that). Its bytes are counted by the meter's own rule (`src/wire.rs`:
 `encoded_len` × `--wire-ratio`, rounded up), and `--max-bytes` is in those metered bytes, the unit of the daily
-budget. The endpoint and token come from `recorder.env` as for the recorder (`LAB_TRITON_X_TOKEN`, never printed).
+budget. The endpoint and token come from `recorder.env` as for the recorder (`LAB_TRITON_X_TOKEN`, never printed;
+the endpoint is shown as `<endpoint>` in its errors). An `--out` named `budget.json`, or in a directory that holds one
+(a recorder root), is refused.
 
 ```bash
 set -a; . ~/.config/solana-lab/recorder.env; set +a
