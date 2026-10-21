@@ -84,6 +84,14 @@ fn main() -> Result<()> {
                            "spec": "spec-token-transfers-2026-10-15.md v3 (sha256 611a6327)"})
     });
     let learning = plugin.transfers.clone();
+    // The venue decoders (LAB_VENUES=1): their programs and the pinned IDLs' sha256.
+    let venues = plugin.venues.as_ref().map(|v| {
+        let sha = |t: &str| hex::encode(Sha256::digest(t.as_bytes()));
+        serde_json::json!({"programs": v.ids().into_iter().map(|(l, id)| serde_json::json!({"label": l, "id": id})).collect::<Vec<_>>(),
+                           "idl_sha256": {"meteora_dbc.json": sha(extract::DBC_IDL), "meteora_damm_v2.json": sha(extract::DAMM_V2_IDL),
+                                           "raydium_launchlab.json": sha(extract::LAUNCHLAB_IDL)},
+                           "spec": "research/venue-decoders-spec-2026-10-21.md v0.2"})
+    });
     // The venue census (LAB_VENUE_CENSUS=1): its instruction table, pinned by the generated file's sha256.
     let census = plugin.census.as_ref().map(|_| {
         serde_json::json!({"table": "venue_census", "anchor_instructions": extract::VENUE_IXS.len(), "amm_v4_tags": extract::AMM_V4_IXS.len(),
@@ -171,6 +179,7 @@ fn main() -> Result<()> {
             v
         }),
         "venue_census": census,
+        "venues": venues,
         "error": result.as_ref().err().map(|e| e.to_string()),
         "sink_error": tables.as_ref().err().map(|e| format!("{e:#}")),
         "rows": tables.as_ref().ok(),
@@ -187,6 +196,9 @@ fn main() -> Result<()> {
             "http_429": c(&counters.http_429),
             "missing_meta": c(&counters.missing_meta),
             "census_rows": c(&counters.census_rows),
+            "venue_events": c(&counters.venue_events),
+            "venue_graduations": c(&counters.venue_graduations),
+            "venue_unknown_events": c(&counters.venue_unknown_events),
             // Rewards of a type the firehose does not know (Alpenglow's VATDebit): skipped, not fatal.
             "rewards_unknown_type_skipped": c(&jetstreamer_firehose::firehose::UNKNOWN_REWARD_TYPES_SKIPPED),
         },
