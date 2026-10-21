@@ -872,6 +872,209 @@ fn cols(spec: &[(&str, Kind)]) -> Columns {
     Arc::new(spec.iter().map(|(n, k)| ((*n).to_owned(), *k)).collect())
 }
 
+// ----------------------------------------------------------------------------- venue census
+// Step 0 of the other venues (owner 2026-10-21; coordinator design, approved): one row per transaction that invokes a
+// DEX of PROGRAM_LABELS (pump and PumpSwap included), for a census per venue: transactions, success, signers, a SOL
+// volume proxy, launches and graduations, tips and a first MEV estimate. No price decoding: instruction names and the
+// pool account come from the projects' IDLs (idl/venues/SOURCES.md, src/venue_ix.rs). Extractor only
+// (LAB_VENUE_CENSUS=1); the recorder includes this file but never enables it, and without it every table is as before.
+
+include!("venue_ix.rs");
+
+/// Raydium AMM v4 (no Anchor IDL): (instruction tag = data[0], name, position of the amm account). From
+/// raydium-io/raydium-amm @ 91739d8, program/src/instruction.rs: AmmInstruction::unpack for the tags, the builders for
+/// the accounts (amm_pool at 1; at 4 in initialize2). The admin instructions keep no pool.
+pub const AMM_V4_IXS: [(u8, &str, Option<u8>); 12] = [
+    (1, "initialize2", Some(4)),
+    (3, "deposit", Some(1)),
+    (4, "withdraw", Some(1)),
+    (6, "set_params", None),
+    (7, "withdraw_pnl", None),
+    (9, "swap_base_in", Some(1)),
+    (11, "swap_base_out", Some(1)),
+    (14, "create_config_account", None),
+    (15, "update_config_account", None),
+    (16, "swap_base_in_v2", Some(1)),
+    (17, "swap_base_out_v2", Some(1)),
+    (18, "withdraw_excess_lamports", None),
+];
+
+/// One row per transaction that invokes a DEX program (top level or inner; a failed transaction has its top level only).
+const VENUE_CENSUS_COLS: [(&str, Kind); 16] = [
+    ("slot", Kind::U64),
+    ("tx_index", Kind::U64),
+    ("failed", Kind::Bool),
+    ("fee_payer", Kind::Utf8),
+    ("tx_fee", Kind::U64),
+    // As in tx_ctx: the charged fee minus the base fee per signature; transfers to the Jito tip accounts.
+    ("priority_fee", Kind::U64),
+    ("jito_tip", Kind::U64),
+    ("cu_consumed", Kind::U64),
+    // The DEX programs invoked: labels, sorted, comma separated, and how many.
+    ("venues", Kind::Utf8),
+    ("n_dex", Kind::U64),
+    // The top-level programs but infrastructure (compute budget, system, token, ATA, memo), in order, each once, ';'
+    // separated, by label or id: who drives the transaction (a router, a bot's own program, the DEX itself).
+    ("top_programs", Kind::Utf8),
+    // Every DEX instruction in execution order as "label:name:pool", ';' separated: name "?" when the discriminator
+    // (tag) is not in the IDL table, pool empty when the instruction has no pool account. Anchor event self-CPIs are
+    // left out.
+    ("dex_ixs", Kind::Utf8),
+    // The fee payer: lamports after minus before (fee and tip included) and the net change of its token accounts per
+    // mint as "mint:delta" (raw, WSOL included), ';' separated, as tx_ctx.signer_token_deltas.
+    ("signer_sol_delta", Kind::I64),
+    ("signer_token_deltas", Kind::Utf8),
+    // Every mint of the transaction's token balances (before and after), sorted, ';' separated.
+    ("mints", Kind::Utf8),
+    ("n_dex_ixs", Kind::U64),
+];
+
+/// A transaction as the census reads it: the view, plus fee, required signatures and compute units.
+pub struct CensusTx<'a> {
+    pub view: TxView<'a>,
+    pub fee: u64,
+    pub signatures: u64,
+    pub cu_consumed: Option<u64>,
+}
+
+/// The venue census (LAB_VENUE_CENSUS=1): the instruction tables and the columns.
+pub struct Census {
+    anchor: HashMap<(&'static str, [u8; 8]), (&'static str, Option<u8>)>,
+    amm_v4: HashMap<u8, (&'static str, Option<u8>)>,
+    system: Key,
+    jito: [Key; 8],
+    cols: Columns,
+    table: Arc<str>,
+}
+
+impl Default for Census {
+    fn default() -> Self {
+        Self {
+            anchor: VENUE_IXS.iter().map(|&(label, disc, name, pool)| ((label, disc), (name, pool))).collect(),
+            amm_v4: AMM_V4_IXS.iter().map(|&(tag, name, pool)| (tag, (name, pool))).collect(),
+            system: key(SYSTEM_PROGRAM),
+            jito: JITO_TIP_ACCOUNTS.map(key),
+            cols: cols(&VENUE_CENSUS_COLS),
+            table: Arc::from("venue_census"),
+        }
+    }
+}
+
+impl Census {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// On with LAB_VENUE_CENSUS=1 only.
+    pub fn from_env() -> Option<Self> {
+        (std::env::var("LAB_VENUE_CENSUS").ok().as_deref() == Some("1")).then(Self::new)
+    }
+
+    /// An instruction's name and pool position: the IDL table by discriminator (Anchor), the tag table for AMM v4.
+    fn instruction(&self, label: &'static str, data: &[u8]) -> (&'static str, Option<u8>) {
+        let found = if label == "raydium_amm_v4" {
+            data.first().and_then(|t| self.amm_v4.get(t))
+        } else {
+            data.get(..8).and_then(|d| <[u8; 8]>::try_from(d).ok()).and_then(|d| self.anchor.get(&(label, d)))
+        };
+        found.copied().unwrap_or(("?", None))
+    }
+
+    /// Does the transaction invoke a DEX program (top level or inner)? Cheap: no view is built for the others.
+    pub fn invokes_dex(&self, tx: &TransactionData, labels: &HashMap<Key, (&'static str, Class)>) -> bool {
+        let msg = &tx.transaction.message;
+        let meta = &tx.transaction_status_meta;
+        let statics = msg.static_account_keys();
+        let (w, r) = (&meta.loaded_addresses.writable, &meta.loaded_addresses.readonly);
+        let is_dex = |i: u8| -> bool {
+            let i = usize::from(i);
+            let k: Option<&[u8]> = if i < statics.len() {
+                Some(statics[i].as_ref())
+            } else if i - statics.len() < w.len() {
+                Some(w[i - statics.len()].as_ref())
+            } else {
+                r.get(i - statics.len() - w.len()).map(AsRef::as_ref)
+            };
+            k.and_then(|k| <[u8; 32]>::try_from(k).ok()).and_then(|k| labels.get(&k)).is_some_and(|(_, c)| *c == Class::Dex)
+        };
+        msg.instructions().iter().any(|ix| is_dex(ix.program_id_index))
+            || meta.inner_instructions.as_deref().unwrap_or(&[]).iter().any(|g| g.instructions.iter().any(|ix| is_dex(ix.instruction.program_id_index)))
+    }
+
+    /// The census row of a transaction; None when it invokes no DEX program.
+    pub fn row(&self, tx: &CensusTx, labels: &HashMap<Key, (&'static str, Class)>) -> Option<Row> {
+        let v = &tx.view;
+        let b58 = |b: &[u8]| bs58::encode(b).into_string();
+        let label_of = |k: &[u8]| <[u8; 32]>::try_from(k).ok().and_then(|k| labels.get(&k)).copied();
+        let mut venues = std::collections::BTreeSet::new();
+        let mut top: Vec<String> = Vec::new();
+        let mut dex_ixs: Vec<String> = Vec::new();
+        let mut jito_tip: u64 = 0;
+        for ix in &v.ixs {
+            let Some(program) = ix.program else { continue };
+            let label = label_of(program);
+            if !ix.path.contains('.') && !matches!(label, Some((_, Class::Infra))) {
+                let name = label.map_or_else(|| b58(program), |(n, _)| n.to_owned());
+                if !top.contains(&name) {
+                    top.push(name);
+                }
+            }
+            if program == self.system.as_slice() && ix.data.len() >= 12 && u32::from_le_bytes(ix.data[0..4].try_into().unwrap()) == 2 {
+                let to = ix.accounts.get(1).and_then(|&a| v.keys.get(usize::from(a)));
+                if to.is_some_and(|to| self.jito.iter().any(|j| j.as_slice() == *to)) {
+                    jito_tip = jito_tip.saturating_add(u64::from_le_bytes(ix.data[4..12].try_into().unwrap()));
+                }
+            }
+            if let Some((label, Class::Dex)) = label {
+                if ix.data.starts_with(&EVENT_IX_TAG) {
+                    continue;
+                }
+                venues.insert(label);
+                let (name, pool) = self.instruction(label, ix.data);
+                let pool = pool.and_then(|p| ix.accounts.get(usize::from(p))).and_then(|&a| v.keys.get(usize::from(a))).map(|k| b58(*k)).unwrap_or_default();
+                dex_ixs.push(format!("{label}:{name}:{pool}"));
+            }
+        }
+        if venues.is_empty() {
+            return None;
+        }
+        let sol_delta = match (v.pre_lamports.first(), v.post_lamports.first()) {
+            (Some(&a), Some(&b)) => i64::try_from(i128::from(b) - i128::from(a)).map_or(Val::Null, Val::I64),
+            _ => Val::Null,
+        };
+        let deltas: Vec<String> = mint_owner_deltas(&v.pre_tokens, &v.post_tokens)
+            .into_iter()
+            .filter(|(_, owner, ..)| *owner == v.fee_payer)
+            .map(|(mint, _, d, ..)| format!("{mint}:{d}"))
+            .collect();
+        let mints: std::collections::BTreeSet<&str> = v.pre_tokens.iter().chain(v.post_tokens.iter()).map(|b| b.mint).collect();
+        let joined = |parts: Vec<String>, sep: &str| if parts.is_empty() { Val::Null } else { Val::Str(parts.join(sep)) };
+        let n_ixs = dex_ixs.len() as u64;
+        Some(Row {
+            table: self.table.clone(),
+            columns: self.cols.clone(),
+            values: vec![
+                Val::U64(v.slot),
+                Val::U64(v.tx_index),
+                Val::Bool(v.failed),
+                Val::Str(v.fee_payer.clone()),
+                Val::U64(tx.fee),
+                Val::U64(tx.fee.saturating_sub(tx.signatures * LAMPORTS_PER_SIGNATURE)),
+                Val::U64(jito_tip),
+                tx.cu_consumed.map_or(Val::Null, Val::U64),
+                Val::Str(venues.iter().copied().collect::<Vec<_>>().join(",")),
+                Val::U64(venues.len() as u64),
+                joined(top, ";"),
+                Val::Str(dex_ixs.join(";")),
+                sol_delta,
+                joined(deltas, ";"),
+                joined(mints.into_iter().map(str::to_owned).collect(), ";"),
+                Val::U64(n_ixs),
+            ],
+        })
+    }
+}
+
 struct ProgramIdl {
     short: &'static str,
     id: Key,
@@ -893,6 +1096,8 @@ pub struct Counters {
     pub firehose_errors: AtomicU64,
     pub http_429: AtomicU64,
     pub missing_meta: AtomicU64,
+    /// venue_census rows (LAB_VENUE_CENSUS=1).
+    pub census_rows: AtomicU64,
 }
 
 /// Old Faithful's storage (Backblaze B2 behind Cloudflare) answers new requests with HTTP 429
@@ -945,6 +1150,8 @@ pub struct LabPlugin {
     pub fatal: Arc<AtomicBool>,
     /// token_deltas, token_transfers and sol_funding (LAB_TRANSFERS=1; the extractor only).
     pub transfers: Option<Arc<Transfers>>,
+    /// venue_census (LAB_VENUE_CENSUS=1; the extractor only).
+    pub census: Option<Arc<Census>>,
 }
 
 pub struct Coverage {
@@ -1039,6 +1246,7 @@ impl LabPlugin {
             coverage,
             fatal: Arc::new(AtomicBool::new(false)),
             transfers: Transfers::from_env()?.map(Arc::new),
+            census: Census::from_env().map(Arc::new),
         })
     }
 
@@ -1053,12 +1261,28 @@ impl LabPlugin {
 
     /// Extract all rows for one transaction. Public for tests. With LAB_TRANSFERS=1 every transaction
     /// is also read for the token transfer tables (a plain token transfer or a wallet's funding does
-    /// not touch pump.fun); the other tables are exactly as without them.
+    /// not touch pump.fun); the other tables are exactly as without them. With LAB_VENUE_CENSUS=1 a
+    /// transaction that invokes a DEX program also gets its venue_census row (the other tables unchanged).
     pub fn rows_for(&self, tx: &TransactionData) -> Vec<Row> {
         let mut rows = self.core_rows(tx);
         if let Some(t) = &self.transfers {
             let extra = t.rows(&tx_view(tx), &rows, &self.labels);
             rows.extend(extra);
+        }
+        if let Some(c) = &self.census {
+            if c.invokes_dex(tx, &self.labels) {
+                let meta = &tx.transaction_status_meta;
+                let ctx = CensusTx {
+                    view: tx_view(tx),
+                    fee: meta.fee,
+                    signatures: u64::from(tx.transaction.message.header().num_required_signatures),
+                    cu_consumed: meta.compute_units_consumed,
+                };
+                if let Some(r) = c.row(&ctx, &self.labels) {
+                    self.counters.census_rows.fetch_add(1, Ordering::Relaxed);
+                    rows.push(r);
+                }
+            }
         }
         rows
     }
@@ -1633,6 +1857,7 @@ mod tests {
         decode_token_metadata, explained, is_http_429, is_pda, key, mint_owner_deltas, owner_token_deltas, parse_system_funding,
         invoker, parse_token_ix, store_legs, summarize_calls, system_non_wallet_target, Bal, Class, IxView, TokenIx, Transfers, TxView,
         FUNDING_MIN_LAMPORTS, PROGRAM_LABELS, PUMP_AMM_IDL, PUMP_IDL, TOKEN_METADATA_INIT, WSOL_MINT,
+        Census, CensusTx, AMM_V4_IXS, EVENT_IX_TAG, VENUE_IXS,
     };
     use crate::idl::{Kind, Val};
     use crate::sink::Row;
@@ -1999,5 +2224,166 @@ mod tests {
         assert!(!t.is_pump("IncentiveTok") && t.is_pump("FeeCurveMint"));
         assert_eq!(t.learned_mints(), vec!["FeeCurveMint".to_owned(), "NewMint".to_owned(), "OldCurveMint".to_owned()]);
     }
-}
 
+    // ------------------------------------------------------------------------- venue census
+
+    #[test]
+    fn venue_ix_matches_the_pinned_idls() {
+        // tools/gen_venue_ix.py's rule, again from the files: discriminator, name and the first account named as a pool.
+        const POOL: [&str; 8] = ["pool_state", "lb_pair", "whirlpool", "whirlpool_one", "pool", "bonding_curve", "virtual_pool", "amm"];
+        fn names(a: &serde_json::Value, out: &mut Vec<String>) {
+            for x in a.as_array().map(Vec::as_slice).unwrap_or(&[]) {
+                match x.get("accounts") {
+                    Some(inner) => names(inner, out),
+                    None => out.push(x["name"].as_str().unwrap().to_owned()),
+                }
+            }
+        }
+        let files: [(&str, &str); 10] = [
+            ("pump", PUMP_IDL),
+            ("pump_amm", PUMP_AMM_IDL),
+            ("raydium_cpmm", include_str!("../idl/venues/raydium_cpmm.json")),
+            ("raydium_clmm", include_str!("../idl/venues/raydium_clmm.json")),
+            ("raydium_launchlab", include_str!("../idl/venues/raydium_launchlab.json")),
+            ("meteora_dlmm", include_str!("../idl/venues/meteora_dlmm.json")),
+            ("meteora_damm_v1", include_str!("../idl/venues/meteora_damm_v1.json")),
+            ("meteora_damm_v2", include_str!("../idl/venues/meteora_damm_v2.json")),
+            ("meteora_dbc", include_str!("../idl/venues/meteora_dbc.json")),
+            ("orca_whirlpool", include_str!("../idl/venues/orca_whirlpool.json")),
+        ];
+        let mut expect = Vec::new();
+        for (label, text) in files {
+            let j: serde_json::Value = serde_json::from_str(text).unwrap();
+            let id = PROGRAM_LABELS.iter().find(|(_, l, _)| *l == label).unwrap().0;
+            assert_eq!(j["address"].as_str(), Some(id), "{label}: the IDL is another program's");
+            for ix in j["instructions"].as_array().unwrap() {
+                let disc: Vec<u8> = ix["discriminator"].as_array().unwrap().iter().map(|b| u8::try_from(b.as_u64().unwrap()).unwrap()).collect();
+                let mut n = Vec::new();
+                names(&ix["accounts"], &mut n);
+                let pool = n.iter().position(|a| POOL.contains(&a.as_str())).map(|p| u8::try_from(p).unwrap());
+                expect.push((label, <[u8; 8]>::try_from(disc).unwrap(), ix["name"].as_str().unwrap().to_owned(), pool));
+            }
+        }
+        let got: Vec<_> = VENUE_IXS.iter().map(|&(l, d, n, p)| (l, d, n.to_owned(), p)).collect();
+        assert_eq!(got, expect, "src/venue_ix.rs is not tools/gen_venue_ix.py's output of the pinned IDLs");
+        // (label, discriminator) is unique, and every DEX label has a table (AMM v4: its tags).
+        let keys: std::collections::HashSet<_> = VENUE_IXS.iter().map(|&(l, d, ..)| (l, d)).collect();
+        assert_eq!(keys.len(), VENUE_IXS.len());
+        for (_, label, class) in PROGRAM_LABELS {
+            if class == Class::Dex {
+                assert!(label == "raydium_amm_v4" || VENUE_IXS.iter().any(|x| x.0 == label), "{label} has no instruction table");
+            }
+        }
+        let tags: std::collections::HashSet<u8> = AMM_V4_IXS.iter().map(|x| x.0).collect();
+        assert_eq!(tags.len(), AMM_V4_IXS.len());
+    }
+
+    /// An Anchor instruction's data: the discriminator of `name` from the table, then arguments.
+    fn venue_ix(label: &str, name: &str) -> Vec<u8> {
+        let d = VENUE_IXS.iter().find(|x| x.0 == label && x.2 == name).unwrap_or_else(|| panic!("{label} {name}")).1;
+        d.iter().copied().chain([7u8; 16]).collect()
+    }
+
+    fn labels() -> std::collections::HashMap<[u8; 32], (&'static str, Class)> {
+        PROGRAM_LABELS.iter().map(|(id, label, class)| (key(id), (*label, *class))).collect()
+    }
+
+    #[test]
+    fn census_row_of_a_routed_two_dex_trade() {
+        let leak: fn(String) -> &'static str = |s| Box::leak(s.into_boxed_str());
+        let payer = test_key(31, true);
+        let payer_s = leak(b58(&payer));
+        let (pool_a, lb_b) = (test_key(32, false), test_key(33, false));
+        let [jup, cpmm, dlmm, system, cb] = ["JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4", "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",
+            "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo", "11111111111111111111111111111111", "ComputeBudget111111111111111111111111111111"].map(key);
+        let tip = key("96gYZGLnJYVFmbjzopPSU6QiEV5fGqZNyN9nmNhvrZU5");
+        // keys: payer 0, jupiter 1, cpmm 2, dlmm 3, system 4, tip account 5, pool A 6, lb pair B 7, compute budget 8
+        let keys: Vec<&[u8]> = vec![&payer[..], &jup[..], &cpmm[..], &dlmm[..], &system[..], &tip[..], &pool_a[..], &lb_b[..], &cb[..]];
+        let (swap_in, dlmm_swap) = (venue_ix("raydium_cpmm", "swap_base_input"), venue_ix("meteora_dlmm", "swap"));
+        let event: Vec<u8> = EVENT_IX_TAG.iter().copied().chain([1u8; 8]).collect();
+        let tip_ix = system_ix(2, 1_000_000, None);
+        let price = [3u8, 1, 0, 0, 0, 0, 0, 0, 0];
+        let view = TxView {
+            slot: 9,
+            tx_index: 4,
+            fee_payer: payer_s.to_owned(),
+            failed: false,
+            ixs: vec![
+                IxView { path: "0".into(), program: Some(&cb), accounts: &[], data: &price, parent: None },
+                IxView { path: "1".into(), program: Some(&jup), accounts: &[0, 2, 3], data: &[9, 9], parent: None },
+                // CPMM swap_base_input: pool_state is its 4th account (position 3).
+                IxView { path: "1.0".into(), program: Some(&cpmm), accounts: &[0, 4, 4, 6, 4], data: &swap_in, parent: Some(&jup) },
+                // DLMM swap: lb_pair first.
+                IxView { path: "1.1".into(), program: Some(&dlmm), accounts: &[7, 4], data: &dlmm_swap, parent: Some(&jup) },
+                IxView { path: "1.2".into(), program: Some(&dlmm), accounts: &[3], data: &event, parent: Some(&dlmm) },
+                IxView { path: "2".into(), program: Some(&system), accounts: &[0, 5], data: &tip_ix, parent: None },
+            ],
+            pre_lamports: &[10_000_000_000, 1, 1, 1, 1, 1, 1, 1, 1],
+            post_lamports: &[9_998_985_000, 1, 1, 1, 1, 1_000_001, 1, 1, 1],
+            pre_tokens: vec![bal(10, WSOL, payer_s, 1_000_000_000), bal(11, "MintX", "PoolOwnerA", 5_000)],
+            post_tokens: vec![bal(10, WSOL, payer_s, 1_050_000_000), bal(11, "MintX", "PoolOwnerA", 5_000), bal(12, "MintY", "PoolOwnerB", 1)],
+            keys,
+        };
+        let r = Census::new().row(&CensusTx { view, fee: 10_000, signatures: 1, cu_consumed: Some(150_000) }, &labels()).unwrap();
+        assert_eq!(&*r.table, "venue_census");
+        let got: Vec<(&str, Val)> = ["failed", "fee_payer", "tx_fee", "priority_fee", "jito_tip", "cu_consumed", "venues", "n_dex", "top_programs",
+            "dex_ixs", "n_dex_ixs", "signer_sol_delta", "signer_token_deltas", "mints"].iter().map(|c| (*c, col(&r, c).clone())).collect();
+        let want = vec![
+            ("failed", Val::Bool(false)),
+            ("fee_payer", st(payer_s)),
+            ("tx_fee", Val::U64(10_000)),
+            ("priority_fee", Val::U64(5_000)),
+            ("jito_tip", Val::U64(1_000_000)),
+            ("cu_consumed", Val::U64(150_000)),
+            ("venues", st("meteora_dlmm,raydium_cpmm")),
+            ("n_dex", Val::U64(2)),
+            ("top_programs", st("jupiter_v6")), // compute budget and system are infrastructure
+            ("dex_ixs", st(&format!("raydium_cpmm:swap_base_input:{};meteora_dlmm:swap:{}", b58(&pool_a), b58(&lb_b)))), // no event self-CPI
+            ("n_dex_ixs", Val::U64(2)),
+            ("signer_sol_delta", Val::I64(-1_015_000)),
+            ("signer_token_deltas", st(&format!("{WSOL}:50000000"))),
+            ("mints", st(&format!("MintX;MintY;{WSOL}"))),
+        ];
+        assert_eq!(got, want);
+        assert_eq!((col(&r, "slot"), col(&r, "tx_index")), (&Val::U64(9), &Val::U64(4)));
+    }
+
+    #[test]
+    fn census_names_amm_v4_by_tag_keeps_unknown_instructions_and_skips_transactions_without_a_dex() {
+        let payer = test_key(41, true);
+        let (amm, bot) = (test_key(42, false), test_key(43, true));
+        let [ray, orca, system, token] = ["675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8", "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",
+            "11111111111111111111111111111111", "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"].map(key);
+        // keys: payer 0, bot program 1, AMM v4 2, amm account 3, whirlpool program 4, system 5, token 6
+        let keys: Vec<&[u8]> = vec![&payer[..], &bot[..], &ray[..], &amm[..], &orca[..], &system[..], &token[..]];
+        let (swap_in, swap_in_v2, unknown) = ([9u8, 1, 2, 3], [16u8, 5, 5], [1u8, 2, 3, 4, 5, 6, 7, 8, 9]);
+        let transfer = system_ix(2, 5, None);
+        let census = Census::new();
+        let labels = labels();
+        let row = |failed: bool, ixs: Vec<IxView>| {
+            let view = TxView {
+                slot: 1, tx_index: 0, fee_payer: b58(&payer), failed, keys: keys.clone(), ixs,
+                pre_lamports: &[5_000_000, 1, 1, 1, 1, 1, 1], post_lamports: &[4_990_000, 1, 1, 1, 1, 1, 1], pre_tokens: vec![], post_tokens: vec![],
+            };
+            census.row(&CensusTx { view, fee: 5_000, signatures: 1, cu_consumed: None }, &labels)
+        };
+        // A bot's own program drives an AMM v4 swap (tag 9, amm at 1) and an unknown Whirlpool instruction.
+        let r = row(false, vec![
+            IxView { path: "0".into(), program: Some(&bot), accounts: &[0, 2, 4], data: &[0], parent: None },
+            IxView { path: "0.0".into(), program: Some(&ray), accounts: &[6, 3, 0], data: &swap_in, parent: Some(&bot) },
+            IxView { path: "0.1".into(), program: Some(&orca), accounts: &[3], data: &unknown, parent: Some(&bot) },
+        ]).unwrap();
+        assert_eq!(col(&r, "venues"), &st("orca_whirlpool,raydium_amm_v4"));
+        assert_eq!(col(&r, "top_programs"), &st(&b58(&bot)));
+        assert_eq!(col(&r, "dex_ixs"), &st(&format!("raydium_amm_v4:swap_base_in:{};orca_whirlpool:?:", b58(&amm))));
+        assert_eq!((col(&r, "priority_fee"), col(&r, "cu_consumed"), col(&r, "mints"), col(&r, "signer_token_deltas")),
+                   (&Val::U64(0), &Val::Null, &Val::Null, &Val::Null));
+        assert_eq!(col(&r, "signer_sol_delta"), &Val::I64(-10_000));
+        // A failed transaction: its top level only (no inner instructions), still a row, flagged.
+        let f = row(true, vec![IxView { path: "0".into(), program: Some(&ray), accounts: &[6, 3], data: &swap_in_v2, parent: None }]).unwrap();
+        assert_eq!((col(&f, "failed"), col(&f, "dex_ixs"), col(&f, "top_programs")),
+                   (&Val::Bool(true), &st(&format!("raydium_amm_v4:swap_base_in_v2:{}", b58(&amm))), &st("raydium_amm_v4")));
+        // No DEX program: no row (a plain transfer).
+        assert!(row(false, vec![IxView { path: "0".into(), program: Some(&system), accounts: &[0, 1], data: &transfer, parent: None }]).is_none());
+    }
+}
