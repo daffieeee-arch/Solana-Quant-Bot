@@ -260,7 +260,12 @@ lab-probe --slots --print-request    # the subscription, without connecting
   cd lab && python -m checks.probe_lead --processed p.csv --confirmed c.csv --out lead.json
   ```
 
-  `checks/probe_lead.py` joins them on signature over the slots both covered. It reports the lead (confirmed −
+  `--deshred` (instead of `--commitment`) puts the same filters on the SubscribeDeshred stream: transactions rebuilt from
+  shreds before execution, also ones that later fail or never land, with bank_id empty in the CSV. A third probe beside
+  the two above, `lab-probe --tx-program … --deshred --signatures-out d.csv --out d.json …`, and
+  `python -m checks.probe_lead --deshred d.csv --processed p.csv --confirmed c.csv` gives the leads pairwise.
+
+  `checks/probe_lead.py` joins them on signature over the slots all of them covered. It reports the lead (confirmed −
   processed receive, ms: p50, p90, p99, the share > 50 ms and < 0), the signatures only processed saw (dead or forked
   slots), only confirmed saw, ones that moved slot, and ones received in more than one bank.
 - **Stops and exit codes:** 0 at `--minutes`; 76 when the metered bytes reach `--max-bytes`; 77 when, after
