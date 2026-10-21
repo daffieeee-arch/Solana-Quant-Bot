@@ -21,7 +21,8 @@ Definitions (v0):
 - backrun: an arb whose first swap's pool had a swap by another fee payer of at least BACKRUN_MIN_SOL (that
   transaction's volume proxy, any venue count) in the BACKRUN_SLOTS slots before it (same slot: earlier tx_index).
 - failed attempts: failed transactions of fee payers with an arb in the window; cost = their fees, 1/k per venue.
-Outputs in --out: venue_day.parquet (the table per venue and day), venue_census.json and venue_census.md.
+Outputs in --out: venue_day.parquet (the table per venue and day, with the day's hours covered), venue_census.json and
+venue_census.md (per-day columns = totals / covered days: hours with blocks / 24, so partial days are not inflated).
 """
 
 import argparse
@@ -94,7 +95,7 @@ def setup(con, chunks_root, lo, hi):
     if not files or not blocks:
         raise SystemExit(f"no venue_census or blocks for [{lo}, {hi}) under {chunks_root}")
     con.execute(f"""CREATE OR REPLACE TEMP TABLE days AS
-        SELECT slot, epoch_ms(any_value(block_time)::BIGINT * 1000)::DATE AS day
+        SELECT slot, any_value(block_time)::BIGINT AS bt, epoch_ms(any_value(block_time)::BIGINT * 1000)::DATE AS day
         FROM read_parquet({_lit(blocks)}, union_by_name = true)
         WHERE slot >= {lo} AND slot < {hi} AND block_time IS NOT NULL GROUP BY slot ORDER BY slot""")
     tok = "string_split(COALESCE(signer_token_deltas, ''), ';')"
@@ -154,13 +155,15 @@ def venue_day(con):
             FROM (SELECT a.*, unnest(string_split(a.venues, ',')) AS venue FROM arbs a) GROUP BY venue, day),
         attempts AS (
             SELECT venue, day, count(*) AS failed_attempts, sum(tx_fee / n_dex) / 1e9 AS failed_attempt_cost_sol
-            FROM tv WHERE failed AND fee_payer IN (SELECT DISTINCT fee_payer FROM arbs) GROUP BY venue, day)
-        SELECT b.*, 1 - b.failed / b.txs AS success_rate, COALESCE(k.launches, 0) AS launches,
+            FROM tv WHERE failed AND fee_payer IN (SELECT DISTINCT fee_payer FROM arbs) GROUP BY venue, day),
+        cov AS (SELECT day, (max(bt) - min(bt) + 1) / 3600.0 AS hours FROM days GROUP BY day)
+        SELECT b.*, cov.hours, 1 - b.failed / b.txs AS success_rate, COALESCE(k.launches, 0) AS launches,
                COALESCE(k.graduations, 0) AS graduations, COALESCE(k.pool_creations, 0) AS pool_creations,
                COALESCE(m.arbs, 0) AS arbs, COALESCE(m.arb_net_sol, 0) AS arb_net_sol, COALESCE(m.arb_bots, 0) AS arb_bots,
                COALESCE(m.backruns, 0) AS backruns, COALESCE(m.backrun_net_sol, 0) AS backrun_net_sol,
                COALESCE(a.failed_attempts, 0) AS failed_attempts, COALESCE(a.failed_attempt_cost_sol, 0) AS failed_attempt_cost_sol
-        FROM base b LEFT JOIN kinds k USING (venue, day) LEFT JOIN mev m USING (venue, day) LEFT JOIN attempts a USING (venue, day)
+        FROM base b JOIN cov USING (day) LEFT JOIN kinds k USING (venue, day) LEFT JOIN mev m USING (venue, day)
+        LEFT JOIN attempts a USING (venue, day)
         ORDER BY venue, day""").df()
 
 
@@ -172,9 +175,11 @@ def unknown_programs(con, n=20):
 
 
 def coverage(con, lo, hi):
-    """Days with their slot share of the window (a day at an epoch's edge is partial)."""
-    rows = con.execute("SELECT day, count(*) AS slots, min(slot), max(slot) FROM days GROUP BY day ORDER BY day").fetchall()
-    return [{"day": str(d), "slots_with_block": n, "first": a, "last": b} for d, n, a, b in rows]
+    """Per UTC day of the window: slots with a block, first and last slot, and the hours covered (the block time span;
+    a day at an epoch's edge, or a smoke's minutes, is partial)."""
+    rows = con.execute("""SELECT day, count(*) AS slots, min(slot), max(slot), (max(bt) - min(bt) + 1) / 3600.0
+                          FROM days GROUP BY day ORDER BY day""").fetchall()
+    return [{"day": str(d), "slots_with_block": n, "first": a, "last": b, "hours": h} for d, n, a, b, h in rows]
 
 
 def report(df, unknown, cov, lo, hi):
@@ -185,11 +190,14 @@ def report(df, unknown, cov, lo, hi):
                                   arbs=("arbs", "sum"), arb_net_sol=("arb_net_sol", "sum"), backruns=("backruns", "sum"),
                                   backrun_net_sol=("backrun_net_sol", "sum"), failed_attempts=("failed_attempts", "sum"),
                                   failed_attempt_cost_sol=("failed_attempt_cost_sol", "sum"))
-    days = max(1, df["day"].nunique())
+    hours = sum(c["hours"] for c in cov)
+    days = hours / 24 if hours else 1
     tot = tot.sort_values("txs", ascending=False)
     lines = [f"# Venue census, slots [{lo}, {hi})", "",
-             f"{days} UTC day(s) in the window; per-day columns are means over them. A day at an epoch's edge is partial "
-             "(coverage below). v0 definitions in wallets/venue_census.py. Pump reference: E17/E43 (experiment register).", "",
+             f"Covered: {hours:,.2f} h over {len(cov)} UTC day(s) (block time span per day, coverage below). Per-day columns "
+             f"are totals / {days:,.4f} covered days, not per calendar day: a partial edge day or a smoke's minutes count "
+             "by their hours. Counts (launches, graduations, pool creations) are totals. v0 definitions in "
+             "wallets/venue_census.py. Pump reference: E17/E43 (experiment register).", "",
              "| venue | txs/day | success | swap txs/day | volume proxy SOL/day | launches | graduations | pool creations | "
              "tips SOL/day | prio fees SOL/day | arbs/day | arb net SOL/day | backrun share | failed attempt cost SOL/day |",
              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
@@ -201,8 +209,8 @@ def report(df, unknown, cov, lo, hi):
                      f"{r.arb_net_sol / days:,.2f} | {bs:.0%} | {r.failed_attempt_cost_sol / days:,.2f} |")
     lines += ["", "## Unlabelled top-level programs (by transactions)", "", "| program | txs | succeeded |", "|---|---|---|"]
     lines += [f"| {p} | {n:,} | {ok:,} |" for p, n, ok in unknown]
-    lines += ["", "## Coverage", "", "| day | slots with a block | first | last |", "|---|---|---|---|"]
-    lines += [f"| {c['day']} | {c['slots_with_block']:,} | {c['first']} | {c['last']} |" for c in cov]
+    lines += ["", "## Coverage", "", "| day | hours covered | slots with a block | first | last |", "|---|---|---|---|---|"]
+    lines += [f"| {c['day']} | {c['hours']:,.2f} | {c['slots_with_block']:,} | {c['first']} | {c['last']} |" for c in cov]
     return "\n".join(lines) + "\n", tot
 
 
@@ -232,10 +240,11 @@ def main(argv=None):
     unknown = unknown_programs(con)
     cov = coverage(con, lo, hi)
     md, tot = report(df, unknown, cov, lo, hi)
+    covered_days = sum(c["hours"] for c in cov) / 24
     df.to_parquet(os.path.join(a.out, "venue_day.parquet"), index=False)
     with open(os.path.join(a.out, "venue_census.md"), "w") as f:
         f.write(md)
-    summary = {"slots": [lo, hi], "rows": con.execute("SELECT count(*) FROM vc").fetchone()[0],
+    summary = {"slots": [lo, hi], "rows": con.execute("SELECT count(*) FROM vc").fetchone()[0], "covered_days": covered_days,
                "venues": json.loads(tot.reset_index().to_json(orient="records")), "unknown_programs": unknown, "coverage": cov,
                "definitions": {"backrun_min_sol": BACKRUN_MIN_SOL, "backrun_slots": BACKRUN_SLOTS}}
     with open(os.path.join(a.out, "venue_census.json"), "w") as f:

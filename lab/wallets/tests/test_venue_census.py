@@ -81,9 +81,13 @@ def test_the_census_counts_venues_and_finds_the_backrun_arb_only(chunks, tmp_pat
     assert row("raydium_amm_v4", d2).arb_net_sol == pytest.approx(0.005)
     summary = json.loads((out / "venue_census.json").read_text())
     assert summary["rows"] == 10 and [p[0] for p in summary["unknown_programs"]] == [BOT_PROGRAM]
-    assert len(summary["coverage"]) == 2
+    # Coverage by block time: day 1 spans 100 s, day 2 2 s; per-day columns divide by the covered days, not by 2.
+    assert [c["hours"] for c in summary["coverage"]] == [pytest.approx(100 / 3600), pytest.approx(2 / 3600)]
+    assert summary["covered_days"] == pytest.approx(102 / 86_400, rel=0.01)
+    assert (cpmm.hours, orca.hours) == (pytest.approx(100 / 3600), pytest.approx(2 / 3600))
     md = (out / "venue_census.md").read_text()
-    assert "| raydium_cpmm |" in md and BOT_PROGRAM in md
+    per_day = 7 / summary["covered_days"]
+    assert BOT_PROGRAM in md and f"| raydium_cpmm | {per_day:,.0f} |" in md
 
 
 def test_hold_out_and_clean_epochs_are_refused(chunks, tmp_path):
