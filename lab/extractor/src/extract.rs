@@ -574,6 +574,8 @@ pub struct TxView<'a> {
     pub post_lamports: &'a [u64],
     pub pre_tokens: Vec<Bal<'a>>,
     pub post_tokens: Vec<Bal<'a>>,
+    /// The transaction's log lines (CPMM's emit! events are "Program data:" lines); empty when the block has none.
+    pub logs: &'a [String],
 }
 
 /// The extractor's token transfer tables (LAB_TRANSFERS=1): the pump.fun mint set and the columns.
@@ -865,6 +867,7 @@ fn tx_view(tx: &TransactionData) -> TxView<'_> {
         post_lamports: &meta.post_balances,
         keys,
         ixs,
+        logs: meta.log_messages.as_deref().unwrap_or(&[]),
     }
 }
 
@@ -1033,6 +1036,8 @@ impl Census {
                 }
                 venues.insert(label);
                 let (name, pool) = self.instruction(label, ix.data);
+                // An instruction the IDLs do not know: its first eight bytes, to be named (LAB review on #506).
+                let name = if name == "?" { format!("?{}", hex::encode(&ix.data[..ix.data.len().min(8)])) } else { name.to_owned() };
                 let pool = pool.and_then(|p| ix.accounts.get(usize::from(p))).and_then(|&a| v.keys.get(usize::from(a))).map(|k| b58(*k)).unwrap_or_default();
                 dex_ixs.push(format!("{label}:{name}:{pool}"));
             }
@@ -1078,16 +1083,20 @@ impl Census {
 }
 
 // ----------------------------------------------------------------------------- venue decoders
-// Step 1 of the other venues (research/venue-decoders-spec-2026-10-21.md v0.2, LAB review; PR 1): the events of
-// Meteora DBC, Meteora DAMM v2 and Raydium LaunchLab, which all emit with Anchor's emit_cpi (a self-CPI carrying the
-// event tag, as pump does), decoded with their pinned IDLs (idl/venues/SOURCES.md) field by field, and the graduation
-// instructions of DBC and LaunchLab (they emit no event). Costs, tips and venues of the transaction are in venue_census
-// (join on slot, tx_index). Extractor only (LAB_VENUES=1); LabPlugin::for_recorder never has it, and without it every
-// table is as before.
+// Step 1 of the other venues (research/venue-decoders-spec-2026-10-21.md v0.2, LAB review). PR 1: the events of Meteora
+// DBC, Meteora DAMM v2 and Raydium LaunchLab, which all emit with Anchor's emit_cpi (a self-CPI carrying the event tag,
+// as pump does), decoded with their pinned IDLs (idl/venues/SOURCES.md) field by field, and the graduation instructions
+// of DBC and LaunchLab (they emit no event). PR 2: Raydium CPMM, which emits with Anchor's emit! (base64 "Program data:"
+// lines in the transaction's log): the log lines it wrote itself, paired with its instructions in execution order; a
+// swap without its logged event (a truncated log) falls back to its vaults' token balance changes (source 'balance');
+// CPMM's pool creations (no event) get an instruction row. Costs, tips and venues of the transaction are in
+// venue_census (join on slot, tx_index). Extractor only (LAB_VENUES=1); LabPlugin::for_recorder never has it, and
+// without it every table is as before.
 
 pub const DBC_IDL: &str = include_str!("../idl/venues/meteora_dbc.json");
 pub const DAMM_V2_IDL: &str = include_str!("../idl/venues/meteora_damm_v2.json");
 pub const LAUNCHLAB_IDL: &str = include_str!("../idl/venues/raydium_launchlab.json");
+pub const CPMM_IDL: &str = include_str!("../idl/venues/raydium_cpmm.json");
 /// DBC's older releases (newest first): events and instructions the current IDL no longer has (fee claims, configs)
 /// still appear in historical blocks. Only discriminators the current IDL does not know are taken from them.
 pub const DBC_OLDER_IDLS: [(&str, &str); 4] = [
@@ -1098,28 +1107,38 @@ pub const DBC_OLDER_IDLS: [(&str, &str); 4] = [
 ];
 
 /// Context columns before the IDL fields in every venue event table (`<label>/<Event>`).
-pub const VENUE_EVENT_CONTEXT: [(&str, Kind); 18] = [
+pub const VENUE_EVENT_CONTEXT: [(&str, Kind); 20] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
     // The transaction failed: the runtime recorded this event before the failure (an arb route that failed after
     // its swap) and rolled its state back. Not a trade; kept for failed attempts (smoke 99zzzzs).
     ("failed", Kind::Bool),
-    // The event CPI's position: its top-level instruction and its index among that one's inner instructions.
+    // The event's position: for source 'cpi' the event CPI's (its top-level instruction and its index among that
+    // one's inner instructions); for 'log' and 'balance' the emitting instruction's own (an emit! has no instruction).
     ("outer_ix", Kind::U64),
     ("inner_ix", Kind::U64),
-    // Its position among this transaction's venue events.
+    // Its position among this transaction's decoded venue events (execution order), and among all of them, the
+    // venue_unknown_events rows included (LAB review on #506: an unknown event does not move event_seq).
     ("event_seq", Kind::U64),
+    ("event_seq_all", Kind::U64),
     ("fee_payer", Kind::Utf8),
     ("outer_program", Kind::Utf8),
-    // The instruction that emitted it: the nearest earlier instruction of the same program in the same top-level group
-    // that is no event: its inner index (NULL when it is the top-level one; one swap is one (slot, tx_index, outer_ix,
-    // parent_inner_ix), whatever number of events it emits: DBC emits EvtSwap and EvtSwap2 for one swap), its first
-    // eight bytes (hex), its IDL name and decoded arguments (slippage limits included).
+    // The instruction that emitted it: for 'cpi' the nearest earlier instruction of the same program in the same
+    // top-level group that is no event (one swap is one (slot, tx_index, outer_ix, parent_inner_ix), whatever number of
+    // events it emits: DBC emits EvtSwap and EvtSwap2 for one swap); for 'log' and 'balance' the instruction itself. Its
+    // inner index (NULL when it is the top-level one), its first eight bytes (hex), its IDL name and decoded arguments
+    // (slippage limits included).
     ("parent_inner_ix", Kind::U64),
     ("parent_ix_disc", Kind::Utf8),
     ("parent_ix_name", Kind::Utf8),
     ("parent_ix_args", Kind::Utf8),
+    // ok / prefix / extra / error (idl.rs DecodeStatus); for 'balance': balance, balance_ambiguous (another instruction
+    // of the program touches the same pool in the transaction: the amounts are NULL) or balance_missing (a vault has no
+    // balance row: NULL).
     ("decode_status", Kind::Utf8),
+    // cpi (an emit_cpi self-CPI), log (an emit! "Program data:" line) or balance (CPMM's fallback from its vaults' token
+    // balances when its log line is missing, e.g. a truncated log).
+    ("source", Kind::Utf8),
     ("payload_len", Kind::U64),
     // Accounts of the parent instruction by IDL name: the trader (payer / signer / owner / creator / user), the pool
     // (pool_state / pool / virtual_pool / ...), the base and quote mints (base_mint / token_a_mint / base_token_mint and
@@ -1129,6 +1148,11 @@ pub const VENUE_EVENT_CONTEXT: [(&str, Kind); 18] = [
     ("ix_base_mint", Kind::Utf8),
     ("ix_quote_mint", Kind::Utf8),
 ];
+/// Positions of event_seq and event_seq_all in VENUE_EVENT_CONTEXT and of event_seq_all in VENUE_UNKNOWN_COLS (set
+/// after the transaction's events are put in execution order).
+const SEQ_COL: usize = 5;
+const SEQ_ALL_COL: usize = 6;
+const UNKNOWN_SEQ_ALL_COL: usize = 4;
 
 /// One row per graduation instruction of a successful transaction.
 const VENUE_GRADUATION_COLS: [(&str, Kind); 12] = [
@@ -1149,13 +1173,37 @@ const VENUE_GRADUATION_COLS: [(&str, Kind); 12] = [
     ("quote_mint", Kind::Utf8),
 ];
 
+/// One row per pool-creation instruction without an event (CPMM's initialize and initialize_with_permission) of a
+/// successful transaction: the store's venue_pools reads it (spec §2).
+const VENUE_INIT_COLS: [(&str, Kind); 15] = [
+    ("slot", Kind::U64),
+    ("tx_index", Kind::U64),
+    ("outer_ix", Kind::U64),
+    // NULL when the instruction is top level.
+    ("inner_ix", Kind::U64),
+    ("fee_payer", Kind::Utf8),
+    ("venue", Kind::Utf8),
+    ("ix_name", Kind::Utf8),
+    ("pool", Kind::Utf8),
+    ("creator", Kind::Utf8),
+    ("token_0_mint", Kind::Utf8),
+    ("token_1_mint", Kind::Utf8),
+    ("token_0_vault", Kind::Utf8),
+    ("token_1_vault", Kind::Utf8),
+    ("lp_mint", Kind::Utf8),
+    // The decoded arguments (init amounts, open time, creator fee mode) as JSON.
+    ("ix_args", Kind::Utf8),
+];
+
 /// Venue events whose discriminator no pinned IDL knows (current or older): kept to be named, not decoded.
-const VENUE_UNKNOWN_COLS: [(&str, Kind); 9] = [
+const VENUE_UNKNOWN_COLS: [(&str, Kind); 11] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
     ("outer_ix", Kind::U64),
     ("inner_ix", Kind::U64),
+    ("event_seq_all", Kind::U64),
     ("venue", Kind::Utf8),
+    ("source", Kind::Utf8),
     ("event_disc", Kind::Utf8),
     ("payload_len", Kind::U64),
     ("parent_ix_name", Kind::Utf8),
@@ -1169,22 +1217,40 @@ pub const VENUE_GRADUATIONS: [(&str, &str, &str, &str, &str, &str, &str); 4] = [
     ("raydium_launchlab", "migrate_to_amm", "pool_state", "amm_pool", "base_mint", "quote_mint", "raydium_amm_v4"),
     ("raydium_launchlab", "migrate_to_cpswap", "pool_state", "cpswap_pool", "base_mint", "quote_mint", "raydium_cpmm"),
 ];
+/// (program label, instruction): pool creations without an event, written to venue_inits.
+pub const VENUE_INITS: [(&str, &str); 2] = [("raydium_cpmm", "initialize"), ("raydium_cpmm", "initialize_with_permission")];
+/// (program label, instruction, base_input): the swaps that fall back to their vaults' balances without a log event.
+pub const VENUE_BALANCE_SWAPS: [(&str, &str, bool); 2] = [("raydium_cpmm", "swap_base_input", true), ("raydium_cpmm", "swap_base_output", false)];
+/// Programs whose events are emit! log lines (no self-CPI).
+const VENUE_LOG_EVENTS: [&str; 1] = ["raydium_cpmm"];
 const VENUE_TRADER_ACCOUNTS: [&str; 5] = ["payer", "signer", "owner", "creator", "user"];
 const VENUE_POOL_ACCOUNTS: [&str; 7] = ["pool_state", "lb_pair", "whirlpool", "whirlpool_one", "pool", "virtual_pool", "amm"];
-const VENUE_BASE_ACCOUNTS: [&str; 3] = ["base_mint", "token_a_mint", "base_token_mint"];
-const VENUE_QUOTE_ACCOUNTS: [&str; 3] = ["quote_mint", "token_b_mint", "quote_token_mint"];
+const VENUE_BASE_ACCOUNTS: [&str; 4] = ["base_mint", "token_a_mint", "base_token_mint", "token_0_mint"];
+const VENUE_QUOTE_ACCOUNTS: [&str; 4] = ["quote_mint", "token_b_mint", "quote_token_mint", "token_1_mint"];
 
 /// An instruction of a venue program: its accounts' positions for the context and, for a graduation, its row.
 struct VenueIx {
     /// The IDL (VenueProgram.idls) that defines it: 0 the current one, then the older ones.
     idl: usize,
     name: &'static str,
+    /// The IDL's account names in order (the init rows and the balance fallback look accounts up by name).
+    accounts: Vec<String>,
     trader: Option<usize>,
     pool: Option<usize>,
     base: Option<usize>,
     quote: Option<usize>,
     /// (from pool, to pool, base, quote, to venue) positions of a graduation instruction.
     graduation: Option<(Option<usize>, Option<usize>, Option<usize>, Option<usize>, &'static str)>,
+    /// A pool creation without an event (VENUE_INITS).
+    init: bool,
+    /// A swap with the balance fallback (VENUE_BALANCE_SWAPS): its base_input.
+    balance_swap: Option<bool>,
+}
+
+impl VenueIx {
+    fn at(&self, name: &str) -> Option<usize> {
+        self.accounts.iter().position(|a| a == name)
+    }
 }
 
 struct VenueProgram {
@@ -1192,6 +1258,11 @@ struct VenueProgram {
     /// The current IDL first, then older ones (DBC): a discriminator is looked up in this order.
     idls: Vec<ProgramIdl>,
     ixs: HashMap<[u8; 8], VenueIx>,
+    /// Its events are emit! log lines (CPMM), not self-CPIs; the program id in base58 for the log walk.
+    log_events: bool,
+    address: String,
+    /// The event a balance fallback writes (CPMM's SwapEvent).
+    fallback_event: Option<[u8; 8]>,
 }
 
 impl VenueProgram {
@@ -1205,28 +1276,123 @@ impl VenueProgram {
     }
 }
 
-/// The venue decoders (LAB_VENUES=1): DBC, DAMM v2 and LaunchLab.
+/// The venue decoders (LAB_VENUES=1): DBC, DAMM v2, LaunchLab and CPMM.
 pub struct Venues {
     programs: Vec<VenueProgram>,
     grad_cols: Columns,
     grad_table: Arc<str>,
+    init_cols: Columns,
+    init_table: Arc<str>,
     unknown_cols: Columns,
     unknown_table: Arc<str>,
 }
 
-/// One transaction's venue rows and how many events had a discriminator the IDL does not know.
+/// One transaction's venue rows and its counts.
+#[derive(Default)]
 pub struct VenueRows {
     pub rows: Vec<Row>,
     pub events: u64,
     pub graduations: u64,
+    pub inits: u64,
     pub unknown_events: u64,
+    /// Transactions touching a log-event venue whose log was truncated ("Log truncated").
+    pub log_truncated: u64,
+    /// Successful transactions whose logged invocations of a log-event venue do not pair with its instructions (no
+    /// log lines at all, for one): their swaps fall back to balances.
+    pub log_unpaired: u64,
+    /// "Program data:" lines of a log-event venue that are no base64 or shorter than a discriminator.
+    pub log_undecodable: u64,
+    /// Swap rows from the balance fallback.
+    pub balance_rows: u64,
+}
+
+/// The "Program data:" lines a program logged itself (Anchor's emit!: base64 of discriminator and Borsh body), each with
+/// the ordinal of that program's invocation in execution order (0 = its first invoke in the transaction); whether the
+/// log was truncated ("Log truncated": the lines after it are lost); how many invocations of the program it shows.
+pub struct LogData<'a> {
+    pub data: Vec<(usize, &'a str)>,
+    pub truncated: bool,
+    pub invokes: usize,
+}
+
+/// The walk keeps the invoke stack from "Program <id> invoke [d]" / "Program <id> success" / "Program <id> failed: ..."
+/// lines; a data line belongs to the program on top. Only the first field of a data line is kept (emit! logs one).
+pub fn program_data<'a>(logs: &'a [String], program: &str) -> LogData<'a> {
+    let mut stack: Vec<Option<usize>> = Vec::new(); // per open invocation: its ordinal when it is `program`
+    let mut out = LogData { data: Vec::new(), truncated: false, invokes: 0 };
+    for line in logs {
+        if line == "Log truncated" {
+            out.truncated = true;
+            return out;
+        }
+        if let Some(rest) = line.strip_prefix("Program data: ") {
+            if let Some(Some(ord)) = stack.last() {
+                if let Some(first) = rest.split(' ').next() {
+                    out.data.push((*ord, first));
+                }
+            }
+            continue;
+        }
+        let mut t = line.split(' ');
+        if t.next() != Some("Program") {
+            continue;
+        }
+        let (Some(id), Some(word)) = (t.next(), t.next()) else { continue };
+        if !(32..=44).contains(&id.len()) {
+            continue; // "Program log: ...", "Program return: ...", "Program consumption: ..."
+        }
+        if word == "invoke" {
+            if id == program {
+                stack.push(Some(out.invokes));
+                out.invokes += 1;
+            } else {
+                stack.push(None);
+            }
+        } else if word == "success" || word.starts_with("failed") {
+            stack.pop();
+        }
+    }
+    out
+}
+
+/// Standard base64 (RFC 4648, padding optional); None on any other character.
+pub fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    let val = |c: u8| -> Option<u32> {
+        Some(match c {
+            b'A'..=b'Z' => u32::from(c - b'A'),
+            b'a'..=b'z' => u32::from(c - b'a') + 26,
+            b'0'..=b'9' => u32::from(c - b'0') + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return None,
+        })
+    };
+    let bytes = s.trim_end_matches('=').as_bytes();
+    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for &c in bytes {
+        acc = ((acc << 6) | val(c)?) & 0xffff;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((acc >> bits) & 0xff) as u8);
+        }
+    }
+    Some(out)
+}
+
+/// What an event row carries after its context: a body to decode with the IDL, or values built from balances.
+enum Payload<'a> {
+    Body(&'a [u8]),
+    Balance(&'static str, Vec<Val>),
 }
 
 impl Venues {
     pub fn new() -> anyhow::Result<Self> {
         let mut programs = Vec::new();
-        let older: [&[(&str, &str)]; 3] = [&DBC_OLDER_IDLS[..], &[], &[]];
-        for ((label, text), older) in [("meteora_dbc", DBC_IDL), ("meteora_damm_v2", DAMM_V2_IDL), ("raydium_launchlab", LAUNCHLAB_IDL)].into_iter().zip(older) {
+        let older: [&[(&str, &str)]; 4] = [&DBC_OLDER_IDLS[..], &[], &[], &[]];
+        let sources = [("meteora_dbc", DBC_IDL), ("meteora_damm_v2", DAMM_V2_IDL), ("raydium_launchlab", LAUNCHLAB_IDL), ("raydium_cpmm", CPMM_IDL)];
+        for ((label, text), older) in sources.into_iter().zip(older) {
             let mut idls = vec![ProgramIdl::with_context(label, text, &VENUE_EVENT_CONTEXT)?];
             for (file, t) in older {
                 let mut old = ProgramIdl::with_context(label, t, &VENUE_EVENT_CONTEXT)?;
@@ -1250,20 +1416,33 @@ impl Venues {
                     ixs.insert(ix.discriminator, VenueIx {
                         idl: n,
                         name,
+                        accounts: ix.accounts.clone(),
                         trader: first(&VENUE_TRADER_ACCOUNTS[..], &ix.accounts[..]),
                         pool: first(&VENUE_POOL_ACCOUNTS[..], &ix.accounts[..]),
                         base: first(&VENUE_BASE_ACCOUNTS[..], &ix.accounts[..]),
                         quote: first(&VENUE_QUOTE_ACCOUNTS[..], &ix.accounts[..]),
                         graduation,
+                        init: VENUE_INITS.iter().any(|g| g.0 == label && g.1 == ix.name),
+                        balance_swap: VENUE_BALANCE_SWAPS.iter().find(|g| g.0 == label && g.1 == ix.name).map(|g| g.2),
                     });
                 }
             }
-            programs.push(VenueProgram { label, idls, ixs });
+            let log_events = VENUE_LOG_EVENTS.contains(&label);
+            let fallback_event = if VENUE_BALANCE_SWAPS.iter().any(|g| g.0 == label) {
+                let ev = idls[0].idl.events.iter().find(|e| e.name == "SwapEvent");
+                Some(ev.ok_or_else(|| anyhow::anyhow!("{label}: the IDL has no SwapEvent for the balance fallback"))?.discriminator)
+            } else {
+                None
+            };
+            let address = idls[0].idl.address.clone();
+            programs.push(VenueProgram { label, idls, ixs, log_events, address, fallback_event });
         }
         Ok(Self {
             programs,
             grad_cols: cols(&VENUE_GRADUATION_COLS),
             grad_table: Arc::from("venue_graduations"),
+            init_cols: cols(&VENUE_INIT_COLS),
+            init_table: Arc::from("venue_inits"),
             unknown_cols: cols(&VENUE_UNKNOWN_COLS),
             unknown_table: Arc::from("venue_unknown_events"),
         })
@@ -1282,33 +1461,15 @@ impl Venues {
         self.programs.iter().map(|p| (p.label, p.idls[0].idl.address.clone())).collect()
     }
 
-    /// Does the transaction invoke a venue program (top level or inner)? Cheap: no view is built for the others.
-    pub fn invokes(&self, tx: &TransactionData) -> bool {
-        let msg = &tx.transaction.message;
-        let meta = &tx.transaction_status_meta;
-        let statics = msg.static_account_keys();
-        let (w, r) = (&meta.loaded_addresses.writable, &meta.loaded_addresses.readonly);
-        let is_venue = |i: u8| -> bool {
-            let i = usize::from(i);
-            let k: Option<&[u8]> = if i < statics.len() {
-                Some(statics[i].as_ref())
-            } else if i - statics.len() < w.len() {
-                Some(w[i - statics.len()].as_ref())
-            } else {
-                r.get(i - statics.len() - w.len()).map(AsRef::as_ref)
-            };
-            k.is_some_and(|k| self.programs.iter().any(|p| p.id() == k))
-        };
-        msg.instructions().iter().any(|ix| is_venue(ix.program_id_index))
-            || meta.inner_instructions.as_deref().unwrap_or(&[]).iter().any(|g| g.instructions.iter().any(|ix| is_venue(ix.instruction.program_id_index)))
-    }
-
-    /// The venue rows of one transaction: an event row per venue event self-CPI (or an unknown-event row; the events a
-    /// failed transaction recorded before its failure are kept, flagged failed), a graduation row per graduation
-    /// instruction of a successful transaction.
+    /// The venue rows of one transaction, in execution order:
+    /// - an event row per emit_cpi self-CPI (DBC, DAMM v2, LaunchLab) and per emit! log line (CPMM), or an unknown-event
+    ///   row; a failed transaction's events, recorded before its failure, are kept, flagged failed;
+    /// - for a CPMM swap of a successful transaction without its logged event, a fallback row from its vaults' balances;
+    /// - a graduation row per graduation instruction and an init row per pool creation without an event, of a successful
+    ///   transaction.
     pub fn rows(&self, v: &TxView) -> VenueRows {
         let b58 = |b: &[u8]| bs58::encode(b).into_string();
-        let mut out = VenueRows { rows: Vec::new(), events: 0, graduations: 0, unknown_events: 0 };
+        let mut out = VenueRows::default();
         let split = |path: &str| -> (u64, Option<u64>) {
             let mut it = path.split('.');
             let outer = it.next().and_then(|x| x.parse().ok()).unwrap_or(0);
@@ -1322,80 +1483,95 @@ impl Venues {
         };
         let disc_of = |d: &[u8]| -> Option<[u8; 8]> { d.get(..8).and_then(|x| <[u8; 8]>::try_from(x).ok()) };
         let hex8 = |d: &[u8]| Val::Str(hex::encode(&d[..d.len().min(8)]));
+        // One event's row: decoded (or built from balances), or an unknown-event row (false). The sequence columns are
+        // set once the transaction's events are in execution order.
+        let event_row = |vp: &VenueProgram, parent: Option<&IxView>, outer: u64, inner: Option<u64>, disc: [u8; 8], payload: Payload, source: &str| -> (bool, Row) {
+            let known = parent.and_then(|p| disc_of(p.data).and_then(|d| vp.ixs.get(&d)).map(|x| (p, x)));
+            let (name, args) = match known.and_then(|(p, x)| vp.idls[x.idl].idl.decode_instruction(p.data)) {
+                Some((name, args)) => (Val::Str(name.to_owned()), Val::Str(args)),
+                None => (Val::Null, Val::Null),
+            };
+            let (p_inner, p_disc) = match parent {
+                Some(p) => (split(&p.path).1.map_or(Val::Null, Val::U64), hex8(p.data)),
+                None => (Val::Null, Val::Null),
+            };
+            let body_len = match &payload {
+                Payload::Body(b) => Val::U64(b.len() as u64),
+                Payload::Balance(..) => Val::Null,
+            };
+            let Some((pidl, (ev_idx, table, columns))) = vp.event(&disc) else {
+                let values = vec![
+                    Val::U64(v.slot),
+                    Val::U64(v.tx_index),
+                    Val::U64(outer),
+                    inner.map_or(Val::Null, Val::U64),
+                    Val::Null,
+                    Val::Str(vp.label.to_owned()),
+                    Val::Str(source.to_owned()),
+                    Val::Str(hex::encode(disc)),
+                    body_len,
+                    name,
+                    p_disc,
+                ];
+                return (false, Row { table: self.unknown_table.clone(), columns: self.unknown_cols.clone(), values });
+            };
+            let pick = |f: fn(&VenueIx) -> Option<usize>| known.map_or(Val::Null, |(p, x)| key_of(p.accounts, f(x)));
+            let (status, fields) = match payload {
+                Payload::Body(body) => {
+                    let decoded = pidl.idl.decode_event(&pidl.idl.events[*ev_idx], body);
+                    (decoded.status.as_str(), decoded.values)
+                }
+                Payload::Balance(status, values) => (status, values),
+            };
+            let mut values = Vec::with_capacity(columns.len());
+            values.extend([
+                Val::U64(v.slot),
+                Val::U64(v.tx_index),
+                Val::Bool(v.failed),
+                Val::U64(outer),
+                inner.map_or(Val::Null, Val::U64),
+                Val::Null,
+                Val::Null,
+                Val::Str(v.fee_payer.clone()),
+                outer_program(outer),
+                p_inner,
+                p_disc,
+                name,
+                args,
+                Val::Str(status.to_owned()),
+                Val::Str(source.to_owned()),
+                body_len,
+                pick(|x| x.trader),
+                pick(|x| x.pool),
+                pick(|x| x.base),
+                pick(|x| x.quote),
+            ]);
+            values.extend(fields);
+            (true, Row { table: table.clone(), columns: columns.clone(), values })
+        };
+        // ((instruction index, order within it), decoded, row): sorted into execution order below.
+        let mut events: Vec<((usize, usize), bool, Row)> = Vec::new();
         for (n, ix) in v.ixs.iter().enumerate() {
             let Some(program) = ix.program else { continue };
             let Some(vp) = self.programs.iter().find(|p| p.id() == program) else { continue };
             let (outer, inner) = split(&ix.path);
-            if ix.data.len() >= 16 && ix.data[..8] == EVENT_IX_TAG {
+            if !vp.log_events && ix.data.len() >= 16 && ix.data[..8] == EVENT_IX_TAG {
                 let disc: [u8; 8] = ix.data[8..16].try_into().unwrap();
-                let body = &ix.data[16..];
                 // The parent: the nearest earlier instruction of this program in the same top-level group, no event.
                 let parent = v.ixs[..n]
                     .iter()
                     .rev()
                     .take_while(|p| split(&p.path).0 == outer)
                     .find(|p| p.program == Some(program) && !p.data.starts_with(&EVENT_IX_TAG));
-                let known = parent.and_then(|p| disc_of(p.data).and_then(|d| vp.ixs.get(&d)).map(|x| (p, x)));
-                let (name, args) = match known.and_then(|(p, x)| vp.idls[x.idl].idl.decode_instruction(p.data)) {
-                    Some((name, args)) => (Val::Str(name.to_owned()), Val::Str(args)),
-                    None => (Val::Null, Val::Null),
-                };
-                let (p_inner, p_disc) = match parent {
-                    Some(p) => (split(&p.path).1.map_or(Val::Null, Val::U64), hex8(p.data)),
-                    None => (Val::Null, Val::Null),
-                };
-                let Some((pidl, (ev_idx, table, columns))) = vp.event(&disc) else {
-                    out.unknown_events += 1;
-                    out.rows.push(Row {
-                        table: self.unknown_table.clone(),
-                        columns: self.unknown_cols.clone(),
-                        values: vec![
-                            Val::U64(v.slot),
-                            Val::U64(v.tx_index),
-                            Val::U64(outer),
-                            inner.map_or(Val::Null, Val::U64),
-                            Val::Str(vp.label.to_owned()),
-                            Val::Str(hex::encode(disc)),
-                            Val::U64(body.len() as u64),
-                            name,
-                            p_disc,
-                        ],
-                    });
-                    continue;
-                };
-                let pick = |f: fn(&VenueIx) -> Option<usize>| known.map_or(Val::Null, |(p, x)| key_of(p.accounts, f(x)));
-                let ev = &pidl.idl.events[*ev_idx];
-                let decoded = pidl.idl.decode_event(ev, body);
-                let mut values = Vec::with_capacity(columns.len());
-                values.extend([
-                    Val::U64(v.slot),
-                    Val::U64(v.tx_index),
-                    Val::Bool(v.failed),
-                    Val::U64(outer),
-                    inner.map_or(Val::Null, Val::U64),
-                    Val::U64(out.events),
-                    Val::Str(v.fee_payer.clone()),
-                    outer_program(outer),
-                    p_inner,
-                    p_disc,
-                    name,
-                    args,
-                    Val::Str(decoded.status.as_str().to_owned()),
-                    Val::U64(body.len() as u64),
-                    pick(|x| x.trader),
-                    pick(|x| x.pool),
-                    pick(|x| x.base),
-                    pick(|x| x.quote),
-                ]);
-                values.extend(decoded.values);
-                out.events += 1;
-                out.rows.push(Row { table: table.clone(), columns: columns.clone(), values });
-            } else if let Some((x, (from, to, base, quote, to_venue))) =
-                disc_of(ix.data).and_then(|d| vp.ixs.get(&d)).and_then(|x| x.graduation.map(|g| (x, g)))
-            {
-                if v.failed {
-                    continue;
-                }
+                let (decoded, row) = event_row(vp, parent, outer, inner, disc, Payload::Body(&ix.data[16..]), "cpi");
+                events.push(((n, 0), decoded, row));
+                continue;
+            }
+            let Some(x) = disc_of(ix.data).and_then(|d| vp.ixs.get(&d)) else { continue };
+            if v.failed {
+                continue;
+            }
+            if let Some((from, to, base, quote, to_venue)) = x.graduation {
                 out.graduations += 1;
                 out.rows.push(Row {
                     table: self.grad_table.clone(),
@@ -1415,9 +1591,431 @@ impl Venues {
                         key_of(ix.accounts, quote),
                     ],
                 });
+            } else if x.init {
+                out.inits += 1;
+                let args = vp.idls[x.idl].idl.decode_instruction(ix.data).map_or(Val::Null, |(_, a)| Val::Str(a));
+                out.rows.push(Row {
+                    table: self.init_table.clone(),
+                    columns: self.init_cols.clone(),
+                    values: vec![
+                        Val::U64(v.slot),
+                        Val::U64(v.tx_index),
+                        Val::U64(outer),
+                        inner.map_or(Val::Null, Val::U64),
+                        Val::Str(v.fee_payer.clone()),
+                        Val::Str(vp.label.to_owned()),
+                        Val::Str(x.name.to_owned()),
+                        key_of(ix.accounts, x.at("pool_state")),
+                        key_of(ix.accounts, x.at("creator")),
+                        key_of(ix.accounts, x.at("token_0_mint")),
+                        key_of(ix.accounts, x.at("token_1_mint")),
+                        key_of(ix.accounts, x.at("token_0_vault")),
+                        key_of(ix.accounts, x.at("token_1_vault")),
+                        key_of(ix.accounts, x.at("lp_mint")),
+                        args,
+                    ],
+                });
             }
         }
+        // emit! venues: their own "Program data:" lines, paired with their instructions in execution order (the k-th
+        // logged invocation is the k-th instruction of the program: top level i, then its inner i.j).
+        for vp in self.programs.iter().filter(|p| p.log_events) {
+            let ids: Vec<usize> = v.ixs.iter().enumerate().filter(|(_, x)| x.program == Some(vp.id())).map(|(n, _)| n).collect();
+            if ids.is_empty() {
+                continue;
+            }
+            let logs = program_data(v.logs, &vp.address);
+            out.log_truncated += u64::from(logs.truncated);
+            // A truncated log pairs its logged prefix, a failed transaction the invocations that ran; a successful one
+            // must show every instruction's invocation, else nothing pairs (its swaps fall back to balances).
+            let paired = logs.truncated || v.failed || logs.invokes == ids.len();
+            out.log_unpaired += u64::from(!paired);
+            let mut with_event: std::collections::HashSet<usize> = std::collections::HashSet::new();
+            if paired {
+                for (k, (ord, text)) in logs.data.iter().enumerate() {
+                    let Some(&n) = ids.get(*ord) else { continue };
+                    let Some(bytes) = base64_decode(text).filter(|b| b.len() >= 8) else {
+                        out.log_undecodable += 1;
+                        continue;
+                    };
+                    let p = &v.ixs[n];
+                    let (outer, inner) = split(&p.path);
+                    let disc: [u8; 8] = bytes[..8].try_into().unwrap();
+                    let (decoded, row) = event_row(vp, Some(p), outer, inner, disc, Payload::Body(&bytes[8..]), "log");
+                    with_event.insert(n);
+                    events.push(((n, k + 1), decoded, row));
+                }
+            }
+            // The balance fallback: a swap of a successful transaction without its logged event (a failed transaction
+            // changed no balance).
+            let Some(fallback) = vp.fallback_event.filter(|_| !v.failed) else { continue };
+            let Some((_, (_, _, columns))) = vp.event(&fallback) else { continue };
+            let ix_of = |n: usize| disc_of(v.ixs[n].data).and_then(|d| vp.ixs.get(&d));
+            for &n in &ids {
+                let p = &v.ixs[n];
+                let Some(x) = ix_of(n) else { continue };
+                let Some(base_input) = x.balance_swap else { continue };
+                if with_event.contains(&n) {
+                    continue;
+                }
+                let acct = |name: &str| x.at(name).and_then(|i| p.accounts.get(i)).copied();
+                let pool = acct("pool_state");
+                // Another instruction of the program on the same pool in this transaction: the vault deltas are shared.
+                let shared = ids.iter().any(|&m| {
+                    m != n && ix_of(m).is_some_and(|y| y.at("pool_state").and_then(|i| v.ixs[m].accounts.get(i)).copied() == pool)
+                });
+                let bal = |list: &[Bal], a: Option<u8>| a.and_then(|a| list.iter().find(|b| b.idx == a)).and_then(|b| u64::try_from(b.amount).ok());
+                let (in_vault, out_vault) = (acct("input_vault"), acct("output_vault"));
+                let (in_pre, in_post) = (bal(&v.pre_tokens, in_vault), bal(&v.post_tokens, in_vault));
+                let (out_pre, out_post) = (bal(&v.pre_tokens, out_vault), bal(&v.post_tokens, out_vault));
+                let status = if shared {
+                    "balance_ambiguous"
+                } else if in_pre.is_none() || in_post.is_none() || out_pre.is_none() || out_post.is_none() {
+                    "balance_missing"
+                } else {
+                    "balance"
+                };
+                let exact = status == "balance";
+                let amount = |a: Option<u64>, b: Option<u64>| match (a, b) {
+                    (Some(a), Some(b)) if exact && b >= a => Val::U64(b - a),
+                    _ => Val::Null,
+                };
+                let opt = |x: Option<u64>| if exact { x.map_or(Val::Null, Val::U64) } else { Val::Null };
+                let fields: Vec<Val> = columns[VENUE_EVENT_CONTEXT.len()..]
+                    .iter()
+                    .map(|(name, _)| match name.as_str() {
+                        "pool_id" => key_of(p.accounts, x.at("pool_state")),
+                        "input_vault_before" => opt(in_pre),
+                        "output_vault_before" => opt(out_pre),
+                        "input_amount" => amount(in_pre, in_post),
+                        "output_amount" => amount(out_post, out_pre),
+                        "base_input" => Val::Bool(base_input),
+                        "input_mint" => key_of(p.accounts, x.at("input_token_mint")),
+                        "output_mint" => key_of(p.accounts, x.at("output_token_mint")),
+                        _ => Val::Null,
+                    })
+                    .collect();
+                let (outer, inner) = split(&p.path);
+                let (decoded, row) = event_row(vp, Some(p), outer, inner, fallback, Payload::Balance(status, fields), "balance");
+                out.balance_rows += 1;
+                events.push(((n, 0), decoded, row));
+            }
+        }
+        events.sort_by_key(|e| e.0);
+        let (mut seq, mut seq_all) = (0u64, 0u64);
+        for (_, decoded, mut row) in events {
+            if decoded {
+                row.values[SEQ_COL] = Val::U64(seq);
+                row.values[SEQ_ALL_COL] = Val::U64(seq_all);
+                seq += 1;
+                out.events += 1;
+            } else {
+                row.values[UNKNOWN_SEQ_ALL_COL] = Val::U64(seq_all);
+                out.unknown_events += 1;
+            }
+            seq_all += 1;
+            out.rows.push(row);
+        }
         out
+    }
+}
+
+#[cfg(test)]
+mod venue_tests {
+    use super::*;
+
+    const CPMM: &str = "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C";
+    const JUP: &str = "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4";
+    const TOKEN: &str = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA";
+    const WSOL_MINT: &str = "So11111111111111111111111111111111111111112";
+
+    fn lines(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    fn pk(n: u8) -> [u8; 32] {
+        let mut k = [n; 32];
+        k[0] = 1; // any 32 bytes are a valid base58 key
+        k
+    }
+
+    fn k58(k: &[u8]) -> String {
+        bs58::encode(k).into_string()
+    }
+
+    fn b64(bytes: &[u8]) -> String {
+        const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut s = String::new();
+        for c in bytes.chunks(3) {
+            let n = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
+            for i in 0..4 {
+                if i <= c.len() {
+                    s.push(char::from(A[((n >> (18 - 6 * i)) & 63) as usize]));
+                } else {
+                    s.push('=');
+                }
+            }
+        }
+        s
+    }
+
+    fn col<'r>(r: &'r Row, name: &str) -> &'r Val {
+        let i = r.columns.iter().position(|(n, _)| n == name).unwrap_or_else(|| panic!("no column {name}"));
+        &r.values[i]
+    }
+
+    fn st(s: &str) -> Val {
+        Val::Str(s.to_owned())
+    }
+
+    fn ix_disc(name: &str) -> [u8; 8] {
+        Idl::parse(CPMM_IDL).unwrap().instructions.iter().find(|i| i.name == name).unwrap().discriminator
+    }
+
+    fn swap_event(pool: &[u8; 32], in_before: u64, out_before: u64, amount_in: u64, amount_out: u64, base_input: bool, mints: (&[u8; 32], &[u8; 32])) -> Vec<u8> {
+        let ev = Idl::parse(CPMM_IDL).unwrap().events.into_iter().find(|e| e.name == "SwapEvent").unwrap();
+        let mut b = ev.discriminator.to_vec();
+        b.extend(pool);
+        for x in [in_before, out_before, amount_in, amount_out, 0, 0] {
+            b.extend(x.to_le_bytes());
+        }
+        b.push(u8::from(base_input));
+        b.extend(mints.0);
+        b.extend(mints.1);
+        b.extend(2_500u64.to_le_bytes()); // trade_fee
+        b.extend(0u64.to_le_bytes()); // creator_fee
+        b.push(0); // creator_fee_on_input
+        b
+    }
+
+    // keys: payer 0, cpmm 1, pool 2, input vault 3, output vault 4, WSOL 5, token 6, jupiter 7, token program 8, config 9
+    struct Fixture {
+        keys: Vec<[u8; 32]>,
+        swap_accounts: Vec<u8>,
+    }
+
+    fn fixture() -> Fixture {
+        let keys = vec![pk(10), key(CPMM), pk(12), pk(13), pk(14), key(WSOL_MINT), pk(16), key(JUP), key(TOKEN), pk(19)];
+        // swap accounts: payer, authority, amm_config, pool_state, input/output token account, input/output vault,
+        // input/output token program, input/output mint, observation_state
+        Fixture { keys, swap_accounts: vec![0, 9, 9, 2, 0, 0, 3, 4, 8, 8, 5, 6, 9] }
+    }
+
+    fn view<'a>(f: &'a Fixture, ixs: Vec<IxView<'a>>, logs: &'a [String], failed: bool, pre: Vec<Bal<'a>>, post: Vec<Bal<'a>>) -> TxView<'a> {
+        TxView {
+            slot: 9,
+            tx_index: 4,
+            fee_payer: k58(&f.keys[0]),
+            failed,
+            keys: f.keys.iter().map(|k| &k[..]).collect(),
+            ixs,
+            logs,
+            pre_lamports: &[],
+            post_lamports: &[],
+            pre_tokens: pre,
+            post_tokens: post,
+        }
+    }
+
+    #[test]
+    fn data_lines_belong_to_the_invocation_on_top() {
+        let logs = lines(&[
+            "Program ComputeBudget111111111111111111111111111111 invoke [1]",
+            "Program ComputeBudget111111111111111111111111111111 success",
+            &format!("Program {JUP} invoke [1]"),
+            "Program log: Instruction: Route",
+            &format!("Program {CPMM} invoke [2]"),
+            "Program log: Instruction: SwapBaseInput",
+            &format!("Program {TOKEN} invoke [3]"),
+            &format!("Program {TOKEN} consumed 6200 of 180000 compute units"),
+            &format!("Program {TOKEN} success"),
+            "Program data: QUFB",
+            &format!("Program {CPMM} consumed 30000 of 170000 compute units"),
+            &format!("Program {CPMM} success"),
+            "Program data: SlVQ",
+            &format!("Program {CPMM} invoke [2]"),
+            "Program data: QkJC b3RoZXI=",
+            &format!("Program {CPMM} failed: custom program error: 0x1"),
+            &format!("Program {JUP} success"),
+        ]);
+        let d = program_data(&logs, CPMM);
+        // The first CPMM invocation's data, not Jupiter's own line, then the second invocation's first field.
+        assert_eq!((d.data, d.truncated, d.invokes), (vec![(0, "QUFB"), (1, "QkJC")], false, 2));
+        assert_eq!(program_data(&logs, JUP).data, vec![(0, "SlVQ")]);
+        let truncated = lines(&[&format!("Program {CPMM} invoke [1]"), "Program data: QUFB", "Log truncated"]);
+        let t = program_data(&truncated, CPMM);
+        assert_eq!((t.data, t.truncated, t.invokes), (vec![(0, "QUFB")], true, 1));
+    }
+
+    #[test]
+    fn base64_round_trips() {
+        assert_eq!(base64_decode("QUFB"), Some(b"AAA".to_vec()));
+        assert_eq!(base64_decode("b3RoZXI="), Some(b"other".to_vec()));
+        assert_eq!(base64_decode("AQID/w=="), Some(vec![1, 2, 3, 255]));
+        assert_eq!(base64_decode("+/8="), Some(vec![251, 255]));
+        assert_eq!(base64_decode("not base64!"), None);
+        assert_eq!(base64_decode(""), Some(vec![]));
+        let long: Vec<u8> = (0..=255u8).collect();
+        assert_eq!(base64_decode(&b64(&long)), Some(long));
+    }
+
+    #[test]
+    fn cpmm_swap_events_come_from_the_log_in_execution_order() {
+        let f = fixture();
+        let (cpmm, jup) = (&f.keys[1][..], &f.keys[7][..]);
+        let (sbi, sbo) = (ix_disc("swap_base_input"), ix_disc("swap_base_output"));
+        let data_in: Vec<u8> = sbi.iter().copied().chain(1_000u64.to_le_bytes()).chain(1u64.to_le_bytes()).collect();
+        let data_out: Vec<u8> = sbo.iter().copied().chain(9_000u64.to_le_bytes()).chain(500u64.to_le_bytes()).collect();
+        let ixs = || vec![
+            IxView { path: "0".into(), program: Some(jup), accounts: &[0][..], data: &[1][..], parent: None },
+            IxView { path: "0.0".into(), program: Some(cpmm), accounts: &f.swap_accounts[..], data: &data_in[..], parent: Some(jup) },
+            IxView { path: "0.1".into(), program: Some(&f.keys[8][..]), accounts: &[3][..], data: &[3][..], parent: Some(cpmm) },
+            IxView { path: "1".into(), program: Some(cpmm), accounts: &f.swap_accounts[..], data: &data_out[..], parent: None },
+        ];
+        let (a, b) = (
+            swap_event(&f.keys[2], 100, 200, 1_000, 1_900, true, (&f.keys[5], &f.keys[6])),
+            swap_event(&f.keys[2], 1_100, 0, 480, 500, false, (&f.keys[5], &f.keys[6])),
+        );
+        let logs = lines(&[
+            &format!("Program {JUP} invoke [1]"),
+            &format!("Program {CPMM} invoke [2]"),
+            &format!("Program {TOKEN} invoke [3]"),
+            &format!("Program {TOKEN} success"),
+            &format!("Program data: {}", b64(&a)),
+            &format!("Program {CPMM} success"),
+            &format!("Program {JUP} success"),
+            &format!("Program {CPMM} invoke [1]"),
+            &format!("Program data: {}", b64(&b)),
+            &format!("Program {CPMM} success"),
+        ]);
+        let out = Venues::new().unwrap().rows(&view(&f, ixs(), &logs, false, vec![], vec![]));
+        assert_eq!((out.events, out.balance_rows, out.log_truncated, out.log_unpaired, out.unknown_events), (2, 0, 0, 0, 0));
+        let r: Vec<&Row> = out.rows.iter().filter(|r| &*r.table == "raydium_cpmm/SwapEvent").collect();
+        assert_eq!(r.len(), 2);
+        let got: Vec<Vec<Val>> = r.iter().map(|r| ["outer_ix", "inner_ix", "event_seq", "event_seq_all", "parent_ix_name", "source", "decode_status", "input_amount", "output_amount", "base_input", "ix_pool", "ix_trader"]
+            .iter().map(|c| col(r, c).clone()).collect()).collect();
+        assert_eq!(got, vec![
+            vec![Val::U64(0), Val::U64(0), Val::U64(0), Val::U64(0), st("swap_base_input"), st("log"), st("ok"), Val::U64(1_000), Val::U64(1_900), Val::Bool(true), st(&k58(&f.keys[2])), st(&k58(&f.keys[0]))],
+            vec![Val::U64(1), Val::Null, Val::U64(1), Val::U64(1), st("swap_base_output"), st("log"), st("ok"), Val::U64(480), Val::U64(500), Val::Bool(false), st(&k58(&f.keys[2])), st(&k58(&f.keys[0]))],
+        ]);
+        assert_eq!(col(r[0], "outer_program"), &st(JUP));
+        assert_eq!(col(r[0], "parent_inner_ix"), &Val::U64(0));
+        assert_eq!(col(r[0], "parent_ix_disc"), &st(&hex::encode(sbi)));
+        assert_eq!((col(r[0], "input_mint"), col(r[0], "trade_fee")), (&st(WSOL_MINT), &Val::U64(2_500)));
+    }
+
+    #[test]
+    fn a_truncated_log_falls_back_to_the_vault_balances() {
+        let f = fixture();
+        let cpmm = &f.keys[1][..];
+        let sbi = ix_disc("swap_base_input");
+        let data: Vec<u8> = sbi.iter().copied().chain(600u64.to_le_bytes()).chain(1u64.to_le_bytes()).collect();
+        let bal = |idx: u8, amount: u128| Bal { idx, mint: "m", owner: "o", amount, decimals: 6 };
+        let logs = lines(&[&format!("Program {CPMM} invoke [1]"), "Log truncated"]);
+        let one = vec![IxView { path: "0".into(), program: Some(cpmm), accounts: &f.swap_accounts[..], data: &data[..], parent: None }];
+        let venues = Venues::new().unwrap();
+        let out = venues.rows(&view(&f, one, &logs, false, vec![bal(3, 1_000), bal(4, 5_000)], vec![bal(3, 1_600), bal(4, 4_100)]));
+        assert_eq!((out.events, out.balance_rows, out.log_truncated), (1, 1, 1));
+        let r = &out.rows[0];
+        assert_eq!(&*r.table, "raydium_cpmm/SwapEvent");
+        let got: Vec<Val> = ["source", "decode_status", "payload_len", "input_amount", "output_amount", "input_vault_before", "output_vault_before", "base_input", "pool_id", "output_mint", "trade_fee", "parent_ix_name"]
+            .iter().map(|c| col(r, c).clone()).collect();
+        assert_eq!(got, vec![st("balance"), st("balance"), Val::Null, Val::U64(600), Val::U64(900), Val::U64(1_000), Val::U64(5_000), Val::Bool(true),
+                             st(&k58(&f.keys[2])), st(&k58(&f.keys[6])), Val::Null, st("swap_base_input")]);
+        // Two swaps on the same pool share the vault deltas: no amounts.
+        let two = vec![
+            IxView { path: "0".into(), program: Some(cpmm), accounts: &f.swap_accounts[..], data: &data[..], parent: None },
+            IxView { path: "1".into(), program: Some(cpmm), accounts: &f.swap_accounts[..], data: &data[..], parent: None },
+        ];
+        let out = venues.rows(&view(&f, two, &logs, false, vec![bal(3, 1_000), bal(4, 5_000)], vec![bal(3, 2_200), bal(4, 3_000)]));
+        assert_eq!(out.balance_rows, 2);
+        assert!(out.rows.iter().all(|r| col(r, "decode_status") == &st("balance_ambiguous") && col(r, "input_amount") == &Val::Null));
+        // A vault without a balance row: no amounts.
+        let one = vec![IxView { path: "0".into(), program: Some(cpmm), accounts: &f.swap_accounts[..], data: &data[..], parent: None }];
+        let out = venues.rows(&view(&f, one, &logs, false, vec![bal(3, 1_000)], vec![bal(3, 1_600)]));
+        assert_eq!(col(&out.rows[0], "decode_status"), &st("balance_missing"));
+        // A failed transaction changed no balance: no fallback.
+        let one = vec![IxView { path: "0".into(), program: Some(cpmm), accounts: &f.swap_accounts[..], data: &data[..], parent: None }];
+        let out = venues.rows(&view(&f, one, &logs, true, vec![], vec![]));
+        assert_eq!((out.rows.len(), out.balance_rows), (0, 0));
+        // A successful transaction whose log shows no invocation at all does not pair: every swap falls back.
+        let one = vec![IxView { path: "0".into(), program: Some(cpmm), accounts: &f.swap_accounts[..], data: &data[..], parent: None }];
+        let out = venues.rows(&view(&f, one, &[], false, vec![bal(3, 1_000), bal(4, 5_000)], vec![bal(3, 1_600), bal(4, 4_100)]));
+        assert_eq!((out.log_unpaired, out.balance_rows), (1, 1));
+    }
+
+    #[test]
+    fn unknown_and_undecodable_log_lines_are_counted_and_seq_all_counts_unknown_events() {
+        let f = fixture();
+        let cpmm = &f.keys[1][..];
+        let sbi = ix_disc("swap_base_input");
+        let data: Vec<u8> = sbi.iter().copied().chain(600u64.to_le_bytes()).chain(1u64.to_le_bytes()).collect();
+        let unknown: Vec<u8> = [9u8; 8].into_iter().chain([1u8, 2, 3]).collect();
+        let ev = swap_event(&f.keys[2], 1, 2, 3, 4, true, (&f.keys[5], &f.keys[6]));
+        let logs = lines(&[
+            &format!("Program {CPMM} invoke [1]"),
+            &format!("Program data: {}", b64(&unknown)),
+            "Program data: !!",
+            &format!("Program data: {}", b64(&ev)),
+            &format!("Program {CPMM} success"),
+        ]);
+        let ixs = vec![IxView { path: "0".into(), program: Some(cpmm), accounts: &f.swap_accounts[..], data: &data[..], parent: None }];
+        let out = Venues::new().unwrap().rows(&view(&f, ixs, &logs, false, vec![], vec![]));
+        assert_eq!((out.events, out.unknown_events, out.log_undecodable, out.balance_rows), (1, 1, 1, 0));
+        let unk = out.rows.iter().find(|r| &*r.table == "venue_unknown_events").unwrap();
+        assert_eq!((col(unk, "venue"), col(unk, "source"), col(unk, "event_disc"), col(unk, "event_seq_all"), col(unk, "parent_ix_name")),
+                   (&st("raydium_cpmm"), &st("log"), &st("0909090909090909"), &Val::U64(0), &st("swap_base_input")));
+        let sw = out.rows.iter().find(|r| &*r.table == "raydium_cpmm/SwapEvent").unwrap();
+        assert_eq!((col(sw, "event_seq"), col(sw, "event_seq_all")), (&Val::U64(0), &Val::U64(1)));
+    }
+
+    #[test]
+    fn a_cpmm_pool_creation_gets_its_init_row() {
+        let f = fixture();
+        let cpmm = &f.keys[1][..];
+        let init = ix_disc("initialize");
+        let data: Vec<u8> = init.iter().copied().chain(5u64.to_le_bytes()).chain(7u64.to_le_bytes()).chain(0u64.to_le_bytes()).collect();
+        // initialize: creator 0, amm_config 1, authority 2, pool_state 3, token_0_mint 4, token_1_mint 5, lp_mint 6, ...,
+        // token_0_vault 10, token_1_vault 11 (20 accounts)
+        let mut accounts = [9u8; 20];
+        (accounts[0], accounts[3], accounts[4], accounts[5], accounts[6], accounts[10], accounts[11]) = (0, 2, 5, 6, 9, 3, 4);
+        let ixs = || vec![IxView { path: "0".into(), program: Some(cpmm), accounts: &accounts[..], data: &data[..], parent: None }];
+        let venues = Venues::new().unwrap();
+        let out = venues.rows(&view(&f, ixs(), &lines(&[&format!("Program {CPMM} invoke [1]"), &format!("Program {CPMM} success")]), false, vec![], vec![]));
+        assert_eq!(out.inits, 1);
+        let r = &out.rows[0];
+        let got: Vec<Val> = ["venue", "ix_name", "pool", "creator", "token_0_mint", "token_1_mint", "token_0_vault", "token_1_vault", "outer_ix", "inner_ix"]
+            .iter().map(|c| col(r, c).clone()).collect();
+        assert_eq!(got, vec![st("raydium_cpmm"), st("initialize"), st(&k58(&f.keys[2])), st(&k58(&f.keys[0])), st(WSOL_MINT), st(&k58(&f.keys[6])),
+                             st(&k58(&f.keys[3])), st(&k58(&f.keys[4])), Val::U64(0), Val::Null]);
+        assert!(matches!(col(r, "ix_args"), Val::Str(s) if s.contains("init_amount_0")));
+        // A failed transaction creates nothing.
+        assert_eq!(venues.rows(&view(&f, ixs(), &[], true, vec![], vec![])).inits, 0);
+    }
+}
+// ----------------------------------------------------------------------------- end of venue decoders
+
+/// Outside the venue section (it reads the firehose's transaction, not the view).
+impl Venues {
+    /// Does the transaction invoke a venue program (top level or inner)? Cheap: no view is built for the others.
+    pub fn invokes(&self, tx: &TransactionData) -> bool {
+        let msg = &tx.transaction.message;
+        let meta = &tx.transaction_status_meta;
+        let statics = msg.static_account_keys();
+        let (w, r) = (&meta.loaded_addresses.writable, &meta.loaded_addresses.readonly);
+        let is_venue = |i: u8| -> bool {
+            let i = usize::from(i);
+            let k: Option<&[u8]> = if i < statics.len() {
+                Some(statics[i].as_ref())
+            } else if i - statics.len() < w.len() {
+                Some(w[i - statics.len()].as_ref())
+            } else {
+                r.get(i - statics.len() - w.len()).map(AsRef::as_ref)
+            };
+            k.is_some_and(|k| self.programs.iter().any(|p| p.id() == k))
+        };
+        msg.instructions().iter().any(|ix| is_venue(ix.program_id_index))
+            || meta.inner_instructions.as_deref().unwrap_or(&[]).iter().any(|g| g.instructions.iter().any(|ix| is_venue(ix.instruction.program_id_index)))
     }
 }
 
@@ -1447,7 +2045,12 @@ pub struct Counters {
     /// Venue events, graduation rows and events with a discriminator the venue IDLs do not know (LAB_VENUES=1).
     pub venue_events: AtomicU64,
     pub venue_graduations: AtomicU64,
+    pub venue_inits: AtomicU64,
     pub venue_unknown_events: AtomicU64,
+    pub venue_log_truncated: AtomicU64,
+    pub venue_log_unpaired: AtomicU64,
+    pub venue_log_undecodable: AtomicU64,
+    pub venue_balance_rows: AtomicU64,
 }
 
 /// Old Faithful's storage (Backblaze B2 behind Cloudflare) answers new requests with HTTP 429
@@ -1658,6 +2261,11 @@ impl LabPlugin {
             self.counters.venue_events.fetch_add(out.events, Ordering::Relaxed);
             self.counters.venue_graduations.fetch_add(out.graduations, Ordering::Relaxed);
             self.counters.venue_unknown_events.fetch_add(out.unknown_events, Ordering::Relaxed);
+            self.counters.venue_inits.fetch_add(out.inits, Ordering::Relaxed);
+            self.counters.venue_log_truncated.fetch_add(out.log_truncated, Ordering::Relaxed);
+            self.counters.venue_log_unpaired.fetch_add(out.log_unpaired, Ordering::Relaxed);
+            self.counters.venue_log_undecodable.fetch_add(out.log_undecodable, Ordering::Relaxed);
+            self.counters.venue_balance_rows.fetch_add(out.balance_rows, Ordering::Relaxed);
             rows.extend(out.rows);
         }
         if let Some(c) = census {
@@ -2498,7 +3106,7 @@ mod tests {
         let birth = system_ix(2, 2 * FUNDING_MIN_LAMPORTS, None);
         let not_birth = system_ix(2, 5 * FUNDING_MIN_LAMPORTS, None);
         let small = system_ix(2, FUNDING_MIN_LAMPORTS - 1, None);
-        let tx = TxView {
+        let tx = TxView { logs: &[],
             slot: 7,
             tx_index: 3,
             fee_payer: b58(&payer),
@@ -2573,7 +3181,7 @@ mod tests {
         ];
         let t = Transfers::new(std::collections::HashSet::new(), None);
         let pre: [u64; 8] = [10_000_000_000, 0, 0, 0, 0, 0, 0, 1];
-        let ok = TxView { slot: 1, tx_index: 0, fee_payer: b58(&payer), failed: false, keys: keys.clone(), ixs: ixs(), pre_lamports: &pre,
+        let ok = TxView { logs: &[], slot: 1, tx_index: 0, fee_payer: b58(&payer), failed: false, keys: keys.clone(), ixs: ixs(), pre_lamports: &pre,
                           post_lamports: &[9_985_000_000, 3_000_000, 0, 3_000_000, 3_000_000, 3_000_000, 1_447_680, 1],
                           pre_tokens: vec![], post_tokens: vec![bal(1, WSOL_MINT, "PayerOwner", 3_000_000)] };
         let to = |tx: &TxView| t.rows(tx, &[], &Default::default()).iter().filter(|r| &*r.table == "sol_funding")
@@ -2592,7 +3200,7 @@ mod tests {
         let t = Transfers::new(std::collections::HashSet::from(["Known".to_owned()]), None);
         assert!(t.is_pump("Known") && t.is_pump("AbcdefPump111pump") && !t.is_pump("Other"));
         let created = event("pump/CreateEvent", &[("mint", st("NewMint"))]);
-        let tx = TxView { slot: 1, tx_index: 0, fee_payer: String::new(), failed: false, keys: vec![], ixs: vec![], pre_lamports: &[], post_lamports: &[],
+        let tx = TxView { logs: &[], slot: 1, tx_index: 0, fee_payer: String::new(), failed: false, keys: vec![], ixs: vec![], pre_lamports: &[], post_lamports: &[],
                           pre_tokens: vec![bal(0, "Other", "A", 5)], post_tokens: vec![bal(0, "Other", "A", 1)] };
         assert!(t.rows(&tx, &[created], &Default::default()).is_empty()); // "Other" is no pump mint
         assert!(t.is_pump("NewMint"));
@@ -2632,7 +3240,7 @@ mod tests {
         let files: [(&str, &str); 10] = [
             ("pump", PUMP_IDL),
             ("pump_amm", PUMP_AMM_IDL),
-            ("raydium_cpmm", include_str!("../idl/venues/raydium_cpmm.json")),
+            ("raydium_cpmm", CPMM_IDL),
             ("raydium_clmm", include_str!("../idl/venues/raydium_clmm.json")),
             ("raydium_launchlab", include_str!("../idl/venues/raydium_launchlab.json")),
             ("meteora_dlmm", include_str!("../idl/venues/meteora_dlmm.json")),
@@ -2693,7 +3301,7 @@ mod tests {
         let event: Vec<u8> = EVENT_IX_TAG.iter().copied().chain([1u8; 8]).collect();
         let tip_ix = system_ix(2, 1_000_000, None);
         let price = [3u8, 1, 0, 0, 0, 0, 0, 0, 0];
-        let view = TxView {
+        let view = TxView { logs: &[],
             slot: 9,
             tx_index: 4,
             fee_payer: payer_s.to_owned(),
@@ -2751,7 +3359,7 @@ mod tests {
         let census = Census::new();
         let labels = labels();
         let row = |failed: bool, ixs: Vec<IxView>| {
-            let view = TxView {
+            let view = TxView { logs: &[],
                 slot: 1, tx_index: 0, fee_payer: b58(&payer), failed, keys: keys.clone(), ixs,
                 pre_lamports: &[5_000_000, 1, 1, 1, 1, 1, 1], post_lamports: &[4_990_000, 1, 1, 1, 1, 1, 1], pre_tokens: vec![], post_tokens: vec![],
             };
@@ -2765,7 +3373,8 @@ mod tests {
         ]).unwrap();
         assert_eq!(col(&r, "venues"), &st("orca_whirlpool,raydium_amm_v4"));
         assert_eq!(col(&r, "top_programs"), &st(&b58(&bot)));
-        assert_eq!(col(&r, "dex_ixs"), &st(&format!("raydium_amm_v4:swap_base_in:{};orca_whirlpool:?:", b58(&amm))));
+        // The unknown Whirlpool instruction carries its first eight bytes, to be named (LAB review on #506).
+        assert_eq!(col(&r, "dex_ixs"), &st(&format!("raydium_amm_v4:swap_base_in:{};orca_whirlpool:?0102030405060708:", b58(&amm))));
         assert_eq!((col(&r, "priority_fee"), col(&r, "cu_consumed"), col(&r, "mints"), col(&r, "signer_token_deltas")),
                    (&Val::U64(0), &Val::Null, &Val::Null, &Val::Null));
         assert_eq!(col(&r, "signer_sol_delta"), &Val::I64(-10_000));
@@ -2806,10 +3415,10 @@ mod tests {
 
     #[test]
     fn every_vendored_idl_parses_in_full_and_every_event_decodes() {
-        // Every event of DBC, DAMM v2 and LaunchLab decodes from zero bytes (options none, vectors empty, enums their
-        // first variant) without an error: idl.rs reads all their field types. Each event has its table.
+        // Every event of DBC, DAMM v2, LaunchLab and CPMM decodes from zero bytes (options none, vectors empty, enums
+        // their first variant) without an error: idl.rs reads all their field types. Each event has its table.
         let venues = Venues::new().unwrap();
-        assert_eq!(venues.ids().iter().map(|(l, _)| *l).collect::<Vec<_>>(), ["meteora_dbc", "meteora_damm_v2", "raydium_launchlab"]);
+        assert_eq!(venues.ids().iter().map(|(l, _)| *l).collect::<Vec<_>>(), ["meteora_dbc", "meteora_damm_v2", "raydium_launchlab", "raydium_cpmm"]);
         // Every vendored IDL parses in full (the decoders' three and the others the census names), so a later decoder
         // finds no parser gap (#506's first build: LaunchLab's tuple variants of objects, DAMM v1's f64).
         for (label, text) in [
@@ -2818,7 +3427,7 @@ mod tests {
             ("meteora_dbc", DBC_IDL),
             ("meteora_damm_v2", DAMM_V2_IDL),
             ("raydium_launchlab", LAUNCHLAB_IDL),
-            ("raydium_cpmm", include_str!("../idl/venues/raydium_cpmm.json")),
+            ("raydium_cpmm", CPMM_IDL),
             ("raydium_clmm", include_str!("../idl/venues/raydium_clmm.json")),
             ("meteora_dlmm", include_str!("../idl/venues/meteora_dlmm.json")),
             ("meteora_damm_v1", include_str!("../idl/venues/meteora_damm_v1.json")),
@@ -2832,7 +3441,7 @@ mod tests {
                 assert_eq!(d.values.len(), ev.fields.len());
             }
         }
-        assert_eq!(VENUE_EVENT_CONTEXT.len(), 18);
+        assert_eq!(VENUE_EVENT_CONTEXT.len(), 20);
     }
 
     fn ix_disc(text: &str, name: &str) -> Vec<u8> {
@@ -2867,7 +3476,7 @@ mod tests {
         // keys: payer 0, launchlab 1, pool 2, base mint 3, quote mint 4. buy_exact_in: payer 0, pool_state 4, base 9, quote 10.
         let keys: Vec<&[u8]> = vec![&payer[..], &launchlab[..], &pool[..], &base[..], &quote[..]];
         let accounts = [0u8, 1, 1, 1, 2, 1, 1, 1, 1, 3, 4, 1, 1, 1, 1];
-        let view = TxView {
+        let view = TxView { logs: &[],
             slot: 5,
             tx_index: 2,
             fee_payer: b58(&payer),
@@ -2917,7 +3526,7 @@ mod tests {
             IxView { path: "1.0".into(), program: Some(&launchlab[..]), accounts: &ll_accounts[..], data: &cps[..], parent: Some(&router[..]) },
             IxView { path: "1.1".into(), program: Some(&launchlab[..]), accounts: &[6][..], data: &unknown[..], parent: Some(&launchlab[..]) },
         ];
-        let view = |failed: bool| TxView { slot: 8, tx_index: 1, fee_payer: b58(&payer), failed, ixs: ixs(), pre_lamports: &[],
+        let view = |failed: bool| TxView { logs: &[], slot: 8, tx_index: 1, fee_payer: b58(&payer), failed, ixs: ixs(), pre_lamports: &[],
                                            post_lamports: &[], pre_tokens: vec![], post_tokens: vec![], keys: keys.clone() };
         let venues = Venues::new().unwrap();
         let out = venues.rows(&view(false));
@@ -2946,7 +3555,7 @@ mod tests {
         let (payer, dbc) = (test_key(71, true), key("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"));
         let data: Vec<u8> = EVENT_IX_TAG.iter().copied().chain(ev.discriminator).chain([0u8; 64]).collect();
         let keys: Vec<&[u8]> = vec![&payer[..], &dbc[..]];
-        let view = TxView { slot: 3, tx_index: 0, fee_payer: b58(&payer), failed: false, keys, pre_lamports: &[], post_lamports: &[],
+        let view = TxView { logs: &[], slot: 3, tx_index: 0, fee_payer: b58(&payer), failed: false, keys, pre_lamports: &[], post_lamports: &[],
                             pre_tokens: vec![], post_tokens: vec![],
                             ixs: vec![IxView { path: "0.0".into(), program: Some(&dbc), accounts: &[1], data: &data, parent: Some(&dbc) }] };
         let out = Venues::new().unwrap().rows(&view);
