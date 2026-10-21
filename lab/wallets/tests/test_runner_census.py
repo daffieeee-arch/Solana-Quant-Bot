@@ -46,31 +46,36 @@ def test_census_on_synthetic_hours(tmp_path, monkeypatch):
     d = {i: (1.0, 150_000.0) for i in range(0, 81)} | {i: (3.0, 150_000.0) for i in range(100, 130)}
     e = {i: (1.0, 600.0) for i in range(0, 130)}
     f = {i: (1.0, 5.0) for i in range(0, 81)} | {i: (3.0, 5.0) for i in range(100, 130)}
-    hours, parts = _hours(tmp_path, pools, {"A": a, "B": b, "Q": q, "C": c, "D": d, "E": e, "F": f}, parts_pools=("B",))
+    pools.append(("Y", "sol", "normal", "So1", "MY"))
+    y = {i: (1.0, 600.0) for i in range(150, 190)} | {i: (3.0, 600.0) for i in range(190, 200)}  # young pool near the store end (hour 199): partial window, no 24 h horizon
+    hours, parts = _hours(tmp_path, pools, {"A": a, "B": b, "Q": q, "C": c, "D": d, "E": e, "F": f, "Y": y}, parts_pools=("B",))
     out = tmp_path / "out"
     monkeypatch.setattr("sys.argv", ["runner_census", hours, str(out), "--parts", parts, "--boot", "200"])
     rc.main()
     res = json.load(open(out / "census.json"))
     prim, sec = res["runners"]["primary"], res["runners"]["secondary"]
-    assert set(prim) == {"sol/normal/SOL", "other/normal/SOL", "other/normal/USDC"} and prim["sol/normal/SOL"]["pools"] == 1 and prim["other/normal/SOL"]["seen"] is False
+    assert set(prim) == {"sol/normal/SOL", "other/normal/SOL", "other/normal/USDC"} and prim["sol/normal/SOL"]["pools"] == 2 and prim["other/normal/SOL"]["seen"] is False
+    assert prim["sol/normal/SOL"]["partial_window"] == 1  # Y: 30 h of history, the window [u-72, u-24] only partly exists
     assert prim["other/normal/USDC"]["runners"] == 1 and "reversed/reversed/SOL" not in prim  # B's 150 SOL is below the primary floor
-    assert sec["reversed/reversed/SOL"]["runners"] == 1 and sec["reversed/reversed/SOL"]["pools_with_f7_trigger"] == 1 and sec["sol/normal/SOL"]["runners"] == 1
-    assert res["counts"]["primary"]["runners"] == 3 and res["counts"]["primary"]["seen"] == 1 and res["counts"]["secondary"]["runners"] == 4
+    assert sec["reversed/reversed/SOL"]["runners"] == 1 and sec["reversed/reversed/SOL"]["pools_with_f7_trigger"] == 1 and sec["sol/normal/SOL"]["runners"] == 2
+    assert res["counts"]["primary"]["runners"] == 4 and res["counts"]["primary"]["seen"] == 2 and res["counts"]["secondary"]["runners"] == 5 and res["counts"]["primary"]["partial_window"] == 1
     runners = pq.read_table(str(out / "runners.parquet")).to_pylist()
     assert all(r["pool"] != "E" and r["pool"] != "F" for r in runners)  # flat, and no floor for an unknown quote
     assert [r["hour"] - H0 for r in runners if r["pool"] == "A"] == [100, 100]  # one movement, at both floors, first qualifying hour
     ent = {r["pool"]: r for r in pq.read_table(str(out / "entries.parquet")).to_pylist()}
-    assert set(ent) == {"A", "C", "D"} and ent["A"]["hour"] - H0 == 100  # B's depth 160 < 500: no entry; the entry needs the 2x over 24 h at the primary floor
+    assert set(ent) == {"A", "C", "D", "Y"} and ent["A"]["hour"] - H0 == 100 and ent["Y"]["hour"] - H0 == 190  # B's depth 160 < 500: no entry; the entry needs the 2x over 24 h at the primary floor
+    assert ent["Y"]["net_1h"] is not None and ent["Y"]["net_24h"] is None  # Y's series ends before the 24 h horizon: counted, not scored
     # A's markouts: the price stays 4.0: net = (1-f)(1-s/650) / ((1+f)(1+s/650)) - 1 - network, about -1.0 %
     f, s = 0.003, 0.5
     expect = (1 - f) * (1 - s / 650) / ((1 + f) * (1 + s / 650)) - 1 - 2 * rc.BASE_LAMPORTS / 1e9 / s  # entry at hour 100: depth 650
     assert ent["A"]["net_1h"] == pytest.approx(expect, abs=1e-9) and ent["A"]["net_24h"] == pytest.approx(expect, abs=1e-9)
     assert ent["C"]["unit"] == "SOL" and ent["C"]["price"] == pytest.approx(15.0) and ent["C"]["depth"] == pytest.approx(750.0)  # converted through Q
     m = res["markouts"]
-    assert m["SOL_inside"]["pools"] == 1 and m["SOL_outside"]["pools"] == 1 and m["USDC_outside"]["pools"] == 1 and m["USDC_inside"]["entries"] == 0
-    assert m["SOL_inside"]["net_24h"]["mean"] == pytest.approx(expect, abs=1e-9) and m["SOL_inside"]["net_24h"]["wiped"] == 0.0
+    assert m["SOL_inside"]["pools"] == 2 and m["SOL_outside"]["pools"] == 1 and m["USDC_outside"]["pools"] == 1 and m["USDC_inside"]["entries"] == 0 and m["SOL_inside"]["entries_without_24h"] == 1
+    assert m["SOL_inside"]["net_24h"]["pools"] == 1 and m["SOL_inside"]["net_24h"]["mean"] == pytest.approx(expect, abs=1e-9) and m["SOL_inside"]["net_24h"]["wiped"] == 0.0
+    assert res["pools"]["by_class"]["other/normal/quote"]["pools"] == 1 and res["pools"]["other_without_hours"] == 0 and res["input"]["pools_at_secondary_floor"] == 7
     md = (out / "census.md").read_text()
-    assert "**primary floor:** 3 runners" in md and "| sol/normal/SOL | 1 | 1 | True | 0 |" in md and "| SOL_inside | 1 | 1 |" in md
+    assert "**primary floor:** 4 runners" in md and "| sol/normal/SOL | 2 | 2 | True | 0 | 1 |" in md and "| SOL_inside | 2 | 2 |" in md and "| other/normal/quote | 1 | 1 | False |" in md
 
 
 def test_wiped_markout_and_movement_reset(tmp_path, monkeypatch):
