@@ -1218,7 +1218,19 @@ pub const PUMP_IDL: &str = include_str!("../idl/pump.json");
 pub const PUMP_AMM_IDL: &str = include_str!("../idl/pump_amm.json");
 
 impl LabPlugin {
+    /// The extractor's plugin: the extractor-only tables follow the environment (LAB_TRANSFERS, LAB_VENUE_CENSUS).
     pub fn new(sink: Arc<Sink>, coverage: Arc<Coverage>) -> anyhow::Result<Self> {
+        Self::build(sink, coverage, Transfers::from_env()?.map(Arc::new), Census::from_env().map(Arc::new))
+    }
+
+    /// The recorder's plugin (LAB review on #500): the extractor-only tables (token transfers, the venue census, and
+    /// any later extractor-only table) are off whatever the environment says, and the environment is not read for
+    /// them, so an exported LAB_* in the recorder's shell never puts them into live segments.
+    pub fn for_recorder(sink: Arc<Sink>, coverage: Arc<Coverage>) -> anyhow::Result<Self> {
+        Self::build(sink, coverage, None, None)
+    }
+
+    fn build(sink: Arc<Sink>, coverage: Arc<Coverage>, transfers: Option<Arc<Transfers>>, census: Option<Arc<Census>>) -> anyhow::Result<Self> {
         Ok(Self {
             max_same_slot_errors: std::env::var("LAB_MAX_SAME_SLOT_ERRORS").ok().and_then(|v| v.parse().ok()).unwrap_or(12),
             ix_accounts_json: std::env::var("LAB_IX_ACCOUNTS_JSON").map_or(true, |v| v != "0"),
@@ -1245,8 +1257,8 @@ impl LabPlugin {
             counters: Arc::new(Counters::default()),
             coverage,
             fatal: Arc::new(AtomicBool::new(false)),
-            transfers: Transfers::from_env()?.map(Arc::new),
-            census: Census::from_env().map(Arc::new),
+            transfers,
+            census,
         })
     }
 
@@ -1857,7 +1869,7 @@ mod tests {
         decode_token_metadata, explained, is_http_429, is_pda, key, mint_owner_deltas, owner_token_deltas, parse_system_funding,
         invoker, parse_token_ix, store_legs, summarize_calls, system_non_wallet_target, Bal, Class, IxView, TokenIx, Transfers, TxView,
         FUNDING_MIN_LAMPORTS, PROGRAM_LABELS, PUMP_AMM_IDL, PUMP_IDL, TOKEN_METADATA_INIT, WSOL_MINT,
-        Census, CensusTx, AMM_V4_IXS, EVENT_IX_TAG, VENUE_IXS,
+        Census, CensusTx, AMM_V4_IXS, EVENT_IX_TAG, VENUE_IXS, LabPlugin, Coverage,
     };
     use crate::idl::{Kind, Val};
     use crate::sink::Row;
@@ -2385,5 +2397,27 @@ mod tests {
                    (&Val::Bool(true), &st(&format!("raydium_amm_v4:swap_base_in_v2:{}", b58(&amm))), &st("raydium_amm_v4")));
         // No DEX program: no row (a plain transfer).
         assert!(row(false, vec![IxView { path: "0".into(), program: Some(&system), accounts: &[0, 1], data: &transfer, parent: None }]).is_none());
+    }
+
+    #[test]
+    fn the_recorder_plugin_never_has_the_extractor_only_tables() {
+        // LAB review on #500: an exported LAB_VENUE_CENSUS or LAB_TRANSFERS in the recorder's shell must not reach live
+        // segments. The only test that sets these variables; the recorder's other tests build for_recorder (no read).
+        let dir = std::env::temp_dir().join(format!("lab-plugin-closed-{}", std::process::id()));
+        let parts = || (Arc::new(crate::sink::Sink::start(dir.clone())), Arc::new(Coverage::new(0, 0)));
+        std::env::set_var("LAB_VENUE_CENSUS", "1");
+        std::env::set_var("LAB_TRANSFERS", "1");
+        let (sink, cov) = parts();
+        let rec = LabPlugin::for_recorder(sink, cov).unwrap();
+        assert!(rec.census.is_none() && rec.transfers.is_none());
+        // The extractor does read them: LAB_TRANSFERS=1 without LAB_PUMP_MINTS is refused, the census alone is on.
+        let (sink, cov) = parts();
+        let refused = LabPlugin::new(sink, cov).is_err();
+        std::env::remove_var("LAB_TRANSFERS");
+        let (sink, cov) = parts();
+        let census_on = LabPlugin::new(sink, cov).unwrap().census.is_some();
+        std::env::remove_var("LAB_VENUE_CENSUS");
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(refused && census_on);
     }
 }

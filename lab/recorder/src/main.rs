@@ -508,7 +508,7 @@ async fn run(a: Args) -> Result<i32> {
         return Ok(EXIT_SEGMENT);
     };
     // The extractor's plugin decodes; its own Parquet sink stays unused (the segments write).
-    let plugin = match LabPlugin::new(Arc::new(Sink::start(a.root.join(".extractor-sink-unused"))), Arc::new(Coverage::new(0, 0))) {
+    let plugin = match LabPlugin::for_recorder(Arc::new(Sink::start(a.root.join(".extractor-sink-unused"))), Arc::new(Coverage::new(0, 0))) {
         Ok(p) => p,
         Err(e) => {
             save_before_exit(&mut meter); // no byte has come: the reservation comes down again
