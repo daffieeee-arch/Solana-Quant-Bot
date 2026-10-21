@@ -18,6 +18,8 @@
 #        transactions; a capacity reason after the first one); none before LO;
 #      - A holds signals in [LO, HI].
 #   PROD_JOURNAL (optional, read-only): the production journal's rows in [LO, HI] next to A's, for the replay's fidelity.
+#   INFO next to it (paper.hour2_p1 state): the watchlist log (counts and pool set per minute) and the learned table of
+#   A against B, which can differ while no decision does.
 #
 #   BASE_REPO=/lab/code/repo-c1e36a0 LAB_PY=/lab/venv/bin/python bash lab/paper/nas_hour2_p1_replay.sh      (NAS)
 #   BASE_REPO=<git archive c1e36a0 export> bash lab/paper/nas_hour2_p1_replay.sh                           (VPS)
@@ -51,7 +53,7 @@ export PYTHONDONTWRITEBYTECODE=1
 mkdir -p "$OUT"
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$OUT/job.log"; }
 log "start commit=$COMMIT out=$OUT rec=$REC meas=$MEAS seqs=$FROM_SEQ..$TO_SEQ control=$CONTROL"
-for x in removed rec-a rec-b rec-c j-a j-b j-c diff-control diff-p1; do
+for x in removed rec-a rec-b rec-c j-a j-b j-c diff-control diff-p1 diff-state; do
   [ ! -e "$OUT/$x" ] || { log "RED: $OUT/$x exists (a run is made once)"; exit 1; }
 done
 [ -f "$STORE" ] || { log "RED: no store at $STORE"; exit 1; }
@@ -131,6 +133,10 @@ p1 explain --journal-a "$OUT/j-a" --journal-b "$OUT/j-b" --removed "$OUT/removed
   --journal-diff-path "$BASE_REPO/lab" --out "$OUT/diff-p1" > "$OUT/diff-p1.log" 2>&1 || rc_p1=$?
 log "P1 (A against B): $(sed -n 3p "$OUT/diff-p1/explain.md" 2>/dev/null || echo 'no report')"
 grep -E '^- (removed transactions|causes)' "$OUT/diff-p1/explain.md" | tee -a "$OUT/job.log" || true
+# INFO (LAB review on eaa5626): the engines' own state can differ without a decision differing (the latent cascade)
+p1 state --root-a "$OUT/rec-a" --root-b "$OUT/rec-b" --journal-a "$OUT/j-a" --journal-b "$OUT/j-b" --out "$OUT/diff-state" \
+  > "$OUT/diff-state.log" 2>&1 || log "state comparison failed (INFO only): $(tail -1 "$OUT/diff-state.log")"
+sed 's/^/INFO state /' "$OUT/diff-state.log" | tee -a "$OUT/job.log" || true
 n_sig=$("$PY" - "$OUT/j-a" "$LO" "$HI" <<'EOF'
 import os, sqlite3, sys
 db = sqlite3.connect(f"file:{os.path.join(sys.argv[1], 'journal.sqlite')}?mode=ro", uri=True)

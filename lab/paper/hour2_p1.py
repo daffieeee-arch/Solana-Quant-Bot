@@ -5,6 +5,7 @@ replayed by the production engine twice: as recorded (A) and without exactly the
   python -m paper.hour2_p1 removed --live REC --meas MEAS --lo LO --hi HI --requests FILE --out DIR
   python -m paper.hour2_p1 build --live REC --removed DIR/removed.parquet --from-seq A --to-seq B --lo LO --hi HI --out ROOT
   python -m paper.hour2_p1 explain --journal-a JA --journal-b JB --removed DIR/removed.parquet --lo LO --hi HI --out DIR
+  python -m paper.hour2_p1 state --root-a RA --root-b RB --journal-a JA --journal-b JB --out DIR
 
 removed: the live root's transactions in [LO, HI] that arrived there on tx_new_reversed (stream_of names tx_pools and
   tx_probes first, so none of them matched those) and that the hour-2 root holds on no stream: what P1 took away in that
@@ -26,6 +27,8 @@ explain: paper.journal_diff of the two journals, with a cause per difference:
     reason (busy, max open positions, daily loss limit);
   - otherwise unexplained.
   A difference before LO is unexplained by construction: the inputs are equal there, so the engine must be.
+state (INFO): the engines' own state, A against B: the watchlist log per minute (counts and pool set) and the learned
+  table (slot and info per kind and key); it can differ while no decision does.
 """
 
 import argparse
@@ -373,6 +376,90 @@ def cmd_explain(a):
     return 0 if res["green"] else 1
 
 
+def cmd_state(a):
+    """INFO next to journal_diff (LAB review on the eaa5626 run): the engines' own state, which can differ while no
+    decision does (the latent cascade): the watchlist log per minute (its counts, and its pool set) and the learned
+    table (kind, key: slot and info)."""
+
+    def wl(root):
+        out = {}
+        with open(os.path.join(root, "watchlist-log.jsonl")) as f:
+            for line in f:
+                r = json.loads(line)
+                out[int(r["minute"])] = r
+        return out
+
+    wa, wb = wl(a.root_a), wl(a.root_b)
+    minutes = sorted(set(wa) | set(wb))
+    one_side = [m for m in minutes if (m in wa) != (m in wb)]
+    counts, pools = {}, {}
+    for m in minutes:
+        ra, rb = wa.get(m), wb.get(m)
+        if not ra or not rb:
+            continue
+        ca, cb = ra.get("counts", {}), rb.get("counts", {})
+        for k in sorted(set(ca) | set(cb)):
+            if ca.get(k) != cb.get(k):
+                counts.setdefault(k, []).append((m, ca.get(k), cb.get(k)))
+        pa, pb = set(ra.get("pools", ())), set(rb.get("pools", ()))
+        for side, extra, slot in (("A", pa - pb, ra.get("slot")), ("B", pb - pa, rb.get("slot"))):
+            for p in extra:
+                pools.setdefault((p, side), []).append((m, slot))
+    differing = sorted({m for v in counts.values() for m, *_ in v} | {m for v in pools.values() for m, _ in v})
+
+    def learned(j):
+        db = sqlite3.connect(f"file:{os.path.join(j, 'journal.sqlite')}?mode=ro", uri=True)
+        try:
+            return {(k, key): (slot, info) for k, key, slot, info in db.execute("SELECT kind, key, slot, info FROM learned")}
+        finally:
+            db.close()
+
+    la, lb = learned(a.journal_a), learned(a.journal_b)
+    l_only_a = sorted(set(la) - set(lb))
+    l_only_b = sorted(set(lb) - set(la))
+    l_diff = []
+    for k in sorted(set(la) & set(lb)):
+        (sa, ia), (sb, ib) = la[k], lb[k]
+        if sa != sb or ia != ib:
+            try:
+                xa, xb = json.loads(ia) if ia else None, json.loads(ib) if ib else None
+                pos = [i for i in range(max(len(xa or ()), len(xb or ())))
+                       if (xa[i] if xa and i < len(xa) else None) != (xb[i] if xb and i < len(xb) else None)]
+                info_diff = {i: [xa[i] if xa and i < len(xa) else None, xb[i] if xb and i < len(xb) else None] for i in pos}
+            except (TypeError, ValueError):
+                info_diff = {"raw": [ia, ib]}
+            l_diff.append({"kind": k[0], "key": k[1], "slot": [sa, sb], "info": info_diff})
+    res = {
+        "watchlist": {"minutes_a": len(wa), "minutes_b": len(wb), "minutes_one_side": len(one_side),
+                      "minutes_differing": len(differing),
+                      "first_last_differing": [differing[0], differing[-1]] if differing else None,
+                      "counts": {k: {"minutes": len(v), "b_minus_a_min": min((y or 0) - (x or 0) for _, x, y in v),
+                                     "b_minus_a_max": max((y or 0) - (x or 0) for _, x, y in v),
+                                     "first_minute": v[0][0], "last_minute": v[-1][0]} for k, v in counts.items()},
+                      "pools": [{"pool": p, "only_in": side, "minutes": len(v), "first_minute": v[0][0], "last_minute": v[-1][0],
+                                 "first_slot": v[0][1], "last_slot": v[-1][1]} for (p, side), v in sorted(pools.items())]},
+        "learned": {"rows_a": len(la), "rows_b": len(lb), "only_a": [list(k) for k in l_only_a], "only_b": [list(k) for k in l_only_b],
+                    "different": l_diff},
+    }
+    os.makedirs(a.out, exist_ok=True)
+    with open(os.path.join(a.out, "state.json"), "w") as f:
+        json.dump(res, f, indent=1, default=str)
+    w, ln = res["watchlist"], res["learned"]
+    lines = ["# Engine state, A against B (INFO: no decision; LAB review on the eaa5626 run)", "",
+             f"- watchlist log: {w['minutes_a']} / {w['minutes_b']} minutes, {w['minutes_one_side']} on one side only, "
+             f"{w['minutes_differing']} differing" + (f" (minutes {w['first_last_differing'][0]}..{w['first_last_differing'][1]})" if differing else ""),
+             f"- watchlist counts differing (B - A): " + ("; ".join(f"{k} {v['minutes']} min, {v['b_minus_a_min']:+d}..{v['b_minus_a_max']:+d}"
+                                                               for k, v in w["counts"].items()) or "none"),
+             f"- watchlist pools on one side only: {len(w['pools'])}" + "".join(
+                 f"; {x['pool']} only in {x['only_in']} {x['minutes']} min (slots {x['first_slot']}..{x['last_slot']})" for x in w["pools"][:10]),
+             f"- learned: {ln['rows_a']} / {ln['rows_b']} rows; only A {len(ln['only_a'])}, only B {len(ln['only_b'])}, "
+             f"different {len(ln['different'])}" + "".join(f"; {x['kind']} {x['key']} slot {x['slot']} info {x['info']}" for x in ln["different"][:10])
+             + "".join(f"; only A {k}" for k in ln["only_a"][:5]) + "".join(f"; only B {k}" for k in ln["only_b"][:5])]
+    with open(os.path.join(a.out, "state.md"), "w") as f:
+        f.write("\n".join(lines) + "\n")
+    print("\n".join(lines[2:]))
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -394,8 +481,14 @@ def main(argv=None):
         p.add_argument("--lo", type=int, required=True)
         p.add_argument("--hi", type=int, required=True)
         p.add_argument("--out", required=True)
+    st = sub.add_parser("state")
+    st.add_argument("--root-a", required=True)
+    st.add_argument("--root-b", required=True)
+    st.add_argument("--journal-a", required=True)
+    st.add_argument("--journal-b", required=True)
+    st.add_argument("--out", required=True)
     a = ap.parse_args(argv)
-    return {"removed": cmd_removed, "build": cmd_build, "explain": cmd_explain}[a.cmd](a) or 0
+    return {"removed": cmd_removed, "build": cmd_build, "explain": cmd_explain, "state": cmd_state}[a.cmd](a) or 0
 
 
 if __name__ == "__main__":
