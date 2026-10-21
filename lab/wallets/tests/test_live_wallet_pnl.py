@@ -170,7 +170,7 @@ def test_the_paper_store_classes_a_pool_the_segments_cannot_and_a_mint_pair_conf
     store = tmp_path / "fwd1053-1054.duckdb"
     con = duckdb.connect(str(store))
     con.execute("CREATE TABLE pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR)")
-    con.execute("INSERT INTO pools VALUES ('NOPE', 'sol', 'normal'), ('ELSE', 'sol', 'normal')")
+    con.execute("INSERT INTO pools VALUES ('NOPE', 'sol', 'normal'), ('ELSE', 'sol', 'normal'), ('TWO', 'unknown', 'normal')")
     con.close()
     rows, summary = lw.run([A], root=str(root), store=str(store), log=lambda m: None)
     a1 = by(rows)[(A, DAY1)]
@@ -179,8 +179,9 @@ def test_the_paper_store_classes_a_pool_the_segments_cannot_and_a_mint_pair_conf
     # a pool whose trades name two mint pairs: not priced from them
     segment(root, 3, S0 + 400, S0 + 599, block_t0=MIDNIGHT + 200, buys=[
         pev("TWO", S0 + 410, 1, A, SOL, 10**9, TOKEN, WSOL), pev("TWO", S0 + 411, 1, A, SOL, 10**9, WSOL, TOKEN)])
-    rows, summary = lw.run([A], root=str(root), store=None, log=lambda m: None)
-    assert by(rows)[(A, DAY2)]["unknown_pool_legs"] == 2 and summary["pool_class_sources"]["conflict"] == 1
+    for st in (None, str(store)):  # the store's 'unknown' class does not price it either
+        rows, summary = lw.run([A], root=str(root), store=st, log=lambda m: None)
+        assert by(rows)[(A, DAY2)]["unknown_pool_legs"] == 2 and summary["pool_class_sources"]["conflict"] == 1
 
 
 def test_nothing_before_epoch_1064_and_no_locked_store(root, tmp_path, capsys):

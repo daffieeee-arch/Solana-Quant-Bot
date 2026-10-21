@@ -195,7 +195,8 @@ def _classes(con, store):
     con.execute("CREATE OR REPLACE TEMP TABLE cls_store (pool VARCHAR, quote_class VARCHAR)")
     if store:
         con.execute(f"ATTACH '{store.replace(chr(39), chr(39) * 2)}' AS st (READ_ONLY)")
-        con.execute("INSERT INTO cls_store SELECT s.pool, s.quote_class FROM st.pools s SEMI JOIN w_pools USING (pool)")
+        con.execute("""INSERT INTO cls_store SELECT s.pool, s.quote_class FROM st.pools s SEMI JOIN w_pools USING (pool)
+                       WHERE s.quote_class IN ('sol', 'reversed', 'other')""")  # the store's 'unknown' stays unknown
         con.execute("DETACH st")
     con.execute("""
       CREATE OR REPLACE TEMP TABLE pool_class AS
