@@ -35,12 +35,13 @@ def _store(path, shift=0):
     con.execute("CREATE TABLE meta (json VARCHAR)")
     con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"slot_start": SLOT0 + shift, "slot_end_exclusive": SLOT0 + shift + 432_000,
                                                             "ms_per_slot": {str((SLOT0 + shift) // 432_000): 400.0}})])
-    con.execute("CREATE TABLE pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR, mint VARCHAR, create_slot BIGINT)")
-    con.execute("INSERT INTO pools VALUES ('P', 'sol', 'normal', 'MP', ?), ('R', 'reversed', 'reversed', 'MR', ?), ('PC', 'sol', 'normal', 'C', ?)",
-                [A - 500 + shift, B - 500 + shift, D + 120 + shift])
+    # coin_creator: P and PC share a creator (PC is the creator's second pool), R's creator is the system program (unknown)
+    con.execute("CREATE TABLE pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR, mint VARCHAR, create_slot BIGINT, coin_creator VARCHAR)")
+    con.execute("INSERT INTO pools VALUES ('P', 'sol', 'normal', 'MP', ?, 'CR'), ('R', 'reversed', 'reversed', 'MR', ?, ?), ('PC', 'sol', 'normal', 'C', ?, 'CR')",
+                [A - 500 + shift, B - 500 + shift, markout.SYSTEM_PROGRAM, D + 120 + shift])
     con.execute("CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, b BIGINT, e BIGINT, "
                 "vault BIGINT, vq BIGINT, base BIGINT, e_delta BIGINT, quote_user BIGINT, lp_bps BIGINT, protocol_bps BIGINT, creator_bps BIGINT, cashback_bps BIGINT, trader VARCHAR, "
-                "token_buy BOOLEAN, sol_amount BIGINT, sol_depth BIGINT)")
+                "token_buy BOOLEAN, sol_amount BIGINT, sol_depth BIGINT, fee_payer VARCHAR, priority_fee BIGINT, jito_tip BIGINT)")
     rows = [
         # normal pool P (base token, quote WSOL): pre-trade reserves; post = b -/+ base, e + e_delta
         ("buy", "P", A, 5, 0, 0, 10**12, 100 * SOL, 100 * SOL, 0, 5 * 10**10, 5 * SOL, 5 * SOL, 20, 5, 0, 0),      # post b 9.5e11, e 105
@@ -57,7 +58,19 @@ def _store(path, shift=0):
         ("buy", "PC", D + 120, 1, 0, 0, 2 * 10**14, 85 * SOL, 85 * SOL, 0, 10**13, 5 * SOL, 5 * SOL, 20, 5, 0, 0),
     ]
     rows = [r[:2] + (r[2] + shift,) + r[3:] for r in rows]
-    con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)", rows)
+    con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, 0, 0)", rows)
+    # the paid buy flow before R's signal at B (paid_buyers_60s; the window at 400 ms per slot = 150 slots, [B - 150, B]): tiny token
+    # buys (kind 'sell' of WSOL in the reversed pool, token_buy true) that leave the states the markouts read untouched.
+    # (slot, tx, inner_ix, trader, fee_payer, priority_fee, jito_tip, token_buy)
+    paid = [(B - 160, 1, 0, "V", None, 1_000_000, 0, True),     # outside the window: not counted, not in the max
+            (B - 140, 1, 0, "X", None, 10_000, 0, True),        # payer X (fee_payer NULL = the trader): counted
+            (B - 100, 1, 0, "Y", "F", 0, 0, True),              # one transaction, two legs: the fee sits on the other leg ...
+            (B - 100, 1, 1, "Y", "F", 7_000, 0, False),         # ... so the transaction pays 7,000 and payer F is counted once
+            (B - 50, 2, 0, "Z", "F", 0, 6_000, True),           # the same fee payer F through another trader: not counted twice
+            (B - 20, 1, 0, "W", None, 100, 0, True),            # below PAID_MIN_LAMPORTS: not counted
+            (B - 30, 1, 0, "U", None, 50_000, 0, False)]        # a token sell: neither counted nor in the max
+    con.executemany("INSERT INTO pool VALUES ('sell', 'R', ?, ?, 0, ?, ?, ?, ?, 0, 1, -1, 1, 25, 5, 0, 0, ?, ?, 1, ?, ?, ?, ?)",
+                    [(sl + shift, tx, ix, 100 * SOL, 10**15, 10**15, tr, tb, 100 * SOL, fp, pf, tip) for sl, tx, ix, tr, fp, pf, tip, tb in paid])
     con.execute("CREATE TABLE curve (mint VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, vt BIGINT, vq BIGINT, rt BIGINT, rq BIGINT, "
                 "fee_bps BIGINT, creator_bps BIGINT)")
     con.executemany("INSERT INTO curve VALUES (?, ?, ?, 0, 0, ?, ?, ?, ?, 95, 30)", [(r[0], r[1] + shift) + r[2:] for r in [
@@ -141,6 +154,39 @@ def test_markouts_on_the_mini_store(tmp_path, capfd):
     # N2 keeps its reference to the trigger
     n2 = next(r for r in R if r["family"] == "N2_F7" and r["h"] == "")
     assert n2["ref_mint"] == "MR" and n2["ref_t"] == B and n2["farm"] == "n/a"
+    # the entry state's SOL side and fee tier (E49): normal pool P = real quote vault e (105 SOL after the trade in A), 20 + 5 bps;
+    # reversed pool R = the WSOL base b (110 SOL), 25 + 5 bps; curve C = the real quote rq (1 SOL after D), 95 + 30 bps;
+    # the horizon rows carry the entry's values (the 1 min row of P after the boost and the withdraw still says 105 SOL)
+    assert p["depth_entry"] == 105 * SOL and p["fee_bps"] == 25 and m1m["depth_entry"] == 105 * SOL and m1m["fee_bps"] == 25
+    assert r0["depth_entry"] == 110 * SOL and r0["fee_bps"] == 30 and r1["depth_entry"] == 110 * SOL
+    assert c0["depth_entry"] == 1 * SOL and c0["fee_bps"] == 125 and c1m["depth_entry"] == 1 * SOL
+    assert e10["depth_entry"] == 1 * SOL  # E's entry had a market; the horizon without one keeps the entry's values
+    # creator_prior_pools: the creator's earlier pools in the store at the pool's creation (P first → 0, PC second → 1), the
+    # system program → -1, a curve signal → NULL
+    assert p["creator_prior_pools"] == 0 and r0["creator_prior_pools"] == -1 and c0["creator_prior_pools"] is None
+    pc = next(r for r in R if r["pool"] == "PC") if any(r["pool"] == "PC" for r in R) else None
+    assert pc is None or pc["creator_prior_pools"] == 1
+    # paid buy flow before the signal (C3 / E54): R has two distinct paying buyers in [B - 150, B] (X at 10,000 and fee payer F,
+    # whose 7,000 sits on the other leg of its transaction and who pays again through Z); the 1,000,000 buy at B - 160 is outside
+    # the window, the 100-lamport buy is below the floor and the token sell does not count; P has no token buys (0, no max);
+    # the curve signal has no pool (NULL); the horizon rows carry the signal's values; the run JSON names the window
+    assert r0["paid_buyers_60s"] == 2 and r0["paid_max_60s"] == 10_000 and r1["paid_buyers_60s"] == 2 and r1["paid_max_60s"] == 10_000
+    assert p["paid_buyers_60s"] == 0 and p["paid_max_60s"] is None and c0["paid_buyers_60s"] is None and c0["paid_max_60s"] is None
+    assert info["paid_window_ms"] == 60_000 and info["paid_min_lamports"] == 5_000 and info["paid_window_slots_per_epoch"] == {str(SLOT0 // 432_000): 150}
+
+
+def test_curve_only_run_leaves_the_paid_columns_null(tmp_path):
+    """--families with curve signals only (no pool signal): paid_buyers() has nothing to count and must not fail (LAB review on #496)."""
+    _store(tmp_path / "s.duckdb")
+    _parts(str(tmp_path / "parts"))
+    import pyarrow.compute as pc
+    t = pq.read_table(os.path.join(tmp_path, "parts", "part-0.parquet"))
+    os.makedirs(tmp_path / "cparts")
+    pq.write_table(t.filter(pc.equal(t["segment"], "curve")), os.path.join(tmp_path, "cparts", "part-0.parquet"))
+    info = markout.run(str(tmp_path / "cparts"), "c", str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"), cfg_path=_cfg(tmp_path))
+    R = pq.read_table(str(tmp_path / "out" / "markout-c.parquet")).to_pylist()
+    assert info["signals"] == 2 and len(R) == 2 * 2 * 8 and all(r["segment"] == "curve" for r in R)
+    assert all(r["paid_buyers_60s"] is None and r["paid_max_60s"] is None for r in R) and info["paid_window_slots_per_epoch"] == {str(SLOT0 // 432_000): 150}
 
 
 def test_buckets_do_not_change_the_markouts(tmp_path, monkeypatch, capfd):
@@ -315,6 +361,7 @@ def test_tx_level_entries(tmp_path):
     # transaction of A + 1 ends after the sell, so the t+1 entry (2001) takes that state, not the state between the legs.
     con.execute("INSERT INTO pool VALUES ('sell', 'P', ?, 1, 0, 1, ?, ?, ?, 0, ?, ?, ?, 20, 5, 0, 0, 'Q', false, ?, ?)",
                 [A + 1, 108 * 10**10, 92 * SOL, 92 * SOL, 10**10, -1 * SOL, 1 * SOL, 1 * SOL, 150 * SOL])
+    # (this store has no fee columns: paid_buyers_60s / paid_max_60s stay NULL, asserted below)
     con.execute("CREATE TABLE curve (mint VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, vt BIGINT, vq BIGINT, rt BIGINT, rq BIGINT, fee_bps BIGINT, creator_bps BIGINT)")
     con.close()
     parts = tmp_path / "parts"
@@ -331,6 +378,7 @@ def test_tx_level_entries(tmp_path):
                                 "trigger_smaller_sell_before": 1, "creator_sell_after_trigger": 1, "capped": {1000: 0, 1001: 0, 1003: 0, 1010: 1, 2001: 0},
                                 "tx_end": {1000: 0, 1001: 0, 1003: 0, 1010: 0, 2001: 1}}
     R = pq.read_table(str(tmp_path / "out" / "markout-tx.parquet")).to_pylist()
+    assert all(r["paid_buyers_60s"] is None and r["paid_max_60s"] is None for r in R)  # no fee columns in this store
     assert {r["d"] for r in R if r["segment"] == "curve"} == {1, 2}            # curve signals keep the slot delays
     R = [r for r in R if r["segment"] != "curve"]
     ent = {r["d"]: r for r in R if r["h"] == ""}
