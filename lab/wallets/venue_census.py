@@ -29,6 +29,7 @@ import argparse
 import glob
 import json
 import os
+import shutil
 
 import duckdb
 
@@ -63,7 +64,6 @@ POOL_CREATION = {
     "meteora_damm_v2": ["initialize_pool", "initialize_customizable_pool", "initialize_pool_with_dynamic_config"],
     "orca_whirlpool": ["initialize_pool", "initialize_pool_v2", "initialize_pool_with_adaptive_fee"],
 }
-SWAP_SQL = "(name LIKE '%swap%' OR name LIKE 'buy%' OR name LIKE 'sell%')"
 
 
 def chunk_files(chunks_root, table, lo, hi):
@@ -89,7 +89,9 @@ def _kinds(con):
 
 
 def setup(con, chunks_root, lo, hi):
-    """vc (the census rows of [lo, hi) with derived columns), ix (one row per DEX instruction) and days."""
+    """days (slot -> block time and UTC day, small) and the view vc over the census parquet with the derived columns.
+    Nothing per transaction is materialized: an epoch has ~66 M rows (99zzzzn), and each query below streams over vc
+    (DuckDB keeps only the columns a query reads)."""
     files = chunk_files(chunks_root, "venue_census", lo, hi)
     blocks = chunk_files(chunks_root, "blocks", lo, hi)
     if not files or not blocks:
@@ -98,41 +100,38 @@ def setup(con, chunks_root, lo, hi):
         SELECT slot, any_value(block_time)::BIGINT AS bt, epoch_ms(any_value(block_time)::BIGINT * 1000)::DATE AS day
         FROM read_parquet({_lit(blocks)}, union_by_name = true)
         WHERE slot >= {lo} AND slot < {hi} AND block_time IS NOT NULL GROUP BY slot ORDER BY slot""")
-    tok = "string_split(COALESCE(signer_token_deltas, ''), ';')"
-    con.execute(f"""CREATE OR REPLACE TEMP TABLE vc AS
-        SELECT c.slot, c.tx_index, c.slot * {KEY} + c.tx_index AS k, c.failed, c.fee_payer, c.tx_fee, c.priority_fee,
-               c.jito_tip, c.venues, c.n_dex, c.top_programs, c.dex_ixs, c.n_dex_ixs, c.signer_sol_delta, d.day,
+    tok = "string_split(COALESCE(c.signer_token_deltas, ''), ';')"
+    swap = "(split_part(x, ':', 2) LIKE '%swap%' OR split_part(x, ':', 2) LIKE 'buy%' OR split_part(x, ':', 2) LIKE 'sell%')"
+    con.execute(f"""CREATE OR REPLACE TEMP VIEW vc AS
+        SELECT c.slot, c.tx_index, c.slot * {KEY} + c.tx_index AS k, c.failed, c.fee_payer, c.tx_fee, c.priority_fee, c.jito_tip,
+               c.venues, c.n_dex, c.top_programs, c.dex_ixs, c.n_dex_ixs, c.signer_sol_delta, d.day,
                COALESCE(TRY_CAST(split_part(list_filter({tok}, x -> starts_with(x, '{WSOL}:'))[1], ':', 2) AS HUGEINT), 0) AS wsol,
-               len(list_filter({tok}, x -> x <> '' AND NOT starts_with(x, '{WSOL}:'))) AS other_tokens
+               len(list_filter({tok}, x -> x <> '' AND NOT starts_with(x, '{WSOL}:'))) AS other_tokens,
+               list_filter(string_split(c.dex_ixs, ';'), x -> {swap}) AS swaps
         FROM read_parquet({_lit(files)}, union_by_name = true) c JOIN days d USING (slot)
-        WHERE c.slot >= {lo} AND c.slot < {hi} ORDER BY c.slot, c.tx_index""")
-    con.execute(f"""CREATE OR REPLACE TEMP TABLE ix AS
-        SELECT k, slot, tx_index, failed, fee_payer, day, n_dex, split_part(x, ':', 1) AS venue, split_part(x, ':', 2) AS name,
-               split_part(x, ':', 3) AS pool, pos
-        FROM (SELECT k, slot, tx_index, failed, fee_payer, day, n_dex, unnest(string_split(dex_ixs, ';')) AS x,
-                     generate_subscripts(string_split(dex_ixs, ';'), 1) AS pos FROM vc WHERE dex_ixs <> '')""")
-    con.execute(f"""CREATE OR REPLACE TEMP TABLE txs AS
-        SELECT vc.*, COALESCE(s.n_swaps, 0) AS n_swaps, s.first_pool,
-               abs(signer_sol_delta + wsol + tx_fee + jito_tip) / 1e9 AS size_sol,
-               (signer_sol_delta + wsol) AS net
-        FROM vc LEFT JOIN (SELECT k, count(*) FILTER (WHERE {SWAP_SQL}) AS n_swaps,
-                                  arg_min(pool, pos) FILTER (WHERE {SWAP_SQL}) AS first_pool
-                           FROM ix GROUP BY k) s USING (k)
-        ORDER BY k""")
+        WHERE c.slot >= {lo} AND c.slot < {hi}""")
+    con.execute(f"""CREATE OR REPLACE TEMP VIEW txs AS
+        SELECT *, len(swaps) AS n_swaps, split_part(swaps[1], ':', 3) AS first_pool,
+               abs(signer_sol_delta + wsol + tx_fee + jito_tip) / 1e9 AS size_sol, (signer_sol_delta + wsol) AS net
+        FROM vc""")
     _kinds(con)
 
 
 def venue_day(con):
-    """The table per venue and day."""
-    con.execute(f"""CREATE OR REPLACE TEMP TABLE arbs AS
-        SELECT t.*, EXISTS (SELECT 1 FROM txs b JOIN ix bi USING (k)
-                            WHERE bi.pool = t.first_pool AND t.first_pool <> '' AND {SWAP_SQL.replace('name', 'bi.name')}
-                              AND NOT b.failed AND b.fee_payer <> t.fee_payer AND b.size_sol >= {BACKRUN_MIN_SOL}
-                              AND b.k < t.k AND b.slot >= t.slot - {BACKRUN_SLOTS}) AS backrun
-        FROM txs t
-        WHERE NOT t.failed AND t.n_swaps >= 2 AND t.n_swaps = t.n_dex_ixs AND t.other_tokens = 0 AND t.net > 0""")
-    con.execute("""CREATE OR REPLACE TEMP TABLE tv AS
-        SELECT t.*, unnest(string_split(t.venues, ',')) AS venue FROM txs t""")
+    """The table per venue and day. Materialized: the arbs (few) and the large swaps on their first pools (few); the
+    rest streams."""
+    con.execute("""CREATE OR REPLACE TEMP TABLE arbs AS
+        SELECT k, slot, day, fee_payer, venues, n_dex, net, first_pool FROM txs
+        WHERE NOT failed AND n_swaps >= 2 AND n_swaps = n_dex_ixs AND other_tokens = 0 AND net > 0""")
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE big AS
+        SELECT k, slot, fee_payer, pool FROM (
+            SELECT k, slot, fee_payer, split_part(unnest(swaps), ':', 3) AS pool FROM txs
+            WHERE NOT failed AND size_sol >= {BACKRUN_MIN_SOL} AND len(swaps) > 0)
+        WHERE pool IN (SELECT first_pool FROM arbs WHERE first_pool <> '')""")
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE arbs2 AS
+        SELECT a.*, EXISTS (SELECT 1 FROM big b WHERE b.pool = a.first_pool AND b.fee_payer <> a.fee_payer AND b.k < a.k
+                            AND b.slot >= a.slot - {BACKRUN_SLOTS}) AS backrun
+        FROM arbs a""")
     return con.execute("""
         WITH base AS (
             SELECT venue, day, count(*) AS txs, count(*) FILTER (WHERE failed) AS failed,
@@ -142,20 +141,26 @@ def venue_day(con):
                    avg((jito_tip > 0)::INT) FILTER (WHERE NOT failed) AS tip_share,
                    sum(jito_tip / n_dex) FILTER (WHERE NOT failed) / 1e9 AS tips_sol,
                    sum(priority_fee / n_dex) / 1e9 AS priority_fees_sol
-            FROM tv GROUP BY venue, day),
+            FROM (SELECT unnest(string_split(venues, ',')) AS venue, day, failed, fee_payer, n_swaps, size_sol, n_dex, jito_tip,
+                         priority_fee FROM txs)
+            GROUP BY venue, day),
         kinds AS (
             SELECT i.venue, i.day, count(DISTINCT i.k) FILTER (WHERE kd.kind = 'launch') AS launches,
                    count(DISTINCT i.k) FILTER (WHERE kd.kind = 'graduation') AS graduations,
                    count(DISTINCT i.k) FILTER (WHERE kd.kind = 'pool_creation') AS pool_creations
-            FROM ix i JOIN kinds kd ON kd.venue = i.venue AND kd.name = i.name
-            WHERE NOT i.failed GROUP BY i.venue, i.day),
+            FROM (SELECT k, day, split_part(x, ':', 1) AS venue, split_part(x, ':', 2) AS name
+                  FROM (SELECT k, day, unnest(string_split(dex_ixs, ';')) AS x FROM vc WHERE NOT failed)) i
+            JOIN kinds kd ON kd.venue = i.venue AND kd.name = i.name
+            GROUP BY i.venue, i.day),
         mev AS (
             SELECT venue, day, count(*) AS arbs, sum(net / n_dex) / 1e9 AS arb_net_sol, count(DISTINCT fee_payer) AS arb_bots,
                    count(*) FILTER (WHERE backrun) AS backruns, sum(net / n_dex) FILTER (WHERE backrun) / 1e9 AS backrun_net_sol
-            FROM (SELECT a.*, unnest(string_split(a.venues, ',')) AS venue FROM arbs a) GROUP BY venue, day),
+            FROM (SELECT a.*, unnest(string_split(a.venues, ',')) AS venue FROM arbs2 a) GROUP BY venue, day),
         attempts AS (
             SELECT venue, day, count(*) AS failed_attempts, sum(tx_fee / n_dex) / 1e9 AS failed_attempt_cost_sol
-            FROM tv WHERE failed AND fee_payer IN (SELECT DISTINCT fee_payer FROM arbs) GROUP BY venue, day),
+            FROM (SELECT unnest(string_split(venues, ',')) AS venue, day, tx_fee, n_dex FROM vc
+                  WHERE failed AND fee_payer IN (SELECT DISTINCT fee_payer FROM arbs2))
+            GROUP BY venue, day),
         cov AS (SELECT day, (max(bt) - min(bt) + 1) / 3600.0 AS hours FROM days GROUP BY day)
         SELECT b.*, cov.hours, 1 - b.failed / b.txs AS success_rate, COALESCE(k.launches, 0) AS launches,
                COALESCE(k.graduations, 0) AS graduations, COALESCE(k.pool_creations, 0) AS pool_creations,
@@ -170,7 +175,7 @@ def venue_day(con):
 def unknown_programs(con, n=20):
     """The top-level programs without a label (by id) in the census transactions: other venues, routers and bots."""
     return con.execute(f"""SELECT p AS program, count(*) AS txs, count(*) FILTER (WHERE NOT failed) AS ok
-        FROM (SELECT failed, unnest(string_split(top_programs, ';')) AS p FROM txs WHERE top_programs IS NOT NULL)
+        FROM (SELECT failed, unnest(string_split(top_programs, ';')) AS p FROM vc WHERE top_programs IS NOT NULL)
         WHERE length(p) >= 32 GROUP BY p ORDER BY txs DESC LIMIT {n}""").fetchall()
 
 
@@ -204,7 +209,7 @@ def report(df, unknown, cov, lo, hi):
     for v, r in tot.iterrows():
         bs = r.backrun_net_sol / r.arb_net_sol if r.arb_net_sol else 0
         lines.append(f"| {v} | {r.txs / days:,.0f} | {1 - r.failed / r.txs:.1%} | {r.swap_txs / days:,.0f} | "
-                     f"{(r.volume_sol_proxy or 0) / days:,.0f} | {r.launches:,} | {r.graduations:,} | {r.pool_creations:,} | "
+                     f"{(r.volume_sol_proxy or 0) / days:,.0f} | {int(r.launches):,} | {int(r.graduations):,} | {int(r.pool_creations):,} | "
                      f"{r.tips_sol / days:,.2f} | {r.priority_fees_sol / days:,.2f} | {r.arbs / days:,.0f} | "
                      f"{r.arb_net_sol / days:,.2f} | {bs:.0%} | {r.failed_attempt_cost_sol / days:,.2f} |")
     lines += ["", "## Unlabelled top-level programs (by transactions)", "", "| program | txs | succeeded |", "|---|---|---|"]
@@ -234,7 +239,9 @@ def main(argv=None):
         ap.error("give --epoch, or --from and --to")
     os.makedirs(a.out, exist_ok=True)
     con = duckdb.connect()
-    con.execute(f"SET memory_limit = '{a.memory}'; SET threads = {a.threads}; SET preserve_insertion_order = false")
+    spill = os.path.join(a.out, "duckdb-spill")
+    con.execute(f"SET memory_limit = '{a.memory}'; SET threads = {a.threads}; SET preserve_insertion_order = false; "
+                f"SET temp_directory = '{spill}'")
     setup(con, a.chunks, lo, hi)
     df = venue_day(con)
     unknown = unknown_programs(con)
@@ -249,6 +256,8 @@ def main(argv=None):
                "definitions": {"backrun_min_sol": BACKRUN_MIN_SOL, "backrun_slots": BACKRUN_SLOTS}}
     with open(os.path.join(a.out, "venue_census.json"), "w") as f:
         json.dump(summary, f, indent=1, default=str)
+    con.close()
+    shutil.rmtree(spill, ignore_errors=True)
     print(md)
 
 
