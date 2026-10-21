@@ -2720,13 +2720,26 @@ mod tests {
     // ------------------------------------------------------------------------- venue decoders
 
     #[test]
-    fn the_venue_idls_parse_and_every_event_decodes() {
+    fn every_vendored_idl_parses_in_full_and_every_event_decodes() {
         // Every event of DBC, DAMM v2 and LaunchLab decodes from zero bytes (options none, vectors empty, enums their
         // first variant) without an error: idl.rs reads all their field types. Each event has its table.
         let venues = Venues::new().unwrap();
         assert_eq!(venues.ids().iter().map(|(l, _)| *l).collect::<Vec<_>>(), ["meteora_dbc", "meteora_damm_v2", "raydium_launchlab"]);
-        for (label, text) in [("meteora_dbc", DBC_IDL), ("meteora_damm_v2", DAMM_V2_IDL), ("raydium_launchlab", LAUNCHLAB_IDL)] {
-            let idl = Idl::parse(text).unwrap();
+        // Every vendored IDL parses in full (the decoders' three and the others the census names), so a later decoder
+        // finds no parser gap (#506's first build: LaunchLab's tuple variants of objects, DAMM v1's f64).
+        for (label, text) in [
+            ("pump", PUMP_IDL),
+            ("pump_amm", PUMP_AMM_IDL),
+            ("meteora_dbc", DBC_IDL),
+            ("meteora_damm_v2", DAMM_V2_IDL),
+            ("raydium_launchlab", LAUNCHLAB_IDL),
+            ("raydium_cpmm", include_str!("../idl/venues/raydium_cpmm.json")),
+            ("raydium_clmm", include_str!("../idl/venues/raydium_clmm.json")),
+            ("meteora_dlmm", include_str!("../idl/venues/meteora_dlmm.json")),
+            ("meteora_damm_v1", include_str!("../idl/venues/meteora_damm_v1.json")),
+            ("orca_whirlpool", include_str!("../idl/venues/orca_whirlpool.json")),
+        ] {
+            let idl = Idl::parse(text).unwrap_or_else(|e| panic!("{label}: {e:#}"));
             assert!(!idl.events.is_empty(), "{label}");
             for ev in &idl.events {
                 let d = idl.decode_event(ev, &[0u8; 8192]);
