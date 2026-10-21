@@ -18,6 +18,19 @@ version and its sha256.
 | meteora_dbc.json | dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN | github.com/MeteoraAg/dynamic-bonding-curve-sdk @ a8e5fedf1cc62e488da477a19ae3c6ad9a707f80, packages/dynamic-bonding-curve/src/idl/dynamic-bonding-curve/idl.json | 63035b9a4a04b6a7f8fb9f81778275049c129a70d6f8bf6e08866516cf3da4cc |
 | orca_whirlpool.json | whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc | npm @orca-so/whirlpools-sdk 0.22.0 (gitHead 46dc1c26bc553423f1c7bad35ba5cf9d19f6b4e7), dist/artifacts/whirlpool.json (orca-so/whirlpools idl/README.md points there) | f3e95ddf321d24b71ce56f5ba842055899f32a1feee3be9f0d3ccf2bd6a55bb8 |
 
+Meteora DBC's older releases, for historical blocks (#506): events and instructions the current IDL no longer has
+(EvtClaimProtocolFee, EvtCreateConfig, EvtPartnerWithdrawMigrationFee, EvtProtocolWithdrawSurplus, claim_protocol_fee,
+...) still appear in them. The decoders take from these only the discriminators the current IDL (and each newer release)
+does not know; the newest layout of a name wins. From github.com/MeteoraAg/dynamic-bonding-curve @
+91e696eef6a3764157220f6c104f079b7830fc04, scripts/idl/:
+
+| file | version | sha256 |
+|---|---|---|
+| meteora_dbc.release_0.1.6.json | 0.1.6 | 2ec437f3b238fe514ac2f1846bfef02c5bbd4ed12ee3b23e8fd14ad888b204be |
+| meteora_dbc.release_0.1.4.json | 0.1.4 | ba385db007898436f61f01d2569d799fe1f0ba48ba1659d8b4c9f140c8bd1bee |
+| meteora_dbc.release_0.1.3.json | 0.1.3 | 90b3a367f3146db84a8c8f04c6008f11c62f593c48ce281dab5df744fd44c6cc |
+| meteora_dbc.release_0.1.2.json | 0.1.2 | eb2729a10e2538d622da8fcdc462f72c3dbf142eb4bb525109e5faff884c8ec9 |
+
 Raydium AMM v4 (675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8) is not an Anchor program and has no IDL. Its
 instruction tags and the amm account's position are written by hand in `AMM_V4_IXS` (extract.rs) from
 github.com/raydium-io/raydium-amm @ 91739d8d9f5cf347e0ce14ebe4d2bb7069fb31b6, program/src/instruction.rs (sha256

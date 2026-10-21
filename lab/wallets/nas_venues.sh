@@ -9,9 +9,11 @@
 #                ways), and the flagged run adds only venue_census, venue_graduations and <venue>/<Event> tables;
 #              - every venue event table decodes ok (status ok or prefix) for >= 99.9 % of its rows, and the manifest
 #                counts no venue event of an unknown discriminator;
-#              - per venue, the successful transactions' swap instructions in venue_census (DBC swap/swap2, DAMM v2
-#                swap/swap2, LaunchLab buy_exact_*/sell_exact_*) and the swap events (DBC EvtSwap*, DAMM v2 EvtSwap2,
-#                LaunchLab TradeEvent) differ by at most 1 %, and each of the three venues has swap events.
+#              - per venue, the successful transactions' swap instructions in venue_census (DBC swap/swap2(+hook), DAMM
+#                v2 swap/swap2, LaunchLab buy_exact_*/sell_exact_*) and the distinct swapping parents of the swap events
+#                (slot, tx_index, outer_ix, parent_inner_ix; DBC emits EvtSwap and EvtSwap2 for one swap) differ by at
+#                most 1 %; no swap event comes from a non-swap or unknown parent; no venue event is unknown to the IDLs
+#                (venue_unknown_events lists them by discriminator to be named).
 #              Prints rows and MB per 1,000 slots per table and the epoch extrapolation.
 #   STEP=epoch (lang, ~1.5-2.5 h): dev epoch 1045 with LAB_VENUES=1 and LAB_VENUE_CENSUS=1 into $DATA/events/venues-v1/chunks
 #              (ops' extract_epochs.sh, THREADS=3), then the same decode and count checks per chunk.
@@ -60,14 +62,11 @@ with open(os.path.join(chunk, "_manifest.json")) as f:
     man = json.load(f)
 if man.get("status") != "complete" or not man.get("venues") or not man.get("venue_census"):
     bad.append(f"manifest: status {man.get('status')}, venues {bool(man.get('venues'))}, venue_census {bool(man.get('venue_census'))}")
-unknown = (man.get("counters") or {}).get("venue_unknown_events", 0)
-if unknown:
-    bad.append(f"{unknown} venue events with an unknown discriminator")
 lit = lambda fs: "[" + ",".join("'" + f.replace("'", "''") + "'" for f in sorted(fs)) + "]"
 tables = {}
 for f in glob.glob(os.path.join(chunk, "**", "*.parquet"), recursive=True):
     tables.setdefault(os.path.relpath(os.path.dirname(f), chunk), []).append(f)
-venue_tables = sorted(t for t in tables if t.split("/")[0] in ("meteora_dbc", "meteora_damm_v2", "raydium_launchlab"))
+venue_tables = sorted(t for t in tables if "/" in t and t.split("/")[0] in ("meteora_dbc", "meteora_damm_v2", "raydium_launchlab"))
 for t in venue_tables:
     n, ok = con.execute(f"SELECT count(*), count(*) FILTER (WHERE decode_status IN ('ok', 'prefix')) FROM read_parquet({lit(tables[t])}, union_by_name = true)").fetchone()
     mb = sum(os.path.getsize(f) for f in tables[t]) / 1e6
@@ -77,7 +76,10 @@ for t in venue_tables:
         bad.append(f"{t}: {ok / n:.4%} decode ok")
 g = tables.get("venue_graduations", [])
 print("venue_graduations:", con.execute(f"SELECT count(*) FROM read_parquet({lit(g)})").fetchone()[0] if g else 0)
-# swap instructions of successful transactions in the census against the swap events, per venue
+# Swaps (spec v0.2 §6, smoke 99zzzzr): one swap instruction is one (slot, tx_index, outer_ix, parent_inner_ix), whatever
+# number of events it emits (DBC emits EvtSwap and EvtSwap2 for one swap). Per venue, the distinct swapping parents
+# (parent_ix_name a swap instruction) against the census's swap instructions of successful transactions; swap events
+# whose parent is not a swap instruction (or unknown to the IDLs) are unexplained.
 census = tables.get("venue_census", [])
 SWAPS = {"meteora_dbc": (("swap", "swap2", "swap2_with_transfer_hook"), ("EvtSwap", "EvtSwap2", "EvtSwap2WithTransferHook", "EvtSwap3", "EvtSwap3WithTransferHook")),
          "meteora_damm_v2": (("swap", "swap2"), ("EvtSwap2",)),
@@ -87,11 +89,36 @@ for venue, (ixs, events) in SWAPS.items():
     n_ix = con.execute(f"""SELECT count(*) FROM (SELECT split_part(x, ':', 1) || ':' || split_part(x, ':', 2) AS vx
                            FROM (SELECT unnest(string_split(dex_ixs, ';')) AS x FROM read_parquet({lit(census)}) WHERE NOT failed))
                            WHERE vx IN ({names})""").fetchone()[0] if census else 0
+    n_q = con.execute(f"""SELECT count(*) FROM (SELECT unnest(string_split(dex_ixs, ';')) AS x FROM read_parquet({lit(census)}) WHERE NOT failed)
+                          WHERE starts_with(x, '{venue}:?:')""").fetchone()[0] if census else 0
     files = [f for e in events for f in tables.get(f"{venue}/{e}", [])]
-    n_ev = con.execute(f"SELECT count(*) FROM read_parquet({lit(files)}, union_by_name = true)").fetchone()[0] if files else 0
-    print(f"{venue}: swap instructions {n_ix:,}, swap events {n_ev:,}")
-    if not n_ev or abs(n_ev - n_ix) > 0.01 * max(n_ix, 1):
-        bad.append(f"{venue}: {n_ev} swap events against {n_ix} swap instructions")
+    sw = ", ".join(f"'{x}'" for x in ixs)
+    if files:
+        src = f"read_parquet({lit(files)}, union_by_name = true)"
+        n_ev, n_par = con.execute(f"""SELECT count(*), count(DISTINCT (slot, tx_index, outer_ix, parent_inner_ix))
+                                      FROM {src} WHERE parent_ix_name IN ({sw})""").fetchone()
+        other = con.execute(f"""SELECT COALESCE(parent_ix_name, '(unknown)'), parent_ix_disc, count(*) FROM {src}
+                                WHERE parent_ix_name IS NULL OR parent_ix_name NOT IN ({sw}) GROUP BY 1, 2 ORDER BY 3 DESC""").fetchall()
+    else:
+        n_ev, n_par, other = 0, 0, []
+    print(f"{venue}: swap instructions {n_ix:,}, swapping parents {n_par:,} ({n_ev:,} swap events, "
+          f"{n_ev / n_par if n_par else 0:.2f} per swap); census instructions unknown to the IDL ('?'): {n_q:,}")
+    for name, disc, n in other:
+        print(f"  swap events from a non-swap parent: {name} {disc}: {n:,}")
+    if not n_par or abs(n_par - n_ix) > 0.01 * max(n_ix, 1):
+        bad.append(f"{venue}: {n_par} swapping parents against {n_ix} swap instructions")
+    if other:
+        bad.append(f"{venue}: {sum(n for *_, n in other)} swap events from non-swap or unknown parents")
+unk = tables.get("venue_unknown_events", [])
+n_unk = 0
+if unk:
+    for venue, disc, parent, n in con.execute(f"""SELECT venue, event_disc, COALESCE(parent_ix_name, '(unknown)'), count(*)
+                                                FROM read_parquet({lit(unk)}) GROUP BY 1, 2, 3 ORDER BY 4 DESC""").fetchall():
+        print(f"unknown event: {venue} {disc} from {parent}: {n:,}")
+        n_unk += n
+n_unk = max(n_unk, (man.get("counters") or {}).get("venue_unknown_events", 0))
+if n_unk:
+    bad.append(f"{n_unk} venue events unknown to the pinned IDLs (listed above, to be named)")
 print("venues: " + ("GREEN" if not bad else "RED: " + "; ".join(bad)))
 sys.exit(1 if bad else 0)
 EOF
@@ -130,7 +157,7 @@ def tables(chunk):
 
 t_off, t_on = tables(off), tables(on)
 added = sorted(set(t_on) - set(t_off))
-new_ok = lambda t: t in ("venue_census", "venue_graduations") or t.split("/")[0] in ("meteora_dbc", "meteora_damm_v2", "raydium_launchlab")
+new_ok = lambda t: t in ("venue_census", "venue_graduations", "venue_unknown_events") or t.split("/")[0] in ("meteora_dbc", "meteora_damm_v2", "raydium_launchlab")
 bad = [f"tables only without the flags: {sorted(set(t_off) - set(t_on))}"] if set(t_off) - set(t_on) else []
 bad += [f"unexpected new table {t}" for t in added if not new_ok(t)]
 for t in sorted(set(t_off)):

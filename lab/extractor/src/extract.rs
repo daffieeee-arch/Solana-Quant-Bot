@@ -1086,9 +1086,17 @@ impl Census {
 pub const DBC_IDL: &str = include_str!("../idl/venues/meteora_dbc.json");
 pub const DAMM_V2_IDL: &str = include_str!("../idl/venues/meteora_damm_v2.json");
 pub const LAUNCHLAB_IDL: &str = include_str!("../idl/venues/raydium_launchlab.json");
+/// DBC's older releases (newest first): events and instructions the current IDL no longer has (fee claims, configs)
+/// still appear in historical blocks. Only discriminators the current IDL does not know are taken from them.
+pub const DBC_OLDER_IDLS: [(&str, &str); 4] = [
+    ("meteora_dbc.release_0.1.6.json", include_str!("../idl/venues/meteora_dbc.release_0.1.6.json")),
+    ("meteora_dbc.release_0.1.4.json", include_str!("../idl/venues/meteora_dbc.release_0.1.4.json")),
+    ("meteora_dbc.release_0.1.3.json", include_str!("../idl/venues/meteora_dbc.release_0.1.3.json")),
+    ("meteora_dbc.release_0.1.2.json", include_str!("../idl/venues/meteora_dbc.release_0.1.2.json")),
+];
 
 /// Context columns before the IDL fields in every venue event table (`<label>/<Event>`).
-pub const VENUE_EVENT_CONTEXT: [(&str, Kind); 15] = [
+pub const VENUE_EVENT_CONTEXT: [(&str, Kind); 17] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
     // The event CPI's position: its top-level instruction and its index among that one's inner instructions.
@@ -1099,7 +1107,11 @@ pub const VENUE_EVENT_CONTEXT: [(&str, Kind); 15] = [
     ("fee_payer", Kind::Utf8),
     ("outer_program", Kind::Utf8),
     // The instruction that emitted it: the nearest earlier instruction of the same program in the same top-level group
-    // that is no event (its IDL name and decoded arguments, slippage limits included).
+    // that is no event: its inner index (NULL when it is the top-level one; one swap is one (slot, tx_index, outer_ix,
+    // parent_inner_ix), whatever number of events it emits: DBC emits EvtSwap and EvtSwap2 for one swap), its first
+    // eight bytes (hex), its IDL name and decoded arguments (slippage limits included).
+    ("parent_inner_ix", Kind::U64),
+    ("parent_ix_disc", Kind::Utf8),
     ("parent_ix_name", Kind::Utf8),
     ("parent_ix_args", Kind::Utf8),
     ("decode_status", Kind::Utf8),
@@ -1132,6 +1144,19 @@ const VENUE_GRADUATION_COLS: [(&str, Kind); 12] = [
     ("quote_mint", Kind::Utf8),
 ];
 
+/// Venue events whose discriminator no pinned IDL knows (current or older): kept to be named, not decoded.
+const VENUE_UNKNOWN_COLS: [(&str, Kind); 9] = [
+    ("slot", Kind::U64),
+    ("tx_index", Kind::U64),
+    ("outer_ix", Kind::U64),
+    ("inner_ix", Kind::U64),
+    ("venue", Kind::Utf8),
+    ("event_disc", Kind::Utf8),
+    ("payload_len", Kind::U64),
+    ("parent_ix_name", Kind::Utf8),
+    ("parent_ix_disc", Kind::Utf8),
+];
+
 /// (program label, instruction, from-pool account, to-pool account, base mint account, quote mint account, to venue).
 pub const VENUE_GRADUATIONS: [(&str, &str, &str, &str, &str, &str, &str); 4] = [
     ("meteora_dbc", "migrate_meteora_damm", "virtual_pool", "pool", "token_a_mint", "token_b_mint", "meteora_damm_v1"),
@@ -1146,6 +1171,8 @@ const VENUE_QUOTE_ACCOUNTS: [&str; 3] = ["quote_mint", "token_b_mint", "quote_to
 
 /// An instruction of a venue program: its accounts' positions for the context and, for a graduation, its row.
 struct VenueIx {
+    /// The IDL (VenueProgram.idls) that defines it: 0 the current one, then the older ones.
+    idl: usize,
     name: &'static str,
     trader: Option<usize>,
     pool: Option<usize>,
@@ -1157,8 +1184,20 @@ struct VenueIx {
 
 struct VenueProgram {
     label: &'static str,
-    prog: ProgramIdl,
+    /// The current IDL first, then older ones (DBC): a discriminator is looked up in this order.
+    idls: Vec<ProgramIdl>,
     ixs: HashMap<[u8; 8], VenueIx>,
+}
+
+impl VenueProgram {
+    fn id(&self) -> &[u8] {
+        self.idls[0].id.as_slice()
+    }
+
+    /// The event table of a discriminator: (the IDL that knows it, event index, table, columns).
+    fn event(&self, disc: &[u8; 8]) -> Option<(&ProgramIdl, &(usize, Arc<str>, Columns))> {
+        self.idls.iter().find_map(|p| p.tables.get(disc).map(|t| (p, t)))
+    }
 }
 
 /// The venue decoders (LAB_VENUES=1): DBC, DAMM v2 and LaunchLab.
@@ -1166,6 +1205,8 @@ pub struct Venues {
     programs: Vec<VenueProgram>,
     grad_cols: Columns,
     grad_table: Arc<str>,
+    unknown_cols: Columns,
+    unknown_table: Arc<str>,
 }
 
 /// One transaction's venue rows and how many events had a discriminator the IDL does not know.
@@ -1179,33 +1220,48 @@ pub struct VenueRows {
 impl Venues {
     pub fn new() -> anyhow::Result<Self> {
         let mut programs = Vec::new();
-        for (label, text) in [("meteora_dbc", DBC_IDL), ("meteora_damm_v2", DAMM_V2_IDL), ("raydium_launchlab", LAUNCHLAB_IDL)] {
-            let prog = ProgramIdl::with_context(label, text, &VENUE_EVENT_CONTEXT)?;
+        let older: [&[(&str, &str)]; 3] = [&DBC_OLDER_IDLS[..], &[], &[]];
+        for ((label, text), older) in [("meteora_dbc", DBC_IDL), ("meteora_damm_v2", DAMM_V2_IDL), ("raydium_launchlab", LAUNCHLAB_IDL)].into_iter().zip(older) {
+            let mut idls = vec![ProgramIdl::with_context(label, text, &VENUE_EVENT_CONTEXT)?];
+            for (file, t) in older {
+                let mut old = ProgramIdl::with_context(label, t, &VENUE_EVENT_CONTEXT)?;
+                anyhow::ensure!(old.id == idls[0].id, "{file} is another program's IDL");
+                // Only what the newer IDLs do not know: the newest layout of a name wins.
+                old.tables.retain(|disc, _| idls.iter().all(|p| !p.tables.contains_key(disc)));
+                idls.push(old);
+            }
             let first = |names: &[&str], accounts: &[String]| accounts.iter().position(|a| names.contains(&a.as_str()));
-            let ixs = prog
-                .idl
-                .instructions
-                .iter()
-                .map(|ix| {
+            let mut ixs: HashMap<[u8; 8], VenueIx> = HashMap::new();
+            for (n, p) in idls.iter().enumerate() {
+                for ix in &p.idl.instructions {
+                    if ixs.contains_key(&ix.discriminator) {
+                        continue; // a newer IDL defines it
+                    }
                     let name: &'static str = Box::leak(ix.name.clone().into_boxed_str());
                     let graduation = VENUE_GRADUATIONS.iter().find(|g| g.0 == label && g.1 == ix.name).map(|g| {
-                        let at = |n: &str| ix.accounts.iter().position(|a| a == n);
+                        let at = |a: &str| ix.accounts.iter().position(|x| x == a);
                         (at(g.2), at(g.3), at(g.4), at(g.5), g.6)
                     });
-                    let v = VenueIx {
+                    ixs.insert(ix.discriminator, VenueIx {
+                        idl: n,
                         name,
                         trader: first(&VENUE_TRADER_ACCOUNTS[..], &ix.accounts[..]),
                         pool: first(&VENUE_POOL_ACCOUNTS[..], &ix.accounts[..]),
                         base: first(&VENUE_BASE_ACCOUNTS[..], &ix.accounts[..]),
                         quote: first(&VENUE_QUOTE_ACCOUNTS[..], &ix.accounts[..]),
                         graduation,
-                    };
-                    (ix.discriminator, v)
-                })
-                .collect();
-            programs.push(VenueProgram { label, prog, ixs });
+                    });
+                }
+            }
+            programs.push(VenueProgram { label, idls, ixs });
         }
-        Ok(Self { programs, grad_cols: cols(&VENUE_GRADUATION_COLS), grad_table: Arc::from("venue_graduations") })
+        Ok(Self {
+            programs,
+            grad_cols: cols(&VENUE_GRADUATION_COLS),
+            grad_table: Arc::from("venue_graduations"),
+            unknown_cols: cols(&VENUE_UNKNOWN_COLS),
+            unknown_table: Arc::from("venue_unknown_events"),
+        })
     }
 
     /// On with LAB_VENUES=1 only.
@@ -1218,7 +1274,7 @@ impl Venues {
 
     /// The program labels and ids (for the manifest).
     pub fn ids(&self) -> Vec<(&'static str, String)> {
-        self.programs.iter().map(|p| (p.label, p.prog.idl.address.clone())).collect()
+        self.programs.iter().map(|p| (p.label, p.idls[0].idl.address.clone())).collect()
     }
 
     /// Does the transaction invoke a venue program (top level or inner)? Cheap: no view is built for the others.
@@ -1236,14 +1292,14 @@ impl Venues {
             } else {
                 r.get(i - statics.len() - w.len()).map(AsRef::as_ref)
             };
-            k.is_some_and(|k| self.programs.iter().any(|p| p.prog.id.as_slice() == k))
+            k.is_some_and(|k| self.programs.iter().any(|p| p.id() == k))
         };
         msg.instructions().iter().any(|ix| is_venue(ix.program_id_index))
             || meta.inner_instructions.as_deref().unwrap_or(&[]).iter().any(|g| g.instructions.iter().any(|ix| is_venue(ix.instruction.program_id_index)))
     }
 
-    /// The venue rows of one transaction: an event row per venue event self-CPI, a graduation row per graduation
-    /// instruction of a successful transaction.
+    /// The venue rows of one transaction: an event row per venue event self-CPI (or an unknown-event row), a graduation
+    /// row per graduation instruction of a successful transaction.
     pub fn rows(&self, v: &TxView) -> VenueRows {
         let b58 = |b: &[u8]| bs58::encode(b).into_string();
         let mut out = VenueRows { rows: Vec::new(), events: 0, graduations: 0, unknown_events: 0 };
@@ -1259,17 +1315,14 @@ impl Venues {
             v.ixs.iter().find(|x| x.path == outer.to_string()).and_then(|x| x.program).map_or(Val::Null, |k| Val::Str(b58(k)))
         };
         let disc_of = |d: &[u8]| -> Option<[u8; 8]> { d.get(..8).and_then(|x| <[u8; 8]>::try_from(x).ok()) };
+        let hex8 = |d: &[u8]| Val::Str(hex::encode(&d[..d.len().min(8)]));
         for (n, ix) in v.ixs.iter().enumerate() {
             let Some(program) = ix.program else { continue };
-            let Some(vp) = self.programs.iter().find(|p| p.prog.id.as_slice() == program) else { continue };
+            let Some(vp) = self.programs.iter().find(|p| p.id() == program) else { continue };
             let (outer, inner) = split(&ix.path);
             if ix.data.len() >= 16 && ix.data[..8] == EVENT_IX_TAG {
                 let disc: [u8; 8] = ix.data[8..16].try_into().unwrap();
                 let body = &ix.data[16..];
-                let Some((ev_idx, table, columns)) = vp.prog.tables.get(&disc) else {
-                    out.unknown_events += 1;
-                    continue;
-                };
                 // The parent: the nearest earlier instruction of this program in the same top-level group, no event.
                 let parent = v.ixs[..n]
                     .iter()
@@ -1277,13 +1330,36 @@ impl Venues {
                     .take_while(|p| split(&p.path).0 == outer)
                     .find(|p| p.program == Some(program) && !p.data.starts_with(&EVENT_IX_TAG));
                 let known = parent.and_then(|p| disc_of(p.data).and_then(|d| vp.ixs.get(&d)).map(|x| (p, x)));
-                let (name, args) = match parent.and_then(|p| vp.prog.idl.decode_instruction(p.data)) {
+                let (name, args) = match known.and_then(|(p, x)| vp.idls[x.idl].idl.decode_instruction(p.data)) {
                     Some((name, args)) => (Val::Str(name.to_owned()), Val::Str(args)),
                     None => (Val::Null, Val::Null),
                 };
+                let (p_inner, p_disc) = match parent {
+                    Some(p) => (split(&p.path).1.map_or(Val::Null, Val::U64), hex8(p.data)),
+                    None => (Val::Null, Val::Null),
+                };
+                let Some((pidl, (ev_idx, table, columns))) = vp.event(&disc) else {
+                    out.unknown_events += 1;
+                    out.rows.push(Row {
+                        table: self.unknown_table.clone(),
+                        columns: self.unknown_cols.clone(),
+                        values: vec![
+                            Val::U64(v.slot),
+                            Val::U64(v.tx_index),
+                            Val::U64(outer),
+                            inner.map_or(Val::Null, Val::U64),
+                            Val::Str(vp.label.to_owned()),
+                            Val::Str(hex::encode(disc)),
+                            Val::U64(body.len() as u64),
+                            name,
+                            p_disc,
+                        ],
+                    });
+                    continue;
+                };
                 let pick = |f: fn(&VenueIx) -> Option<usize>| known.map_or(Val::Null, |(p, x)| key_of(p.accounts, f(x)));
-                let ev = &vp.prog.idl.events[*ev_idx];
-                let decoded = vp.prog.idl.decode_event(ev, body);
+                let ev = &pidl.idl.events[*ev_idx];
+                let decoded = pidl.idl.decode_event(ev, body);
                 let mut values = Vec::with_capacity(columns.len());
                 values.extend([
                     Val::U64(v.slot),
@@ -1293,6 +1369,8 @@ impl Venues {
                     Val::U64(out.events),
                     Val::Str(v.fee_payer.clone()),
                     outer_program(outer),
+                    p_inner,
+                    p_disc,
                     name,
                     args,
                     Val::Str(decoded.status.as_str().to_owned()),
@@ -2747,7 +2825,7 @@ mod tests {
                 assert_eq!(d.values.len(), ev.fields.len());
             }
         }
-        assert_eq!(VENUE_EVENT_CONTEXT.len(), 15);
+        assert_eq!(VENUE_EVENT_CONTEXT.len(), 17);
     }
 
     fn ix_disc(text: &str, name: &str) -> Vec<u8> {
@@ -2801,6 +2879,8 @@ mod tests {
             "decode_status", "payload_len", "ix_trader", "ix_pool", "ix_base_mint", "ix_quote_mint"].iter().map(|c| col(r, c).clone()).collect();
         assert_eq!(ctx, vec![Val::U64(5), Val::U64(2), Val::U64(0), Val::U64(0), Val::U64(0), st(&b58(&payer)), st(&b58(&launchlab)),
             st("buy_exact_in"), st("ok"), Val::U64(body.len() as u64), st(&b58(&payer)), st(&b58(&pool)), st(&b58(&base)), st(WSOL)]);
+        // The parent is the top-level buy: no inner index, its discriminator.
+        assert_eq!((col(r, "parent_inner_ix"), col(r, "parent_ix_disc")), (&Val::Null, &st(&hex::encode(&buy[..8]))));
         assert_eq!((col(r, "pool_state"), col(r, "total_base_sell"), col(r, "virtual_base")), (&st(&b58(&pool)), &Val::U64(1), &Val::U64(2)));
         assert_eq!((col(r, "trade_direction"), col(r, "pool_status"), col(r, "exact_in")), (&st("Buy"), &st("Trade"), &Val::Bool(true)));
     }
@@ -2832,13 +2912,35 @@ mod tests {
         let venues = Venues::new().unwrap();
         let out = venues.rows(&view(false));
         assert_eq!((out.graduations, out.events, out.unknown_events), (2, 0, 1));
-        let got: Vec<Vec<Val>> = out.rows.iter().map(|r| ["venue", "ix_name", "from_pool", "to_venue", "to_pool", "base_mint", "quote_mint", "outer_ix", "inner_ix"]
+        let got: Vec<Vec<Val>> = out.rows.iter().filter(|r| &*r.table == "venue_graduations").map(|r| ["venue", "ix_name", "from_pool", "to_venue", "to_pool", "base_mint", "quote_mint", "outer_ix", "inner_ix"]
             .iter().map(|c| col(r, c).clone()).collect()).collect();
+        // The unknown event is kept to be named: its venue, discriminator and parent.
+        let unk: Vec<&Row> = out.rows.iter().filter(|r| &*r.table == "venue_unknown_events").collect();
+        assert_eq!(unk.len(), 1);
+        assert_eq!((col(unk[0], "venue"), col(unk[0], "event_disc"), col(unk[0], "parent_ix_name"), col(unk[0], "inner_ix")),
+                   (&st("raydium_launchlab"), &st("0909090909090909"), &st("migrate_to_cpswap"), &Val::U64(1)));
         assert_eq!(got, vec![
             vec![st("meteora_dbc"), st("migration_damm_v2"), st(&b58(&vpool)), st("meteora_damm_v2"), st(&b58(&dpool)), st(&b58(&base)), st(WSOL), Val::U64(0), Val::Null],
             vec![st("raydium_launchlab"), st("migrate_to_cpswap"), st(&b58(&lpool)), st("raydium_cpmm"), st(&b58(&cpool)), st(&b58(&base)), st(WSOL), Val::U64(1), Val::U64(0)],
         ]);
         // A failed transaction graduates nothing.
         assert_eq!(venues.rows(&view(true)).graduations, 0);
+    }
+
+    #[test]
+    fn an_event_only_older_dbc_releases_know_gets_its_table() {
+        // EvtClaimProtocolFee is in DBC 0.1.x, not in the current IDL: decoded with the release that has it.
+        let old = Idl::parse(super::DBC_OLDER_IDLS[0].1).unwrap();
+        let ev = old.events.iter().find(|e| e.name == "EvtClaimProtocolFee").expect("0.1.6 has EvtClaimProtocolFee");
+        assert!(Idl::parse(DBC_IDL).unwrap().events.iter().all(|e| e.discriminator != ev.discriminator));
+        let (payer, dbc) = (test_key(71, true), key("dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"));
+        let data: Vec<u8> = EVENT_IX_TAG.iter().copied().chain(ev.discriminator).chain([0u8; 64]).collect();
+        let keys: Vec<&[u8]> = vec![&payer[..], &dbc[..]];
+        let view = TxView { slot: 3, tx_index: 0, fee_payer: b58(&payer), failed: false, keys, pre_lamports: &[], post_lamports: &[],
+                            pre_tokens: vec![], post_tokens: vec![],
+                            ixs: vec![IxView { path: "0.0".into(), program: Some(&dbc), accounts: &[1], data: &data, parent: Some(&dbc) }] };
+        let out = Venues::new().unwrap().rows(&view);
+        assert_eq!((out.events, out.unknown_events), (1, 0));
+        assert_eq!(&*out.rows[0].table, "meteora_dbc/EvtClaimProtocolFee");
     }
 }
