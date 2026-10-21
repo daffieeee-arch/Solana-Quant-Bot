@@ -3,7 +3,7 @@
 //!
 //!   lab-probe --slots --out FILE --minutes N --max-bytes B [--dry-minutes M] [--wire-ratio R] [--endpoint URL]
 //!   lab-probe --tx-program name=<program id> [--tx-program …] --out FILE --minutes N --max-bytes B
-//!             [--commitment processed|confirmed] [--signatures-out FILE.csv] [...]
+//!             [--commitment processed|confirmed | --deshred] [--signatures-out FILE.csv] [...]
 //!   lab-probe … --print-request        # the subscription it would send, without connecting
 //!
 //! Mode A (`--slots`, MR-AG1): slot updates only, every status (`filter_by_commitment=false`) with the inter-slot
@@ -19,7 +19,11 @@
 //! per transaction update: `signature,slot,bank_id,filters,received_unix_ns` (filters |-joined, sorted; bank_id as the
 //! update gives it, 0 when absent). The file is created new (never overwritten), flushed every minute and at the end,
 //! and its own size counts against `--max-bytes` too. Two probes side by side, one processed and one confirmed, give
-//! the per-transaction lead of a processed stream (`lab/checks/probe_lead.py`).
+//! the per-transaction lead of a processed stream (`lab/checks/probe_lead.py`). `--deshred` puts the same filters
+//! (account_include=[id], vote=false) on the SubscribeDeshred stream instead: transactions rebuilt from shreds before
+//! any execution, matched on static and lookup-table keys, so it also carries transactions that later fail or never
+//! land. It has no commitment (refused with it); its signature rows leave bank_id empty; bytes, caps, exit codes and
+//! guards are the same.
 //!
 //! Bytes are counted as the recorder's meter counts them (`wire.rs`: `encoded_len` × `--wire-ratio`, rounded up);
 //! `--max-bytes` is in those metered bytes, the unit of the recorder's daily budget. The endpoint comes from
@@ -42,9 +46,11 @@ use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use yellowstone_grpc_client::{ClientTlsConfig, GeyserGrpcClient};
+use yellowstone_grpc_client::{ClientTlsConfig, GeyserGrpcClient, SubscribeDeshredRequestSink, SubscribeRequestSink};
 use yellowstone_grpc_proto::prelude::{
-    subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequest, SubscribeRequestFilterSlots,
+    subscribe_update::UpdateOneof, subscribe_update_deshred::UpdateOneof as DeshredOneof, CommitmentLevel,
+    SubscribeDeshredRequest, SubscribeRequestFilterDeshredTransactions, SubscribeUpdateDeshred, SubscribeUpdateSlot,
+    SubscribeRequest, SubscribeRequestFilterSlots,
     SubscribeRequestFilterTransactions, SubscribeUpdate,
 };
 use yellowstone_grpc_proto::prost::Message as _;
@@ -87,6 +93,8 @@ struct Args {
     /// Mode B only (mode A always asks processed with every status).
     commitment: CommitmentLevel,
     signatures_out: Option<PathBuf>,
+    /// Mode B on the SubscribeDeshred stream (transactions from shreds, before execution) instead of Subscribe.
+    deshred: bool,
 }
 
 fn parse_args(args: impl IntoIterator<Item = String>, endpoint: Option<String>) -> Result<Args> {
@@ -94,7 +102,7 @@ fn parse_args(args: impl IntoIterator<Item = String>, endpoint: Option<String>) 
     let (mut slots, mut programs) = (false, Vec::<(String, String)>::new());
     let (mut out, mut minutes, mut max_bytes, mut dry_minutes) = (None, None, None, None);
     let mut a = Args { mode: Mode::Slots, out: PathBuf::new(), minutes: 0, max_bytes: 0, dry_minutes: None, wire_ratio: 1.0, endpoint, print_request: false,
-                      commitment: CommitmentLevel::Confirmed, signatures_out: None };
+                      commitment: CommitmentLevel::Confirmed, signatures_out: None, deshred: false };
     let mut commitment = None;
     while let Some(flag) = it.next() {
         let mut val = || it.next().with_context(|| format!("{flag} needs a value"));
@@ -109,6 +117,7 @@ fn parse_args(args: impl IntoIterator<Item = String>, endpoint: Option<String>) 
             "--endpoint" => a.endpoint = Some(val()?),
             "--print-request" => a.print_request = true,
             "--commitment" => commitment = Some(val()?),
+            "--deshred" => a.deshred = true,
             "--signatures-out" => a.signatures_out = Some(PathBuf::from(val()?)),
             other => bail!("unknown argument {other}"),
         }
@@ -126,8 +135,11 @@ fn parse_args(args: impl IntoIterator<Item = String>, endpoint: Option<String>) 
             bail!("each --tx-program needs its own name and its own program id");
         }
     }
-    if a.mode == Mode::Slots && (commitment.is_some() || a.signatures_out.is_some()) {
-        bail!("--commitment and --signatures-out are for --tx-program (--slots always asks every status at processed)");
+    if a.mode == Mode::Slots && (commitment.is_some() || a.signatures_out.is_some() || a.deshred) {
+        bail!("--commitment, --deshred and --signatures-out are for --tx-program (--slots always asks every status at processed)");
+    }
+    if a.deshred && commitment.is_some() {
+        bail!("--deshred has no commitment: its transactions come from shreds, before execution");
     }
     a.commitment = match commitment.as_deref() {
         None | Some("confirmed") => CommitmentLevel::Confirmed,
@@ -220,6 +232,32 @@ fn request(mode: &Mode, commitment: CommitmentLevel) -> SubscribeRequest {
     }
 }
 
+/// `--deshred`: the same per-program filters on the SubscribeDeshred stream (account_include=[id], vote=false; no
+/// failed flag and no commitment there: nothing has executed yet). Static and lookup-table keys both match.
+fn deshred_request(mode: &Mode) -> SubscribeDeshredRequest {
+    let Mode::Tx(programs) = mode else { return SubscribeDeshredRequest::default() };
+    SubscribeDeshredRequest {
+        deshred_transactions: programs
+            .iter()
+            .map(|(name, id)| {
+                let f = SubscribeRequestFilterDeshredTransactions { vote: Some(false), account_include: vec![id.clone()], ..Default::default() };
+                (name.clone(), f)
+            })
+            .collect(),
+        ..Default::default()
+    }
+}
+
+fn deshred_summary(req: &SubscribeDeshredRequest) -> Value {
+    json!({
+        "stream": "deshred",
+        "deshred_transactions": req.deshred_transactions.iter().map(|(k, v)| (k.clone(), json!({"account_include": v.account_include,
+                     "account_exclude": v.account_exclude, "account_required": v.account_required, "vote": v.vote,
+                     "include_update_parent": v.include_update_parent}))).collect::<BTreeMap<_, _>>(),
+        "slots": req.slots.len(),
+    })
+}
+
 /// `--signatures-out`: one CSV row per transaction update, streamed (created new, never overwritten).
 struct Signatures {
     file: std::io::BufWriter<std::fs::File>,
@@ -250,7 +288,15 @@ impl Signatures {
 
     /// The update's row when it is a transaction; the file's size so far.
     fn add(&mut self, u: &SubscribeUpdate, now_ns: u64) -> Result<u64> {
-        if let Some(line) = signature_row(u, now_ns) {
+        self.add_row(signature_row(u, now_ns))
+    }
+
+    fn add_deshred(&mut self, u: &SubscribeUpdateDeshred, now_ns: u64) -> Result<u64> {
+        self.add_row(deshred_signature_row(u, now_ns))
+    }
+
+    fn add_row(&mut self, line: Option<String>) -> Result<u64> {
+        if let Some(line) = line {
             self.put(&line)?;
             self.rows += 1;
         }
@@ -276,6 +322,16 @@ fn signature_row(u: &SubscribeUpdate, now_ns: u64) -> Option<String> {
     filters.sort_unstable();
     filters.dedup();
     Some(format!("{sig},{},{},{},{now_ns}\n", t.slot, t.bank_id, filters.join("|")))
+}
+
+/// The same row for a deshred transaction; bank_id is empty (a deshred transaction belongs to no bank yet).
+fn deshred_signature_row(u: &SubscribeUpdateDeshred, now_ns: u64) -> Option<String> {
+    let Some(DeshredOneof::DeshredTransaction(t)) = &u.update_oneof else { return None };
+    let sig = t.transaction.as_ref().map(|i| bs58::encode(&i.signature).into_string()).unwrap_or_default();
+    let mut filters: Vec<&str> = u.filters.iter().map(String::as_str).collect();
+    filters.sort_unstable();
+    filters.dedup();
+    Some(format!("{sig},{},,{},{now_ns}\n", t.slot, filters.join("|")))
 }
 
 /// What `--print-request` shows: the request's filters, no endpoint and no token.
@@ -351,8 +407,10 @@ struct Probe {
     other: Count,
     multi: u64,
     projection: Option<Value>,
-    /// Mode B's commitment ("confirmed" or "processed"); None in mode A.
+    /// Mode B's commitment ("confirmed" or "processed"); None in mode A and on the deshred stream.
     commitment: Option<String>,
+    /// The gRPC stream: "subscribe" or "deshred".
+    stream: &'static str,
 }
 
 impl Probe {
@@ -375,19 +433,32 @@ impl Probe {
             other: Count::default(),
             multi: 0,
             projection: None,
-            commitment: matches!(a.mode, Mode::Tx(_)).then(|| a.commitment.as_str_name().to_ascii_lowercase()),
+            commitment: (matches!(a.mode, Mode::Tx(_)) && !a.deshred).then(|| a.commitment.as_str_name().to_ascii_lowercase()),
+            stream: if a.deshred { "deshred" } else { "subscribe" },
         }
     }
 
     /// One update as it came (`now_ns` its local receive time). Some(MaxBytes) once the metered bytes reach the cap.
     fn on_update(&mut self, u: &SubscribeUpdate, now_ns: u64) -> Option<Stop> {
-        let raw = u.encoded_len();
+        let slot = match &u.update_oneof {
+            Some(UpdateOneof::Slot(s)) => Some(s),
+            _ => None,
+        };
+        self.count(u.encoded_len(), &u.filters, slot, now_ns)
+    }
+
+    /// One update of the deshred stream (`--deshred`): counted and attributed like a transaction update.
+    fn on_deshred(&mut self, u: &SubscribeUpdateDeshred, now_ns: u64) -> Option<Stop> {
+        self.count(u.encoded_len(), &u.filters, None, now_ns)
+    }
+
+    fn count(&mut self, raw: usize, filters: &[String], slot: Option<&SubscribeUpdateSlot>, now_ns: u64) -> Option<Stop> {
         let metered = wire::metered(raw, self.wire_ratio);
         self.total.messages += 1;
         self.total.raw += raw as u64;
         self.total.metered += metered;
-        match (&self.mode, &u.update_oneof) {
-            (Mode::Slots, Some(UpdateOneof::Slot(s))) => {
+        match (&self.mode, slot) {
+            (Mode::Slots, Some(s)) => {
                 let row = self.slots.entry(s.slot).or_default();
                 row.updates += 1;
                 row.parent = row.parent.or(s.parent);
@@ -404,7 +475,7 @@ impl Probe {
                 }
             }
             (Mode::Tx(_), _) => {
-                let ours: BTreeSet<&str> = u.filters.iter().map(String::as_str).filter(|f| self.shares.contains_key(*f)).collect();
+                let ours: BTreeSet<&str> = filters.iter().map(String::as_str).filter(|f| self.shares.contains_key(*f)).collect();
                 if ours.is_empty() {
                     self.other.messages += 1;
                     self.other.raw += raw as u64;
@@ -465,6 +536,7 @@ impl Probe {
             "dry_minutes": self.dry_minutes,
             "wire_ratio": self.wire_ratio,
             "commitment": self.commitment,
+            "stream": self.stream,
             "projection": self.projection,
             "total": count(&self.total),
             "other": count(&self.other),
@@ -583,10 +655,24 @@ fn unix_ns() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
 }
 
+/// An update of the run's stream: Subscribe or SubscribeDeshred.
+enum Got {
+    Update(Box<SubscribeUpdate>),
+    Deshred(Box<SubscribeUpdateDeshred>),
+}
+
+/// The request sink of the run's subscription, held for as long as its stream runs.
+#[allow(dead_code)]
+enum Sink {
+    Subscribe(SubscribeRequestSink),
+    Deshred(SubscribeDeshredRequestSink),
+}
+
 async fn run(a: Args) -> Result<i32> {
-    let req = request(&a.mode, a.commitment);
+    let (req, dreq) = (request(&a.mode, a.commitment), deshred_request(&a.mode));
     if a.print_request {
-        println!("{}", serde_json::to_string_pretty(&request_summary(&req))?);
+        let summary = if a.deshred { deshred_summary(&dreq) } else { request_summary(&req) };
+        println!("{}", serde_json::to_string_pretty(&summary)?);
         return Ok(0);
     }
     let endpoint = a.endpoint.clone().context("pass --endpoint or set LAB_TRITON_GRPC_ENDPOINT")?;
@@ -608,12 +694,17 @@ async fn run(a: Args) -> Result<i32> {
             .connect()
             .await
             .context("connect")?;
-        let subscription = client.subscribe_with_request(Some(req)).await.context("subscribe")?;
-        anyhow::Ok((client, subscription))
+        if a.deshred {
+            let (sink, stream) = client.subscribe_deshred_with_request(Some(dreq)).await.context("subscribe deshred")?;
+            anyhow::Ok((client, Sink::Deshred(sink), stream.map(|m| m.map(|u| Got::Deshred(Box::new(u)))).boxed_local()))
+        } else {
+            let (sink, stream) = client.subscribe_with_request(Some(req)).await.context("subscribe")?;
+            anyhow::Ok((client, Sink::Subscribe(sink), stream.map(|m| m.map(|u| Got::Update(Box::new(u)))).boxed_local()))
+        }
     }
     .await;
     // The client and the request sink stay alive for the whole run (the stream is theirs).
-    let (_client, (_sink, mut stream)) = match connected {
+    let (_client, _sink, mut stream) = match connected {
         Ok(s) => s,
         Err(e) => {
             let why = shown(format!("not started: {e:#}"));
@@ -623,7 +714,8 @@ async fn run(a: Args) -> Result<i32> {
         }
     };
     probe.start_ns = unix_ns(); // the clock of --minutes and --dry-minutes runs from the accepted subscription
-    log::info!("subscribed ({} mode); writing {}", if a.mode == Mode::Slots { "slots" } else { "tx" }, a.out.display());
+    let mode = if a.mode == Mode::Slots { "slots" } else if a.deshred { "deshred" } else { "tx" };
+    log::info!("subscribed ({mode} mode); writing {}", a.out.display());
     let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut tick = tokio::time::interval(Duration::from_secs(1));
     let ctrl_c = tokio::signal::ctrl_c();
@@ -632,14 +724,22 @@ async fn run(a: Args) -> Result<i32> {
     let (status, code) = loop {
         tokio::select! {
             m = stream.next() => match m {
-                Some(Ok(u)) => {
+                Some(Ok(g)) => {
                     last_update = Instant::now();
                     let now = unix_ns();
-                    if let Some(stop) = probe.on_update(&u, now) {
+                    let stop = match &g {
+                        Got::Update(u) => probe.on_update(u, now),
+                        Got::Deshred(d) => probe.on_deshred(d, now),
+                    };
+                    if let Some(stop) = stop {
                         break stop.end();
                     }
                     if let Some(s) = sigs.as_mut() {
-                        match s.add(&u, now) {
+                        let added = match &g {
+                            Got::Update(u) => s.add(u, now),
+                            Got::Deshred(d) => s.add_deshred(d, now),
+                        };
+                        match added {
                             Ok(bytes) if bytes >= a.max_bytes => break ("max-bytes reached by --signatures-out".into(), EXIT_MAX_BYTES),
                             Ok(_) => {}
                             Err(e) => break (format!("--signatures-out: {e:#}"), EXIT_INCOMPLETE),
@@ -692,13 +792,17 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_args, quantile, redact, request, signature_row, wire, write_json_atomic, Args, Mode, Probe, Signatures, Stop,
-        EXIT_MAX_BYTES, EXIT_PROJECTED, NS_PER_SEC, SIGNATURES_HEADER,
+        deshred_request, parse_args, quantile, redact, request, signature_row, wire, write_json_atomic, Args, Mode, Probe,
+        Signatures, Stop, EXIT_MAX_BYTES, EXIT_PROJECTED, NS_PER_SEC, SIGNATURES_HEADER,
     };
     use serde_json::Value;
     use yellowstone_grpc_proto::prelude::{
         subscribe_update::UpdateOneof, CommitmentLevel, SlotStatus, SubscribeUpdate, SubscribeUpdatePing, SubscribeUpdateSlot,
         SubscribeUpdateTransaction, SubscribeUpdateTransactionInfo,
+    };
+    use yellowstone_grpc_proto::prelude::{
+        subscribe_update_deshred::UpdateOneof as DeshredOneof, SubscribeUpdateDeshred, SubscribeUpdateDeshredTransaction,
+        SubscribeUpdateDeshredTransactionInfo,
     };
     use yellowstone_grpc_proto::prost::Message as _;
 
@@ -1004,6 +1108,62 @@ mod tests {
         drop(s);
         assert!(Signatures::create(&path).is_err()); // an existing file is never replaced
         assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn deshred(filters: &[&str], size: usize, slot: u64) -> SubscribeUpdateDeshred {
+        let info = SubscribeUpdateDeshredTransactionInfo { signature: vec![9; size], ..Default::default() };
+        SubscribeUpdateDeshred {
+            filters: filters.iter().map(|f| (*f).to_owned()).collect(),
+            update_oneof: Some(DeshredOneof::DeshredTransaction(SubscribeUpdateDeshredTransaction { transaction: Some(info), slot })),
+            created_at: None,
+        }
+    }
+
+    #[test]
+    fn deshred_asks_the_same_program_filters_without_votes_or_a_commitment() {
+        let a = args(&format!("--tx-program pump={PUMP} --tx-program meteora_dlmm={DLMM} --deshred --out x --minutes 5 --max-bytes 9")).unwrap();
+        assert!(a.deshred);
+        let r = deshred_request(&a.mode);
+        assert_eq!(r.deshred_transactions.len(), 2);
+        let f = &r.deshred_transactions["meteora_dlmm"];
+        assert_eq!((f.vote, f.account_include.clone()), (Some(false), vec![DLMM.to_owned()]));
+        assert!(f.account_exclude.is_empty() && f.account_required.is_empty() && f.include_update_parent.is_none());
+        assert!(r.slots.is_empty() && r.ping.is_none());
+        let rep = Probe::new(&a, T0).report("done", Some(0), T0);
+        assert_eq!((rep["stream"].as_str(), rep["commitment"].clone()), (Some("deshred"), Value::Null));
+        let sub = args(&format!("--tx-program pump={PUMP} --out x --minutes 5 --max-bytes 9")).unwrap();
+        assert_eq!(Probe::new(&sub, T0).report("done", Some(0), T0)["stream"], "subscribe"); // the default stays Subscribe
+        for bad in [
+            format!("--tx-program pump={PUMP} --deshred --commitment processed --out x --minutes 5 --max-bytes 9"),
+            "--slots --deshred --out x --minutes 5 --max-bytes 9".to_owned(),
+        ] {
+            assert!(args(&bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_deshred_update_is_counted_attributed_capped_and_written_like_a_transaction() {
+        let one = deshred(&["pump_amm", "pump"], 64, 459_700_123);
+        let m = wire::metered(one.encoded_len(), 1.0);
+        let a = args(&format!("--tx-program pump={PUMP} --tx-program pump_amm={PUMP_AMM} --deshred --out x --minutes 60 --max-bytes {}", 2 * m)).unwrap();
+        let mut p = Probe::new(&a, T0);
+        assert_eq!(p.on_deshred(&one, T0), None);
+        assert!((p.shares["pump"].messages - 0.5).abs() < 1e-9 && p.shares["pump_amm"].matched == 1);
+        assert_eq!(p.on_deshred(&one, T0), Some(Stop::MaxBytes)); // the same cap in metered bytes
+        assert_eq!((p.total.messages, p.total.raw), (2, 2 * one.encoded_len() as u64));
+        let dir = std::env::temp_dir().join(format!("lab-probe-deshred-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut s = Signatures::create(&dir.join("d.csv")).unwrap();
+        s.add_deshred(&one, T0 + 3).unwrap();
+        let ping = SubscribeUpdateDeshred { filters: vec![], update_oneof: Some(DeshredOneof::Ping(Default::default())), created_at: None };
+        s.add_deshred(&ping, T0 + 4).unwrap();
+        s.flush(true).unwrap();
+        let sig = bs58::encode(vec![9u8; 64]).into_string();
+        assert_eq!(std::fs::read_to_string(dir.join("d.csv")).unwrap(),
+                   format!("{SIGNATURES_HEADER}{sig},459700123,,pump|pump_amm,{}\n", T0 + 3)); // bank_id empty
+        assert_eq!(s.rows, 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
