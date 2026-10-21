@@ -899,7 +899,9 @@ pub const AMM_V4_IXS: [(u8, &str, Option<u8>); 12] = [
     (18, "withdraw_excess_lamports", None),
 ];
 
-/// One row per transaction that invokes a DEX program (top level or inner; a failed transaction has its top level only).
+/// One row per transaction that invokes a DEX program (top level or inner; a failed transaction keeps the inner
+/// instructions that ran before its failure, so its dex_ixs can name swaps that were rolled back: count swaps of
+/// successful transactions only, as the smoke does; smoke 99zzzzt: DAMM v2's 458 such events in the 1054 range).
 const VENUE_CENSUS_COLS: [(&str, Kind); 16] = [
     ("slot", Kind::U64),
     ("tx_index", Kind::U64),
@@ -2767,7 +2769,7 @@ mod tests {
         assert_eq!((col(&r, "priority_fee"), col(&r, "cu_consumed"), col(&r, "mints"), col(&r, "signer_token_deltas")),
                    (&Val::U64(0), &Val::Null, &Val::Null, &Val::Null));
         assert_eq!(col(&r, "signer_sol_delta"), &Val::I64(-10_000));
-        // A failed transaction: its top level only (no inner instructions), still a row, flagged.
+        // A failed transaction (here with its top level only): still a row, flagged.
         let f = row(true, vec![IxView { path: "0".into(), program: Some(&ray), accounts: &[6, 3], data: &swap_in_v2, parent: None }]).unwrap();
         assert_eq!((col(&f, "failed"), col(&f, "dex_ixs"), col(&f, "top_programs")),
                    (&Val::Bool(true), &st(&format!("raydium_amm_v4:swap_base_in_v2:{}", b58(&amm))), &st("raydium_amm_v4")));
