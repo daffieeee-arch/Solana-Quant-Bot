@@ -205,7 +205,7 @@ hour's rate is projected over the rest of the day.
 ```bash
 source lab/scripts/env.sh                      # pinned Rust; the same env as the extractor
 cd lab/recorder
-cargo test                                     # conversion, segments, meter, filters, the core loop
+cargo test                                     # conversion, segments, meter, filters, the core loop, lab-probe
 cargo build --release
 # The subscription a watchlist gives, without connecting:
 target/release/lab-recorder --root /tmp/rec-dry --watchlist <watchlist-current.json> --dry-run
@@ -220,6 +220,37 @@ pools fall in their first 10 minutes. Probing every new reversed pool for 10 min
 ~13.5 GB/day; probing those created with ≥ 150 SOL for 3 hours is ~5 GB/day and covers 51% of the
 day's deep pools from their first slot. Most others start at ~85 SOL; `new_vaults` catches the
 ones that grow.
+
+## lab-probe: slot timing and the venue bytes census
+
+A second binary in this crate (`src/bin/lab-probe.rs`) for short, capped measurements beside the recorder. It records
+only counts and receive times: no segments, no decoding, and no `budget.json` (it never reads or writes the
+recorder's meter state; a test pins that). Its bytes are counted by the meter's own rule (`src/wire.rs`:
+`encoded_len` × `--wire-ratio`, rounded up), and `--max-bytes` is in those metered bytes, the unit of the daily
+budget. The endpoint and token come from `recorder.env` as for the recorder (`LAB_TRITON_X_TOKEN`, never printed).
+
+```bash
+set -a; . ~/.config/solana-lab/recorder.env; set +a
+# Mode A (MR-AG1): every slot status with the inter-slot ones; per slot the receive time of each status
+lab-probe --slots --out slots.json --minutes 60 --max-bytes 200000000 --dry-minutes 5
+# Mode B (venue bytes census): one transaction filter per program, vote=false, failed unset, confirmed
+lab-probe --tx-program pump=6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P --tx-program pump_amm=pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA \
+          --out census.json --minutes 30 --max-bytes 2000000000 --dry-minutes 2 --wire-ratio 1
+lab-probe --slots --print-request    # the subscription, without connecting
+```
+
+- **Mode A output:** `slots` (per slot `parent`, `<status>_ns` for first_shred_received, created_bank, completed,
+  processed, confirmed, finalized and dead, `updates`, `dead_error`) and `summary`:
+  - `ms_per_slot` from consecutive slot numbers (by first shred and by processed);
+  - `processed_to_confirmed` and `confirmed_to_finalized`, n / median / p90 in ms (linear interpolation);
+  - `dead_slots` and `gaps` (slot numbers between the first and the last that never had an update, and their runs).
+- **Mode B output:** `filters` (per name `program`, `matched`, `messages`, `raw_bytes`, `metered_bytes`). A
+  transaction that k of the filters matched (its `filters` field) counts once in `total` and 1/k to each of them, so
+  `filters` plus `other` (pings) add up to `total`; `matched_by_several` counts those transactions.
+- **Stops and exit codes:** 0 at `--minutes`; 76 when the metered bytes reach `--max-bytes`; 77 when, after
+  `--dry-minutes`, the full run projects above `--max-bytes` (`projection` in the output); 78 when the run ends early
+  (the stream breaks, no update for 60 s, a signal). The output JSON is written atomically at the start, every minute
+  and at the end, so a kill keeps the data up to the last minute.
 
 ## Not used: yellowstone-block-machine
 
