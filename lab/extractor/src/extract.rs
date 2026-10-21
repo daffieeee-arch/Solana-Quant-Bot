@@ -2855,7 +2855,7 @@ mod tests {
         invoker, parse_token_ix, store_legs, summarize_calls, system_non_wallet_target, Bal, Class, IxView, TokenIx, Transfers, TxView,
         FUNDING_MIN_LAMPORTS, PROGRAM_LABELS, PUMP_AMM_IDL, PUMP_IDL, TOKEN_METADATA_INIT, WSOL_MINT,
         Census, CensusTx, AMM_V4_IXS, EVENT_IX_TAG, VENUE_IXS, LabPlugin, Coverage, Venues, DBC_IDL, DAMM_V2_IDL,
-        LAUNCHLAB_IDL, VENUE_EVENT_CONTEXT,
+        LAUNCHLAB_IDL, CPMM_IDL, VENUE_EVENT_CONTEXT,
     };
     use crate::idl::{Kind, Val};
     use crate::sink::Row;
