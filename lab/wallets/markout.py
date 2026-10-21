@@ -38,7 +38,9 @@ their trigger. Farm (organic / flagged) and the trigger's day come along for the
 --delay-ms adds, beside DELAYS, the slot delay of that many ms per epoch through the store's Clock (the engine's rule for
 E20's d_ms 600: 2 slots at 268 ms, 3 at 218 ms); the run JSON lists it per epoch (delay_slots_per_epoch).
 
-Writes markout-<run>.parquet (one row per signal x d x horizon) and run-markout-<run>.json.
+Writes markout-<run>.parquet (one row per signal x d x horizon) and run-markout-<run>.json. Signal columns copied to every
+row: depth_entry / fee_bps (the entry state, E49), creator_prior_pools (E41 class), paid_buyers_60s / paid_max_60s (the paid
+token buys in the 60 s before a pool signal, C3 / E54; paid_buyers()).
 Slots stay before the hold-out (common.guard); the one exception is E20's finished clean run under its clean.lock
 (--clean-lock, clean_lock(): that run's parts, store and engine snapshot only; the F7 mechanism pre-registration). Heavy on a full run (ASOF join against the pool
 and curve tables): NAS; one day on the VPS as a smoke test.
@@ -172,9 +174,13 @@ def load_signals(con, parts_dir, families=None, lo=None, hi=None, clock=None):
             FROM read_parquet({lit}, union_by_name = true) WHERE {' AND '.join(where)}
             GROUP BY family, segment, venue, orientation, mint, pool, t)""")
     creator_prior_pools(con)
+    PAID_WINDOW[0] = paid_buyers(con, clock)
     n = _count(con, "sig")
     progress("signals", n, f"from {len(files)} parts")
     return n
+
+
+PAID_WINDOW = [({}, None)]  # the last load_signals' paid-flow window (slots per epoch, default), for the run JSON
 
 
 SYSTEM_PROGRAM = "11111111111111111111111111111111"
@@ -199,6 +205,63 @@ def creator_prior_pools(con):
         FROM po LEFT JOIN pools q ON q.coin_creator = po.coin_creator AND q.create_slot < po.create_slot AND po.coin_creator <> '{SYSTEM_PROGRAM}'
         GROUP BY po.pool, po.coin_creator) c
       WHERE sig.pool = c.pool""")
+
+
+# The paid buy flow before a pool signal (C3 / E54, pre-registration research/prereg-f7-betaalde-kopers-clean-2026-10-21.md):
+# the window is PAID_WINDOW_MS before the signal through the store's Clock per epoch (as --delay-ms: 224 slots at 268 ms,
+# 275 at 218 ms), the trigger slot included (known at any entry d >= 1); a transaction pays when its priority fee + Jito tip
+# reaches PAID_MIN_LAMPORTS. Fees are transaction-level: the store carries them on every leg of the transaction, so the
+# transaction's value is the max over its legs; `fee_payer` is stored only when it differs from the trader (NULL otherwise),
+# so the payer is COALESCE(fee_payer, trader).
+PAID_WINDOW_MS = 60_000
+PAID_MIN_LAMPORTS = 5_000
+PAID_COLS = ("fee_payer", "trader", "priority_fee", "jito_tip", "token_buy")
+
+
+def paid_buyers(con, clock):
+    """sig.paid_buyers_60s: the number of distinct payers (COALESCE(fee_payer, trader)) of the token-buy transactions in the
+    signal's pool in [t - window, t] whose priority fee + Jito tip >= PAID_MIN_LAMPORTS (0 when none); sig.paid_max_60s: the
+    highest priority fee + tip of those token-buy transactions (NULL when none). NULL for a curve signal or a store without the
+    fee columns. Descriptive signal columns copied to every markout row; the window per epoch goes into the run JSON."""
+    con.execute("ALTER TABLE sig ADD COLUMN paid_buyers_60s INTEGER")
+    con.execute("ALTER TABLE sig ADD COLUMN paid_max_60s BIGINT")
+    try:
+        cols = [r[0] for r in con.execute("DESCRIBE pool").fetchall()]
+    except duckdb.Error:
+        return {}, None
+    per_epoch, default = delay_slots(clock, PAID_WINDOW_MS)
+    if any(c not in cols for c in PAID_COLS):
+        return per_epoch, default
+    w_case = ("CASE t // {e} " + " ".join(f"WHEN {ep} THEN {w}" for ep, w in sorted(per_epoch.items())) + f" ELSE {default} END").format(e=EPOCH)
+    # per bucket of pools (LAB_MARKOUT_BUCKETS consecutive ranges of the sorted signal pools, so the store's zone maps on the
+    # pool column prune the scan; every step is per pool, so the union over the buckets is the unbucketed result): the bucket's
+    # paid transactions aggregated once into a temp table and range-joined to the signals. One shot over all dev signals ran
+    # out of memory at 1.5 GB on the VPS, hash buckets too (a full scan per bucket); the ranges run at 1 GB.
+    con.execute(f"CREATE OR REPLACE TEMP TABLE paid_sig AS SELECT sid, pool, t, t - ({w_case}) AS lo FROM sig WHERE venue = 'pool' AND pool IS NOT NULL")
+    con.execute("CREATE OR REPLACE TEMP TABLE paid_cnt (sid BIGINT, n INTEGER, mx BIGINT)")
+    pools = [r[0] for r in con.execute("SELECT DISTINCT pool FROM paid_sig ORDER BY pool").fetchall()]
+    if not pools:  # a curve-only run (e.g. --families F1): nothing to count, the columns stay NULL
+        con.execute("DROP TABLE paid_cnt; DROP TABLE paid_sig")
+        return per_epoch, default
+    nb = max(1, min(buckets(), len(pools)))
+    bounds = [pools[i * len(pools) // nb] for i in range(nb)] + [None]
+    for b in range(nb):
+        lo, hi = bounds[b], bounds[b + 1]
+        rng = f"p.pool >= '{lo}'" + (f" AND p.pool < '{hi}'" if hi is not None else "")
+        con.execute(f"""
+          CREATE OR REPLACE TEMP TABLE paid_tx AS
+          SELECT p.pool, p.slot, any_value(COALESCE(p.fee_payer, p.trader)) AS payer, max(COALESCE(p.priority_fee, 0) + COALESCE(p.jito_tip, 0))::BIGINT AS c
+          FROM pool p SEMI JOIN (SELECT DISTINCT pool FROM paid_sig) k ON k.pool = p.pool
+          WHERE {rng} AND p.kind IN ('buy', 'sell') AND p.slot BETWEEN (SELECT min(lo) FROM paid_sig) AND (SELECT max(t) FROM paid_sig)
+          GROUP BY p.pool, p.slot, p.tx_index HAVING bool_or(COALESCE(p.token_buy, false))""")
+        con.execute(f"""
+          INSERT INTO paid_cnt
+          SELECT s.sid, count(DISTINCT x.payer) FILTER (WHERE x.c >= {PAID_MIN_LAMPORTS}), max(x.c)
+          FROM paid_sig s LEFT JOIN paid_tx x ON x.pool = s.pool AND x.slot BETWEEN s.lo AND s.t
+          WHERE {rng.replace('p.pool', 's.pool')} GROUP BY s.sid""")
+    con.execute("UPDATE sig SET paid_buyers_60s = c.n, paid_max_60s = c.mx FROM paid_cnt c WHERE sig.sid = c.sid")
+    con.execute("DROP TABLE paid_tx; DROP TABLE paid_cnt; DROP TABLE paid_sig")
+    return per_epoch, default
 
 
 # --- venue states at the end of each slot ------------------------------------------------------------
@@ -789,7 +852,8 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     con.execute(f"""
       COPY (
         SELECT s.family, s.segment, s.venue, s.orientation, s.mint, s.pool, s.t, s.day, s.ms_per_slot, s.regime, s.farm, s.ref_mint, s.ref_t, s.variants,
-               m.d, m.h, m.h_ms, m.target, m.cut, m.mid, m.gross, m.net, m.impact, m.capped, m.depth_entry, m.fee_bps, s.creator_prior_pools
+               m.d, m.h, m.h_ms, m.target, m.cut, m.mid, m.gross, m.net, m.impact, m.capped, m.depth_entry, m.fee_bps, s.creator_prior_pools,
+               s.paid_buyers_60s, s.paid_max_60s
         FROM mk m JOIN sig s ON s.sid = m.sid ORDER BY s.family, s.segment, s.mint, s.t, m.d, m.h_ms
       ) TO '{out_path}' (FORMAT PARQUET)""")  # streamed by DuckDB: the full table is never an Arrow table in Python
     progress("parquet written", n_rows)
@@ -797,6 +861,8 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     info = {"run": run_name, "parts": parts_dir, "parts_sha256": {os.path.basename(f): _sha256(f) for f in sorted(glob.glob(os.path.join(parts_dir, "*.parquet")))},
             "families": families, "slots": [lo, hi], "signals": n_sig, "pool_states": n_pool,
             "delay_ms": delay_ms, "delay_slots_per_epoch": {str(ep): d for ep, d in per_epoch.items()}, "delay_slots_default": default,
+            "paid_window_ms": PAID_WINDOW_MS, "paid_min_lamports": PAID_MIN_LAMPORTS,
+            "paid_window_slots_per_epoch": {str(ep): w for ep, w in PAID_WINDOW[0][0].items()}, "paid_window_slots_default": PAID_WINDOW[0][1],
             "curve_states": n_curve, "states": "at target slots only", "buckets": buckets(), "targets": n_targets, "rows": n_rows, "size_sol": SIZE / SOL,
             "per_order_lamports": per_order, "delays": list(delays(tx_delays)) + (list(TX_DELAYS) if tx_delays else []),
             "tx_delays": {d: delay_label(d) for d in TX_DELAYS} if tx_delays else None, "tx_stats": tx_stats(con) if tx_delays else None,
