@@ -249,6 +249,20 @@ lab-probe --slots --print-request    # the subscription, without connecting
 - **Mode B output:** `filters` (per name `program`, `matched`, `messages`, `raw_bytes`, `metered_bytes`). A
   transaction that k of the filters matched (its `filters` field) counts once in `total` and 1/k to each of them, so
   `filters` plus `other` (pings) add up to `total`; `matched_by_several` counts those transactions.
+- **Processed vs confirmed (mode B):** `--commitment processed|confirmed` (default confirmed) and `--signatures-out FILE`, a
+  streamed CSV with one row per transaction update: `signature,slot,bank_id,filters,received_unix_ns`. The file is created
+  new (never overwritten), flushed every minute and at the end, and its own size also stops the run at `--max-bytes`
+  (76). It gets the same `budget.json` refusal as `--out` and must be another file. Two probes side by side on the same filters:
+
+  ```bash
+  lab-probe --tx-program … --commitment processed --signatures-out p.csv --out p.json --minutes 30 --max-bytes <B> &
+  lab-probe --tx-program … --commitment confirmed --signatures-out c.csv --out c.json --minutes 30 --max-bytes <B>
+  cd lab && python -m checks.probe_lead --processed p.csv --confirmed c.csv --out lead.json
+  ```
+
+  `checks/probe_lead.py` joins them on signature over the slots both covered. It reports the lead (confirmed −
+  processed receive, ms: p50, p90, p99, the share > 50 ms and < 0), the signatures only processed saw (dead or forked
+  slots), only confirmed saw, ones that moved slot, and ones received in more than one bank.
 - **Stops and exit codes:** 0 at `--minutes`; 76 when the metered bytes reach `--max-bytes`; 77 when, after
   `--dry-minutes`, the full run projects above `--max-bytes` (`projection` in the output); 78 when the run ends early
   (the stream breaks, no update for 60 s, a signal). The output JSON is written atomically at the start, every minute

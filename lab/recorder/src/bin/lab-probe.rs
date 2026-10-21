@@ -2,7 +2,8 @@
 //! else: no segments, no decoding, no budget.json (the recorder's meter state is never read or written).
 //!
 //!   lab-probe --slots --out FILE --minutes N --max-bytes B [--dry-minutes M] [--wire-ratio R] [--endpoint URL]
-//!   lab-probe --tx-program name=<program id> [--tx-program …] --out FILE --minutes N --max-bytes B [...]
+//!   lab-probe --tx-program name=<program id> [--tx-program …] --out FILE --minutes N --max-bytes B
+//!             [--commitment processed|confirmed] [--signatures-out FILE.csv] [...]
 //!   lab-probe … --print-request        # the subscription it would send, without connecting
 //!
 //! Mode A (`--slots`, MR-AG1): slot updates only, every status (`filter_by_commitment=false`) with the inter-slot
@@ -13,7 +14,12 @@
 //! Mode B (`--tx-program`, the venue bytes census): one named transaction filter per program
 //! (`account_include=[id]`, `vote=false`, `failed` unset, commitment confirmed as in the recorder). Every update
 //! counts once in the total; a transaction that k of our filters matched (its `filters` field) counts 1/k to each,
-//! so the filters add up to the total (pings and other updates go to `other`).
+//! so the filters add up to the total (pings and other updates go to `other`). `--commitment processed` asks the
+//! same filters at processed commitment (the default stays confirmed). `--signatures-out FILE` streams one CSV row
+//! per transaction update: `signature,slot,bank_id,filters,received_unix_ns` (filters |-joined, sorted; bank_id as the
+//! update gives it, 0 when absent). The file is created new (never overwritten), flushed every minute and at the end,
+//! and its own size counts against `--max-bytes` too. Two probes side by side, one processed and one confirmed, give
+//! the per-transaction lead of a processed stream (`lab/checks/probe_lead.py`).
 //!
 //! Bytes are counted as the recorder's meter counts them (`wire.rs`: `encoded_len` × `--wire-ratio`, rounded up);
 //! `--max-bytes` is in those metered bytes, the unit of the recorder's daily budget. The endpoint comes from
@@ -78,13 +84,18 @@ struct Args {
     wire_ratio: f64,
     endpoint: Option<String>,
     print_request: bool,
+    /// Mode B only (mode A always asks processed with every status).
+    commitment: CommitmentLevel,
+    signatures_out: Option<PathBuf>,
 }
 
 fn parse_args(args: impl IntoIterator<Item = String>, endpoint: Option<String>) -> Result<Args> {
     let mut it = args.into_iter();
     let (mut slots, mut programs) = (false, Vec::<(String, String)>::new());
     let (mut out, mut minutes, mut max_bytes, mut dry_minutes) = (None, None, None, None);
-    let mut a = Args { mode: Mode::Slots, out: PathBuf::new(), minutes: 0, max_bytes: 0, dry_minutes: None, wire_ratio: 1.0, endpoint, print_request: false };
+    let mut a = Args { mode: Mode::Slots, out: PathBuf::new(), minutes: 0, max_bytes: 0, dry_minutes: None, wire_ratio: 1.0, endpoint, print_request: false,
+                      commitment: CommitmentLevel::Confirmed, signatures_out: None };
+    let mut commitment = None;
     while let Some(flag) = it.next() {
         let mut val = || it.next().with_context(|| format!("{flag} needs a value"));
         match flag.as_str() {
@@ -97,6 +108,8 @@ fn parse_args(args: impl IntoIterator<Item = String>, endpoint: Option<String>) 
             "--wire-ratio" => a.wire_ratio = val()?.parse().context("--wire-ratio takes a number")?,
             "--endpoint" => a.endpoint = Some(val()?),
             "--print-request" => a.print_request = true,
+            "--commitment" => commitment = Some(val()?),
+            "--signatures-out" => a.signatures_out = Some(PathBuf::from(val()?)),
             other => bail!("unknown argument {other}"),
         }
     }
@@ -113,6 +126,14 @@ fn parse_args(args: impl IntoIterator<Item = String>, endpoint: Option<String>) 
             bail!("each --tx-program needs its own name and its own program id");
         }
     }
+    if a.mode == Mode::Slots && (commitment.is_some() || a.signatures_out.is_some()) {
+        bail!("--commitment and --signatures-out are for --tx-program (--slots always asks every status at processed)");
+    }
+    a.commitment = match commitment.as_deref() {
+        None | Some("confirmed") => CommitmentLevel::Confirmed,
+        Some("processed") => CommitmentLevel::Processed,
+        Some(other) => bail!("--commitment {other:?}: processed or confirmed"),
+    };
     if !(a.wire_ratio.is_finite() && a.wire_ratio > 0.0) {
         bail!("--wire-ratio must be positive");
     }
@@ -120,7 +141,13 @@ fn parse_args(args: impl IntoIterator<Item = String>, endpoint: Option<String>) 
         return Ok(a);
     }
     a.out = out.context("pass --out FILE")?;
-    refuse_budget(&a.out)?;
+    refuse_budget("--out", &a.out)?;
+    if let Some(sig) = &a.signatures_out {
+        refuse_budget("--signatures-out", sig)?;
+        if sig == &a.out {
+            bail!("--signatures-out must be another file than --out");
+        }
+    }
     a.minutes = minutes.filter(|m| *m > 0).context("pass --minutes N (N > 0)")?;
     a.max_bytes = max_bytes.filter(|b| *b > 0).context("pass --max-bytes B (B > 0): the hard stop")?;
     if let Some(m) = dry_minutes {
@@ -134,13 +161,13 @@ fn parse_args(args: impl IntoIterator<Item = String>, endpoint: Option<String>) 
 
 /// The recorder's meter state is never the output, nor beside it: an --out named budget.json, or in a directory
 /// that holds one (a recorder root), is refused (LAB review on #501).
-fn refuse_budget(out: &Path) -> Result<()> {
+fn refuse_budget(flag: &str, out: &Path) -> Result<()> {
     if out.file_name().is_some_and(|n| n.eq_ignore_ascii_case("budget.json")) {
-        bail!("--out {}: budget.json is the recorder's meter state; write the probe's output elsewhere", out.display());
+        bail!("{flag} {}: budget.json is the recorder's meter state; write the probe's output elsewhere", out.display());
     }
     let dir = out.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
     if dir.join("budget.json").exists() {
-        bail!("--out {}: its directory holds a budget.json (a recorder root); write the probe's output elsewhere", out.display());
+        bail!("{flag} {}: its directory holds a budget.json (a recorder root); write the probe's output elsewhere", out.display());
     }
     Ok(())
 }
@@ -171,8 +198,8 @@ fn parse_program(s: &str) -> Result<(String, String)> {
     Ok((name.to_owned(), id.to_owned()))
 }
 
-/// The one subscription of a run.
-fn request(mode: &Mode) -> SubscribeRequest {
+/// The one subscription of a run (`commitment` for mode B).
+fn request(mode: &Mode, commitment: CommitmentLevel) -> SubscribeRequest {
     match mode {
         Mode::Slots => SubscribeRequest {
             slots: [("slots".to_owned(), SubscribeRequestFilterSlots { filter_by_commitment: Some(false), interslot_updates: Some(true) })].into(),
@@ -187,10 +214,68 @@ fn request(mode: &Mode) -> SubscribeRequest {
                     (name.clone(), f)
                 })
                 .collect(),
-            commitment: Some(CommitmentLevel::Confirmed as i32),
+            commitment: Some(commitment as i32),
             ..Default::default()
         },
     }
+}
+
+/// `--signatures-out`: one CSV row per transaction update, streamed (created new, never overwritten).
+struct Signatures {
+    file: std::io::BufWriter<std::fs::File>,
+    rows: u64,
+    bytes: u64,
+}
+
+const SIGNATURES_HEADER: &str = "signature,slot,bank_id,filters,received_unix_ns\n";
+
+impl Signatures {
+    fn create(path: &Path) -> Result<Self> {
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .with_context(|| format!("--signatures-out {}: cannot create it new (it exists or the directory is missing)", path.display()))?;
+        let mut s = Signatures { file: std::io::BufWriter::new(f), rows: 0, bytes: 0 };
+        s.put(SIGNATURES_HEADER)?;
+        Ok(s)
+    }
+
+    fn put(&mut self, line: &str) -> Result<()> {
+        use std::io::Write as _;
+        self.file.write_all(line.as_bytes())?;
+        self.bytes += line.len() as u64;
+        Ok(())
+    }
+
+    /// The update's row when it is a transaction; the file's size so far.
+    fn add(&mut self, u: &SubscribeUpdate, now_ns: u64) -> Result<u64> {
+        if let Some(line) = signature_row(u, now_ns) {
+            self.put(&line)?;
+            self.rows += 1;
+        }
+        Ok(self.bytes)
+    }
+
+    fn flush(&mut self, sync: bool) -> Result<()> {
+        use std::io::Write as _;
+        self.file.flush()?;
+        if sync {
+            self.file.get_ref().sync_all()?;
+        }
+        Ok(())
+    }
+}
+
+/// `signature,slot,bank_id,filters,received_unix_ns` of a transaction update (None for any other update). The
+/// names are [A-Za-z0-9_] and the signature base58, so no field needs quoting.
+fn signature_row(u: &SubscribeUpdate, now_ns: u64) -> Option<String> {
+    let Some(UpdateOneof::Transaction(t)) = &u.update_oneof else { return None };
+    let sig = t.transaction.as_ref().map(|i| bs58::encode(&i.signature).into_string()).unwrap_or_default();
+    let mut filters: Vec<&str> = u.filters.iter().map(String::as_str).collect();
+    filters.sort_unstable();
+    filters.dedup();
+    Some(format!("{sig},{},{},{},{now_ns}\n", t.slot, t.bank_id, filters.join("|")))
 }
 
 /// What `--print-request` shows: the request's filters, no endpoint and no token.
@@ -266,6 +351,8 @@ struct Probe {
     other: Count,
     multi: u64,
     projection: Option<Value>,
+    /// Mode B's commitment ("confirmed" or "processed"); None in mode A.
+    commitment: Option<String>,
 }
 
 impl Probe {
@@ -288,6 +375,7 @@ impl Probe {
             other: Count::default(),
             multi: 0,
             projection: None,
+            commitment: matches!(a.mode, Mode::Tx(_)).then(|| a.commitment.as_str_name().to_ascii_lowercase()),
         }
     }
 
@@ -376,6 +464,7 @@ impl Probe {
             "max_bytes": self.max_bytes,
             "dry_minutes": self.dry_minutes,
             "wire_ratio": self.wire_ratio,
+            "commitment": self.commitment,
             "projection": self.projection,
             "total": count(&self.total),
             "other": count(&self.other),
@@ -495,7 +584,7 @@ fn unix_ns() -> u64 {
 }
 
 async fn run(a: Args) -> Result<i32> {
-    let req = request(&a.mode);
+    let req = request(&a.mode, a.commitment);
     if a.print_request {
         println!("{}", serde_json::to_string_pretty(&request_summary(&req))?);
         return Ok(0);
@@ -503,6 +592,7 @@ async fn run(a: Args) -> Result<i32> {
     let endpoint = a.endpoint.clone().context("pass --endpoint or set LAB_TRITON_GRPC_ENDPOINT")?;
     let mut probe = Probe::new(&a, unix_ns());
     write_json_atomic(&a.out, &probe.report("connecting", None, unix_ns()))?; // an unwritable --out fails before any byte
+    let mut sigs = a.signatures_out.as_deref().map(Signatures::create).transpose()?;
     // The recorder's client settings (main.rs session): TLS with the native roots, zstd, the token as x-token.
     let token = std::env::var("LAB_TRITON_X_TOKEN").ok();
     let shown = |text: String| redact(&text, &endpoint);
@@ -544,8 +634,16 @@ async fn run(a: Args) -> Result<i32> {
             m = stream.next() => match m {
                 Some(Ok(u)) => {
                     last_update = Instant::now();
-                    if let Some(stop) = probe.on_update(&u, unix_ns()) {
+                    let now = unix_ns();
+                    if let Some(stop) = probe.on_update(&u, now) {
                         break stop.end();
+                    }
+                    if let Some(s) = sigs.as_mut() {
+                        match s.add(&u, now) {
+                            Ok(bytes) if bytes >= a.max_bytes => break ("max-bytes reached by --signatures-out".into(), EXIT_MAX_BYTES),
+                            Ok(_) => {}
+                            Err(e) => break (format!("--signatures-out: {e:#}"), EXIT_INCOMPLETE),
+                        }
                     }
                 }
                 Some(Err(status)) => break (shown(format!("stream: {status}")), EXIT_INCOMPLETE),
@@ -563,13 +661,21 @@ async fn run(a: Args) -> Result<i32> {
                     if let Err(e) = write_json_atomic(&a.out, &probe.report("running", None, unix_ns())) {
                         log::warn!("the minute's output: {e:#}");
                     }
+                    if let Some(Err(e)) = sigs.as_mut().map(|s| s.flush(false)) {
+                        log::warn!("the minute's signatures: {e:#}");
+                    }
                 }
             }
             _ = term.recv() => break ("terminated".into(), EXIT_INCOMPLETE),
             _ = &mut ctrl_c => break ("interrupted".into(), EXIT_INCOMPLETE),
         }
     };
-    write_json_atomic(&a.out, &probe.report(&status, Some(code), unix_ns()))?;
+    let mut report = probe.report(&status, Some(code), unix_ns());
+    if let Some(s) = sigs.as_mut() {
+        s.flush(true)?;
+        report["signatures"] = json!({"file": a.signatures_out.as_ref().map(|p| p.display().to_string()), "rows": s.rows, "bytes": s.bytes});
+    }
+    write_json_atomic(&a.out, &report)?;
     let t = probe.total;
     log::info!("{status}: {} messages, {} raw bytes, {} metered bytes; exit {code}", t.messages, t.raw, t.metered);
     Ok(code)
@@ -586,8 +692,8 @@ fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_args, quantile, redact, request, wire, write_json_atomic, Args, Mode, Probe, Stop, EXIT_MAX_BYTES,
-        EXIT_PROJECTED, NS_PER_SEC,
+        parse_args, quantile, redact, request, signature_row, wire, write_json_atomic, Args, Mode, Probe, Signatures, Stop,
+        EXIT_MAX_BYTES, EXIT_PROJECTED, NS_PER_SEC, SIGNATURES_HEADER,
     };
     use serde_json::Value;
     use yellowstone_grpc_proto::prelude::{
@@ -755,14 +861,14 @@ mod tests {
 
     #[test]
     fn the_requests_are_the_measurements_and_nothing_else() {
-        let r = request(&Mode::Slots);
+        let r = request(&Mode::Slots, CommitmentLevel::Confirmed);
         let f = &r.slots["slots"];
         assert_eq!((f.filter_by_commitment, f.interslot_updates), (Some(false), Some(true)));
         assert!(r.transactions.is_empty() && r.accounts.is_empty() && r.blocks.is_empty() && r.blocks_meta.is_empty());
         assert!(r.entry.is_empty() && r.block_footer.is_empty() && r.from_slot.is_none());
         assert_eq!(r.commitment, Some(CommitmentLevel::Processed as i32));
         let a = args(&format!("--tx-program pump={PUMP} --tx-program meteora_dlmm={DLMM} --out x --minutes 5 --max-bytes 9")).unwrap();
-        let r = request(&a.mode);
+        let r = request(&a.mode, a.commitment);
         assert_eq!(r.transactions.len(), 2);
         let t = &r.transactions["meteora_dlmm"];
         assert_eq!((t.vote, t.failed, t.account_include.clone()), (Some(false), None, vec![DLMM.to_owned()]));
@@ -844,5 +950,60 @@ mod tests {
         assert_eq!(shown, "connect: transport error: dns error for <endpoint> (<endpoint>) at <endpoint>");
         assert_eq!(redact("stream: status: Unavailable", "http://10.0.0.1:10000"), "stream: status: Unavailable");
         assert!(!redact("refused by 10.0.0.1", "http://10.0.0.1:10000").contains("10.0.0.1"));
+    }
+
+    #[test]
+    fn the_commitment_goes_into_the_request_for_the_census_only() {
+        let base = format!("--tx-program pump={PUMP} --out x --minutes 5 --max-bytes 9");
+        let a = args(&base).unwrap();
+        assert_eq!(request(&a.mode, a.commitment).commitment, Some(CommitmentLevel::Confirmed as i32)); // the default, as before
+        let a = args(&format!("{base} --commitment processed")).unwrap();
+        assert_eq!(request(&a.mode, a.commitment).commitment, Some(CommitmentLevel::Processed as i32));
+        assert_eq!(Probe::new(&a, T0).report("done", Some(0), T0)["commitment"], "processed");
+        let a = args(&format!("{base} --commitment confirmed")).unwrap();
+        assert_eq!(request(&a.mode, a.commitment).commitment, Some(CommitmentLevel::Confirmed as i32));
+        // mode A keeps its own request: every status at processed, whatever is passed
+        assert_eq!(request(&Mode::Slots, CommitmentLevel::Confirmed).commitment, Some(CommitmentLevel::Processed as i32));
+        assert_eq!(Probe::new(&args("--slots --out x --minutes 5 --max-bytes 9").unwrap(), T0).report("x", None, T0)["commitment"], Value::Null);
+        for bad in [
+            format!("{base} --commitment finalized"),
+            "--slots --out x --minutes 5 --max-bytes 9 --commitment processed".to_owned(),
+            "--slots --out x --minutes 5 --max-bytes 9 --signatures-out s.csv".to_owned(),
+            format!("{base} --signatures-out x"), // the same file as --out
+            format!("{base} --signatures-out budget.json"),
+        ] {
+            assert!(args(&bad).is_err(), "{bad}");
+        }
+        assert_eq!(args(&format!("{base} --signatures-out s.csv")).unwrap().signatures_out.unwrap().to_str(), Some("s.csv"));
+    }
+
+    #[test]
+    fn every_transaction_update_becomes_one_signature_row_and_the_file_is_never_overwritten() {
+        let dir = std::env::temp_dir().join(format!("lab-probe-sigs-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("sigs.csv");
+        let mut s = Signatures::create(&path).unwrap();
+        let mut a = tx(&["pump_amm", "pump", "pump"], 64); // sorted, once each
+        if let Some(UpdateOneof::Transaction(t)) = a.update_oneof.as_mut() {
+            t.slot = 459_700_001;
+            t.bank_id = 7;
+        }
+        let b = tx(&["meteora_dlmm"], 64);
+        let mut size = 0;
+        for (u, now) in [(&a, T0 + 5), (&ping(), T0 + 6), (&b, T0 + 9)] {
+            size = s.add(u, now).unwrap();
+        }
+        s.flush(true).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(size, text.len() as u64); // the size the --max-bytes check sees is the file's
+        let sig = bs58::encode(vec![7u8; 64]).into_string();
+        assert_eq!(text, format!("{SIGNATURES_HEADER}{sig},459700001,7,pump|pump_amm,{}\n{sig},1,0,meteora_dlmm,{}\n", T0 + 5, T0 + 9));
+        assert_eq!(s.rows, 2); // the ping has no row
+        assert_eq!(signature_row(&ping(), T0), None);
+        drop(s);
+        assert!(Signatures::create(&path).is_err()); // an existing file is never replaced
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
