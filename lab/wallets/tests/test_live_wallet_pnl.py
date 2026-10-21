@@ -189,10 +189,12 @@ def test_nothing_before_epoch_1064_and_no_locked_store(root, tmp_path, capsys):
         lw.pick_segments(str(root), lo=lw.MIN_SLOT - 1)
     segs, early = lw.pick_segments(str(root))
     assert early == 1 and all(m["first_slot"] >= lw.MIN_SLOT for _, _, m in segs)
-    for locked in ("clean-1055-1063.duckdb", "fwd1057.duckdb", "store-1063.duckdb", "clean.duckdb"):
+    for locked in ("clean-1055-1063.duckdb", "fwd1057.duckdb", "store-1063.duckdb", "clean.duckdb",
+                   "holdout-1047-1051.duckdb", "fwd1049.duckdb", "store-1051.duckdb", "HoldOut.duckdb", "hold-out.duckdb"):
         with pytest.raises(ValueError, match="locked"):
             lw.check_store(str(tmp_path / locked))
-    assert lw.check_store(lw.PAPER_STORE) == lw.PAPER_STORE
+    for allowed in (lw.PAPER_STORE, "fwd1053-1054.duckdb", "fwd1052.duckdb", "dev2.duckdb", "fwd1046.duckdb"):
+        assert lw.check_store(allowed) == allowed
     assert lw.main(["--wallet", A, "--root", str(root), "--from-slot", str(lw.MIN_SLOT - 1), "--no-store",
                     "--out", str(tmp_path / "o")]) == 2
     assert "clean-locked" in capsys.readouterr().err
@@ -216,3 +218,20 @@ def test_wallet_list_and_outputs(root, tmp_path):
     assert {(r["wallet"], r["day"]) for r in t} == {(A, DAY1), (A, DAY2), (B, DAY1)}
     assert (out / "wallet_day.csv").read_text().startswith('"wallet"')
     assert not list(out.glob("*.tmp"))
+
+
+def test_memory_is_capped_and_each_run_gets_its_own_output_directory(root, tmp_path, monkeypatch):
+    assert (lw.check_memory("1GB"), lw.check_memory("512mb"), lw.check_memory(" 1024MB")) == ("1024MB", "512MB", "1024MB")
+    for bad in ("2GB", "1025MB", "0MB", "1.5GB", "lots", ""):
+        with pytest.raises(ValueError, match="--memory"):
+            lw.check_memory(bad)
+    with pytest.raises(ValueError, match="--memory"):
+        lw.run([A], root=str(root), store=None, memory="4GB", log=lambda m: None)
+    assert lw.main(["--wallet", A, "--root", str(root), "--no-store", "--memory", "3GB", "--out", str(tmp_path / "o")]) == 2
+    # without --out: a new <OUT>/<UTC stamp> per run, never LAB research's folder itself
+    monkeypatch.setattr(lw, "OUT", str(tmp_path / "live-pnl-v1"))
+    assert lw.run_dir(now=1_792_627_200) == str(tmp_path / "live-pnl-v1" / "20261022T000000Z")
+    assert lw.main(["--wallet", A, "--root", str(root), "--no-store"]) == 0
+    (run,) = (tmp_path / "live-pnl-v1").iterdir()
+    assert run.name.endswith("Z") and (run / "summary.json").exists()
+    assert not (tmp_path / "live-pnl-v1" / "summary.json").exists()

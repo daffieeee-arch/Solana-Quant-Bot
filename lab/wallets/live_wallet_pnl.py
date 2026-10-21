@@ -21,14 +21,15 @@ Per leg (the conventions of wallets.money):
 
 Pool orientation, per pool, in this order: its CreatePoolEvent in the segments; the base and quote mint accounts of
 its own trades (ix_base_mint / ix_quote_mint, every direct buy and sell names them; a pool whose trades name two
-pairs is a conflict and stays unknown); the paper engine's store (fwd1053-1054, read-only; never the clean store or a
-1055-1063 store). A pool known by none of them is counted (unknown_pool_legs), not priced; a pool without WSOL and a
+pairs is a conflict and stays unknown); the paper engine's store (fwd1053-1054, read-only; never the clean store, a
+1055-1063 store or a hold-out store). A pool known by none of them is counted (unknown_pool_legs), not priced; a pool without WSOL and a
 curve with another quote mint are counted as non_sol_legs. No F7 or H rule is evaluated here (E32 forward lock).
 
 Partial view: the recorder only records the pools on its transaction filter (the watchlist, open positions, probes
 and new reversed pools, pump.fun creates), not the whole market. A wallet's day here is what it did in those pools.
 
-Writes <out>/wallet_day.parquet, wallet_day.csv and summary.json. Bounded: DuckDB memory_limit 1 GB, 2 threads,
+Writes <out>/wallet_day.parquet, wallet_day.csv and summary.json; without --out, <out> is a new
+$LAB/wallets/live-pnl-v1/<UTC stamp>/ per run. Bounded: DuckDB memory_limit at most 1 GB (--memory), 2 threads,
 segments read in batches of BATCH; per batch every transaction's offset is computed (the last transaction per pool is
 carried to the next batch) and only the listed wallets' legs are kept. Run it in
 `systemd-run --user --scope -p MemoryMax=2G`.
@@ -53,8 +54,10 @@ ROOT = os.path.join(LAB, "recorder")
 PAPER_STORE = os.environ.get("PAPER_STORE", os.path.join(LAB, "store", "fwd1053-1054.duckdb"))
 OUT = os.path.join(LAB, "wallets", "live-pnl-v1")
 MIN_SLOT = 459_648_000  # epoch 1064 (1064 x 432,000): after Alpenglow; 1063 and before are clean-locked
-# Stores this tool may never open: the clean store and any store of the locked epochs 1055-1063.
-LOCKED_STORE = re.compile(r"clean|10(5[5-9]|6[0-3])")
+# Stores this tool may never open (by file name): the clean store and any store of the locked epochs 1055-1063, and
+# the hold-out (epochs 1047-1051, or a name with "holdout"; LAB review on #502).
+LOCKED_STORE = re.compile(r"clean|hold-?out|10(4[7-9]|5[01]|5[5-9]|6[0-3])", re.IGNORECASE)
+MAX_MEMORY_MB = 1024  # DuckDB's limit at most 1 GB; the 2 GB scope (MemoryMax) around the run is the hard limit
 WSOL = "So11111111111111111111111111111111111111112"
 SOL_KEY = "11111111111111111111111111111111"  # a curve's quote_mint when it trades against SOL
 SOL_QUOTES = (SOL_KEY, WSOL)
@@ -66,9 +69,23 @@ NOTE = ("partial view: only the pools the recorder records (watchlist, open posi
 
 def check_store(path):
     if path and LOCKED_STORE.search(os.path.basename(path)):
-        raise ValueError(f"{path}: the clean store and the 1055-1063 stores are locked; use the paper store "
+        raise ValueError(f"{path}: the clean, hold-out (1047-1051) and 1055-1063 stores are locked; use the paper store "
                          f"({os.path.basename(PAPER_STORE)}) or --no-store")
     return path
+
+
+def check_memory(text):
+    """--memory as DuckDB takes it (e.g. 512MB, 1GB), at most MAX_MEMORY_MB."""
+    m = re.fullmatch(r"(\d+)\s*(MB|GB)", text.strip(), re.IGNORECASE)
+    mb = int(m.group(1)) * (1024 if m.group(2).upper() == "GB" else 1) if m else None
+    if not mb or mb > MAX_MEMORY_MB:
+        raise ValueError(f"--memory {text!r}: give 1-{MAX_MEMORY_MB} MB as e.g. 512MB or 1GB (the 2 GB scope is the hard limit)")
+    return f"{mb}MB"
+
+
+def run_dir(root=None, now=None):
+    """The default output: a directory of its own per run, <OUT>/<UTC stamp> (never files beside earlier runs')."""
+    return os.path.join(root or OUT, time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now)))
 
 
 def read_wallets(path=None, given=()):
@@ -282,6 +299,7 @@ def build(con, segs, wallets, lo, hi, store, log=print):
 def run(wallets, root=ROOT, lo=None, hi=None, store=PAPER_STORE, memory="1GB", threads=2, log=print):
     """(wallet x day rows as dicts, summary)."""
     check_store(store)
+    memory = check_memory(memory)
     segs, early = pick_segments(root, lo, hi)
     lo = MIN_SLOT if lo is None else lo
     con = _connect(memory, threads)
@@ -338,17 +356,21 @@ def main(argv=None):
     ap.add_argument("--to-slot", type=int)
     ap.add_argument("--store", default=PAPER_STORE)
     ap.add_argument("--no-store", action="store_true", help="classify pools from the segments only")
-    ap.add_argument("--out", default=OUT)
-    ap.add_argument("--memory", default="1GB")
+    ap.add_argument("--out", help=f"output directory (default: a new {OUT}/<UTC stamp> per run)")
+    ap.add_argument("--memory", default="1GB", help=f"DuckDB memory_limit, at most {MAX_MEMORY_MB} MB; the real limit is "
+                                                    "the MemoryMax=2G scope the run is started in")
     a = ap.parse_args(argv)
     try:
         wallets = read_wallets(a.wallets, a.wallet)
-        rows, summary = run(wallets, a.root, a.from_slot, a.to_slot, None if a.no_store else a.store, a.memory,
+        memory = check_memory(a.memory)
+        rows, summary = run(wallets, a.root, a.from_slot, a.to_slot, None if a.no_store else a.store, memory,
                             log=lambda m: print(m, file=sys.stderr))
     except ValueError as e:
         print(f"refused: {e}", file=sys.stderr)
         return 2
-    write(rows, summary, a.out)
+    out = a.out or run_dir()
+    write(rows, summary, out)
+    print(f"wrote {out}", file=sys.stderr)
     for r in rows:
         print(f"{r['wallet'][:8]}… {r['day']}  legs {r['legs']:>6}  buy {r['buy_sol']:>10.2f}  sell {r['sell_sol']:>10.2f}  "
               f"cash {r['cash_sol']:>+9.2f}  fees {r['fees_sol']:>7.3f}  offset med {r['offset_median']}")
