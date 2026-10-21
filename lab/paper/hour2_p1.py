@@ -6,6 +6,7 @@ replayed by the production engine twice: as recorded (A) and without exactly the
   python -m paper.hour2_p1 build --live REC --removed DIR/removed.parquet --from-seq A --to-seq B --lo LO --hi HI --out ROOT
   python -m paper.hour2_p1 explain --journal-a JA --journal-b JB --removed DIR/removed.parquet --lo LO --hi HI --out DIR
   python -m paper.hour2_p1 state --root-a RA --root-b RB --journal-a JA --journal-b JB --out DIR
+  python -m paper.hour2_p1 completions --root REC --day YYYY-MM-DD [--out DIR]   (day 1 after the deploy, INFO)
 
 removed: the live root's transactions in [LO, HI] that arrived there on tx_new_reversed (stream_of names tx_pools and
   tx_probes first, so none of them matched those) and that the hour-2 root holds on no stream: what P1 took away in that
@@ -29,6 +30,9 @@ explain: paper.journal_diff of the two journals, with a cause per difference:
   A difference before LO is unexplained by construction: the inputs are equal there, so the engine must be.
 state (INFO): the engines' own state, A against B: the watchlist log per minute (counts and pool set) and the learned
   table (slot and info per kind and key); it can differ while no decision does.
+removed also counts the curve completions (pump CompleteEvent) among the removed transactions, per arrival stream, and
+  their share of the window's completions (INFO; above 10 % a point to discuss). completions: day 1 after the deploy,
+  CompleteEvents per UTC day and arrival stream, a day against the day before (INFO, read-only).
 """
 
 import argparse
@@ -188,11 +192,28 @@ def cmd_removed(a):
     con.executemany("INSERT INTO o VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", out_rows)
     path = os.path.join(a.out, "removed.parquet")
     con.execute(f"COPY o TO '{path}' (FORMAT parquet)")
+    # curve completions (pump CompleteEvent) among them (LAB review, QUEUE 472): P1 can drop a completion bundled with a
+    # PumpSwap trade naming a learned address; INFO, a share above 10 % is a point to discuss, not RED
+    comp_files = [f for _, d, _ in live for f in glob.glob(os.path.join(d, "pump", "CompleteEvent", "*.parquet"))]
+    comp = {"total": 0, "by_stream": {}, "removed": 0, "removed_by_stream": {}, "share_removed": 0.0, "over_10pct": False}
+    if comp_files:
+        rows = con.execute("SELECT DISTINCT c.signature, la.stream, c.signature IN (SELECT signature FROM r) "
+                           "FROM read_parquet(?, union_by_name = true) c LEFT JOIN la USING (signature) "
+                           "WHERE c.slot BETWEEN ? AND ?", [comp_files, a.lo, a.hi]).fetchall()
+        for _, stream, gone in rows:
+            st = stream or "(no arrival)"
+            comp["by_stream"][st] = comp["by_stream"].get(st, 0) + 1
+            if gone:
+                comp["removed_by_stream"][st] = comp["removed_by_stream"].get(st, 0) + 1
+        comp["total"] = len(rows)
+        comp["removed"] = sum(comp["removed_by_stream"].values())
+        comp["share_removed"] = round(comp["removed"] / comp["total"], 4) if comp["total"] else 0.0
+        comp["over_10pct"] = comp["share_removed"] > 0.10
     summary = {"lo": a.lo, "hi": a.hi, "live_segments": [live[0][0], live[-1][0]], "meas_segments": [meas[0][0], meas[-1][0]],
                "live_arrivals_by_stream": counts, "live_duplicate_signatures": dup, "live_tx_new_reversed": n_nr,
                "removed": n_r, "removed_share_of_nr": round(n_r / n_nr, 4) if n_nr else None, "by_class": by_class,
                "learned_hit_needs_tolerance": sum(1 for r in out_rows if r[5] == "excluded_learned" and not r[7]),
-               "removed_with_a_pool": sum(1 for r in out_rows if r[8]), "tol_s": TOL_S}
+               "removed_with_a_pool": sum(1 for r in out_rows if r[8]), "tol_s": TOL_S, "completions": comp}
     with open(os.path.join(a.out, "removed.json"), "w") as f:
         json.dump(summary, f, indent=1)
     print(json.dumps(summary))
@@ -460,6 +481,43 @@ def cmd_state(a):
     print("\n".join(lines[2:]))
 
 
+def cmd_completions(a):
+    """Day 1 after P1's deploy, INFO (LAB review, QUEUE 472): pump CompleteEvents per UTC day (the event's timestamp) and
+    per arrival stream, DAY against the day before, from a recorder root (read-only)."""
+    from datetime import date, datetime, timedelta, timezone
+
+    day = date.fromisoformat(a.day)
+    days = [day - timedelta(days=1), day]
+    t0 = int(datetime(days[0].year, days[0].month, days[0].day, tzinfo=timezone.utc).timestamp())
+    t1 = t0 + 2 * 86_400
+    segs = [(seq, d) for seq, d, m in segments(a.root) if m.get("written_unix", t1) >= t0 - 3_600]
+    con = connect()
+    found = {}
+    for seq, d in segs:
+        fs = glob.glob(os.path.join(d, "pump", "CompleteEvent", "*.parquet"))
+        if not fs:
+            continue
+        for sig, ts in con.execute("SELECT DISTINCT signature, timestamp FROM read_parquet(?, union_by_name = true) "
+                                   "WHERE timestamp >= ? AND timestamp < ?", [fs, t0, t1]).fetchall():
+            arr = glob.glob(os.path.join(d, "arrivals", "*.parquet"))
+            st = con.execute("SELECT any_value(stream) FROM read_parquet(?, union_by_name = true) WHERE signature = ?",
+                             [arr, sig]).fetchone()[0] if arr else None
+            found.setdefault(sig, (int(ts), st or "(no arrival)"))
+    table = {}
+    for ts, st in found.values():
+        dd = datetime.fromtimestamp(ts, timezone.utc).date().isoformat()
+        table.setdefault(dd, {}).setdefault(st, 0)
+        table[dd][st] += 1
+    res = {"root": a.root, "days": [x.isoformat() for x in days], "per_day_stream": table,
+           "totals": {dd: sum(v.values()) for dd, v in table.items()}}
+    out = json.dumps(res, indent=1)
+    if a.out:
+        os.makedirs(a.out, exist_ok=True)
+        with open(os.path.join(a.out, f"completions-{day.isoformat()}.json"), "w") as f:
+            f.write(out)
+    print(out)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -487,8 +545,13 @@ def main(argv=None):
     st.add_argument("--journal-a", required=True)
     st.add_argument("--journal-b", required=True)
     st.add_argument("--out", required=True)
+    cp = sub.add_parser("completions")
+    cp.add_argument("--root", required=True, help="a recorder root (read-only)")
+    cp.add_argument("--day", required=True, help="UTC day YYYY-MM-DD; compared with the day before")
+    cp.add_argument("--out")
     a = ap.parse_args(argv)
-    return {"removed": cmd_removed, "build": cmd_build, "explain": cmd_explain, "state": cmd_state}[a.cmd](a) or 0
+    return {"removed": cmd_removed, "build": cmd_build, "explain": cmd_explain, "state": cmd_state,
+            "completions": cmd_completions}[a.cmd](a) or 0
 
 
 if __name__ == "__main__":

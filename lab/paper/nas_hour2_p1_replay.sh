@@ -84,6 +84,7 @@ p1() { (cd "$REPO/lab" && PYTHONPATH=$REPO/lab "$PY" -m paper.hour2_p1 "$@"); }
 # 1. what P1 took away in hour 2
 timed removed p1 removed --live "$REC" --meas "$MEAS" --requests "$REQ" --lo "$LO" --hi "$HI" --out "$OUT/removed"
 tail -1 "$OUT/removed.log" | tee -a "$OUT/job.log"
+"$PY" -c "import json, sys; c = json.load(open(sys.argv[1]))['completions']; print(f'INFO completions in the window: {c[\"removed\"]} of {c[\"total\"]} removed ({c[\"share_removed\"]:.1%}' + (', OVER 10 %' if c['over_10pct'] else '') + f'); by stream {c[\"by_stream\"]}, removed by stream {c[\"removed_by_stream\"]}')" "$OUT/removed/removed.json" | tee -a "$OUT/job.log"
 # 2. the roots
 timed rec-a p1 build --live "$REC" --removed none --from-seq "$FROM_SEQ" --to-seq "$TO_SEQ" --lo "$LO" --hi "$HI" --out "$OUT/rec-a"
 timed rec-b p1 build --live "$REC" --removed "$OUT/removed/removed.parquet" --from-seq "$FROM_SEQ" --to-seq "$TO_SEQ" \
