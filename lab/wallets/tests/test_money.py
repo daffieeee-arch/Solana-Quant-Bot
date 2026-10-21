@@ -101,5 +101,24 @@ def test_money_on_the_mini_store(tmp_path):
     assert abs(c + v + (s1 - s0) - ext) < 1e-6  # the books close on P
 
 
+
+def test_marks_are_the_same_in_day_chunks(tmp_path):
+    """build_marks over day-aligned slot ranges (one day each, and one range over all) gives the same marks."""
+    from wallets.common import connect
+
+    _store(tmp_path / "s.duckdb")
+    con = connect(str(tmp_path / "s.duckdb"))
+    money.day_bounds(con)
+    lo, hi = SLOT0 + 5, SLOT0 + 3 * DAY_SLOTS  # a start inside the first day
+    days = money.period_days(con, lo, hi)
+    got = {}
+    for chunk in (0, 1, 2, 7):
+        n = money.build_marks(con, lo, hi, days, chunk_days=chunk)
+        got[chunk] = (n, con.execute("SELECT * FROM marks ORDER BY mint, day").fetchall(),
+                      con.execute("SELECT * FROM marks_raw ORDER BY mint, day").fetchall())
+    assert got[0][0] == 6 and len(got[0][2]) >= 3
+    assert got[1] == got[0] and got[2] == got[0] and got[7] == got[0]
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

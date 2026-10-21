@@ -129,16 +129,30 @@ def lp_sql(lo, hi):
       WHERE p.slot >= {lo} AND p.slot < {hi} AND p.kind IN ('deposit', 'withdraw') AND po.quote_class IN ('sol', 'reversed') AND po.mint IS NOT NULL"""
 
 
-def build_marks(con, lo, hi, days):
+# build_marks aggregates over day-aligned slot ranges of this many days (0: one query); LAB_MONEY_MARK_DAYS overrides
+MARK_CHUNK_DAYS = int(os.environ.get("LAB_MONEY_MARK_DAYS", "2"))
+
+
+def build_marks(con, lo, hi, days, chunk_days=MARK_CHUNK_DAYS):
     """token x UTC day from the token's first trading day to the period end: the last price and real SOL
-    depth at the day's end (any wallet, curve and pool together), carried forward over days without a trade."""
-    con.execute(f"""
-      CREATE OR REPLACE TEMP TABLE marks_raw AS
+    depth at the day's end (any wallet, curve and pool together), carried forward over days without a trade.
+    Aggregated over day-aligned slot ranges of chunk_days days: a (mint, day) group lies inside its day's slots and
+    the legs are row-local, so the ranges give exactly the rows of one query over [lo, hi) with a bounded working set
+    (money-v2's first NAS run, 2026-10-21: one query over the development period spilled past its 16 GB cap)."""
+    starts = [s for (s,) in con.execute("SELECT from_slot FROM day_bounds WHERE from_slot > ? AND from_slot < ? ORDER BY from_slot",
+                                        [lo, hi]).fetchall()]
+    cuts = sorted({lo, hi, *(starts[chunk_days - 1::chunk_days] if chunk_days > 0 else ())})
+
+    def agg(a, b):
+        return f"""
       SELECT mint, day, arg_max(price_post, ord) AS price, arg_max(depth_post, ord) AS depth, arg_max(venue, ord) AS venue, max(slot) AS last_slot
-      FROM (SELECT mint, venue, slot, (slot, tx_index, outer_ix, inner_ix) AS ord, price_post, depth_post, day FROM ({dated(legs_sql(lo, hi, fees=False))})
+      FROM (SELECT mint, venue, slot, (slot, tx_index, outer_ix, inner_ix) AS ord, price_post, depth_post, day FROM ({dated(legs_sql(a, b, fees=False))})
             UNION ALL
-            SELECT mint, venue, slot, (slot, tx_index, outer_ix, inner_ix), price_post, depth_post, day FROM ({dated(lp_sql(lo, hi))}) WHERE price_post IS NOT NULL)
-      GROUP BY mint, day""")
+            SELECT mint, venue, slot, (slot, tx_index, outer_ix, inner_ix), price_post, depth_post, day FROM ({dated(lp_sql(a, b))}) WHERE price_post IS NOT NULL)
+      GROUP BY mint, day"""
+
+    for i, (a, b) in enumerate(zip(cuts, cuts[1:])):
+        con.execute(("CREATE OR REPLACE TEMP TABLE marks_raw AS " if i == 0 else "INSERT INTO marks_raw ") + agg(a, b))
     con.execute("""
       CREATE OR REPLACE TEMP TABLE marks AS
       SELECT g.mint, g.day, r.price, r.depth, r.venue, r.last_slot, r.day = g.day AS traded
