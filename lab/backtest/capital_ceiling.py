@@ -314,9 +314,12 @@ def max_useful(cells, name, d=PRIMARY["d"], scen=PRIMARY["scenario"], mapping=PR
     curve.sort()
     if not curve:
         return None
-    pos = [s for s, v, _ in curve if v is not None and v > 0]
+    curve = [x for x in curve if x[1] is not None]
+    if not curve:
+        return None
+    pos = [s for s, v, _ in curve if v > 0]
     eaten = next((s for s, _, n in curve if n is not None and n <= 0), None)
-    best = max(curve, key=lambda x: x[1] if x[1] is not None else -1e18)
+    best = max(curve, key=lambda x: x[1])
     top = max(s for s, _, _ in curve)
     largest = max(pos) if pos else None
     return {"sizes": [s for s, _, _ in curve], "largest_positive_size": largest,
@@ -353,14 +356,18 @@ def report_md(out):
         for cap in CAPITALS:
             size = round(cap * dict(MAPPINGS)["primary"], 6)
             c, x = pick(cells, name, size, p["d"], p["scenario"], "primary", p["unsold"])
-            row.append("not in the run" if x is None else f"{size:g} SOL, {x['taken_per_day']:g}/day, {ci(x['sol_day'], x['lo'], x['hi'])}")
+            row.append("not in the run" if x is None else ("no rows" if not x["signals"] else
+                       f"{size:g} SOL, {x['taken_per_day']:g}/day, {ci(x['sol_day'], x['lo'], x['hi'])}"))
         mu = out["max_useful"].get(name)
         if mu is None:
             row += ["–", "–"]
         else:
-            row.append("none (no size > 0)" if mu["largest_positive_size"] is None else
-                       (f">= {mu['max_useful_capital']:g} SOL (positive at the grid's top)" if mu["positive_at_grid_top"]
-                        else f"{mu['max_useful_capital']:g} SOL (size {mu['largest_positive_size']:g})"))
+            if mu["largest_positive_size"] is None:
+                row.append("none (no size > 0)")
+            elif mu["positive_at_grid_top"] or mu["max_useful_capital"] >= max(CAPITALS):
+                row.append(f">= {max(CAPITALS)} SOL (positive up to size {mu['largest_positive_size']:g}, C {mu['max_useful_capital']:g})")
+            else:
+                row.append(f"{mu['max_useful_capital']:g} SOL (size {mu['largest_positive_size']:g})")
             row.append("–" if mu["edge_eaten_at_size"] is None else f"{mu['edge_eaten_at_size']:g} SOL")
         L.append("| " + " | ".join(row) + " |")
     L += ["", GAP, "", W8B, ""]
