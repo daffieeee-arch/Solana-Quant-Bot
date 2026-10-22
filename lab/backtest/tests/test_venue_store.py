@@ -86,18 +86,26 @@ def make_chunk(root, lo=1000, hi=2000):
     ll = "pool_state VARCHAR, trade_direction VARCHAR, exact_in BOOLEAN, amount_in UBIGINT, amount_out UBIGINT, virtual_base UBIGINT, virtual_quote UBIGINT, " \
          "real_base_before UBIGINT, real_quote_before UBIGINT, real_base_after UBIGINT, real_quote_after UBIGINT, protocol_fee UBIGINT, platform_fee UBIGINT, " \
          "creator_fee UBIGINT, share_fee UBIGINT, total_base_sell UBIGINT, pool_status VARCHAR"
+    # a Constant curve (virtual base 1e15, virtual quote 3e10): a buy of 1e9 quote after 2 lamports of fees, then a sell of half
+    # the tokens (the program rounds the remaining reserve up, so k grows by far less than 1e-6); amount_out of a sell is net
     write(chunk, "raydium_launchlab/TradeEvent", ll, [
-        ctx(103, 0, name="buy_exact_in") + ["L1", "Buy", True, 100, 900, 10**9, 30, 0, 0, 900, 100, 1, 1, 0, 0, 10**8, "Trade"],
-        ctx(103, 1, name="sell_exact_in") + ["L1", "Sell", True, 450, 49, 10**9, 30, 900, 100, 450, 51, 1, 1, 0, 0, 10**8, "Trade"],
-        ctx(103, 2, failed=True, name="buy_exact_in") + ["L1", "Buy", True, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, "Trade"],
+        ctx(103, 0, name="buy_exact_in") + ["L1", "Buy", True, 10**9 + 2, 32258064516129, 10**15, 3 * 10**10, 0, 0, 32258064516129, 10**9,
+                                             1, 1, 0, 0, 10**14, "Fund"],
+        ctx(103, 1, name="sell_exact_in") + ["L1", "Sell", True, 16129032258064, 508196719, 10**15, 3 * 10**10, 32258064516129, 10**9,
+                                              16129032258065, 491803279, 1, 1, 0, 0, 10**14, "Fund"],
+        ctx(103, 2, failed=True, name="buy_exact_in") + ["L1", "Buy", True, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, "Fund"],
     ])
     write(chunk, "raydium_launchlab/PoolCreateEvent", "pool_state VARCHAR, creator VARCHAR, config VARCHAR, base_mint_param VARCHAR, curve_param VARCHAR, "
-          "vesting_param VARCHAR, amm_fee_on VARCHAR", [ctx(97, 0, name="initialize_v2") + ["L1", "CR", "CFG", "{}", '{"Constant": {}}', "{}", "QuoteToken"]])
+          "vesting_param VARCHAR, amm_fee_on VARCHAR", [ctx(97, 0, name="initialize_v2") + ["L1", "CR", "CFG", '{"decimals": 6}',
+          '{"Constant": {"data": {"supply": 1000000000000000, "total_base_sell": 100000000000000, "total_quote_fund_raising": 85000000000, "migrate_type": 1}}}',
+          "{}", "QuoteToken"]])
     cp = "pool_id VARCHAR, input_vault_before UBIGINT, output_vault_before UBIGINT, input_amount UBIGINT, output_amount UBIGINT, input_transfer_fee UBIGINT, " \
          "output_transfer_fee UBIGINT, base_input BOOLEAN, input_mint VARCHAR, output_mint VARCHAR, trade_fee UBIGINT, creator_fee UBIGINT, creator_fee_on_input BOOLEAN"
     write(chunk, "raydium_cpmm/SwapEvent", cp, [
         ctx(104, 0, name="swap_base_input", source="log") + ["C1", 1000, 2000, 10, 19, 0, 0, True, WSOL, "BASE", 1, 0, False],
         ctx(104, 1, failed=True, name="swap_base_input", source="log") + ["C1", 1, 1, 1, 1, 0, 0, True, WSOL, "BASE", 1, 0, False],
+        # the extractor's balance fallback: vault deltas, the raw vaults before, no fees
+        ctx(104, 2, name="swap_base_input", source="balance") + ["C1", 1100, 1900, 20, 37, None, None, True, WSOL, "BASE", None, None, None],
     ])
     write(chunk, "raydium_cpmm/LpChangeEvent", "pool_id VARCHAR, lp_amount_before UBIGINT, token_0_vault_before UBIGINT, token_1_vault_before UBIGINT, "
           "token_0_amount UBIGINT, token_1_amount UBIGINT, token_0_transfer_fee UBIGINT, token_1_transfer_fee UBIGINT, change_type UBIGINT",
@@ -120,19 +128,25 @@ def test_the_venue_store_on_a_fake_chunk(tmp_path):
     out = str(tmp_path / "v.duckdb")
     meta = venue_store.build("dev", out, venue_store.chunks_for(str(root), 1000, 2000), memory="1GB", threads=1, log=lambda *_: None)
     con = duckdb.connect(out, read_only=True)
-    dbc = con.execute("SELECT slot, tx_index, event, amount_in, quote_reserve::BIGINT, reserve_source, migration_threshold, is_buy, tx_fee "
-                      "FROM dbc ORDER BY slot, tx_index").fetchall()
+    dbc = con.execute("SELECT slot, tx_index, event, amount_in, quote_reserve_delta::BIGINT, quote_reserve::BIGINT, reserve_source, "
+                      "migration_threshold, amount_left, is_buy, tx_fee FROM dbc ORDER BY slot, tx_index").fetchall()
     assert dbc == [
-        (99, 0, "EvtSwap", 50, None, None, None, True, 5000),              # before any anchor
-        (100, 0, "EvtSwap2", 400, 5000, "event", 85000, True, 5000),       # EvtSwap2 wins over its EvtSwap
-        (100, 1, "EvtSwap", 300, 5300, "chained", None, True, 5000),       # the lone EvtSwap is kept, chained: 5000 + 300
+        (99, 0, "EvtSwap", 50, 50, None, None, None, None, True, 5000),            # before any anchor
+        (100, 0, "EvtSwap2", 400, 390, 5000, "event", 85000, 0, True, 5000),      # EvtSwap2 over its EvtSwap; the reserve gets the after-fee input
+        (100, 1, "EvtSwap", 300, 300, 5300, "chained", None, None, True, 5000),   # a lone EvtSwap stays, chained: 5000 + 300
     ]
     assert con.execute("SELECT kind, a_to_b, amount_in, amount_out, reserve_a, reserve_b, token_a_amount FROM damm2 ORDER BY kind").fetchall() == [
         ("add", None, None, None, 9010, 4020, 10), ("swap", True, 1000, 333, 9000, 4000, None)]
-    assert con.execute("SELECT is_buy, real_quote_before, real_quote_after, status FROM launchlab ORDER BY tx_index").fetchall() == [
-        (True, 0, 100, "Trade"), (False, 100, 51, "Trade")]
-    assert con.execute("SELECT kind, source, input_amount, token_0_amount FROM cpmm ORDER BY kind").fetchall() == [
-        ("deposit", "log", None, 5), ("swap", "log", 10, None)]
+    assert con.execute("SELECT is_buy, real_quote_before, real_quote_after, status, curve FROM launchlab ORDER BY tx_index").fetchall() == [
+        (True, 0, 10**9, "Fund", "Constant"), (False, 10**9, 491803279, "Fund", "Constant")]
+    assert con.execute("SELECT kind, source, input_amount, input_vault_before, trader_paid::BIGINT, trader_received::BIGINT, token_0_amount, "
+                       "token_0_transfer_fee FROM cpmm ORDER BY kind, tx_index").fetchall() == [
+        ("deposit", "log", None, None, None, None, 5, 0),
+        ("swap", "log", 10, 1000, 10, 19, None, None),
+        ("swap", "balance", 20, None, None, None, None, None)]   # a balance row's raw vaults are no reserves: NULL
+    assert con.execute("SELECT amount_in, amount_out, pool_amount_in, pool_amount_out FROM damm2 WHERE kind = 'swap'").fetchall() == [(1000, 333, 1000, 333)]
+    assert con.execute("SELECT json_extract_string(params, '$.curve_param.Constant.data.migrate_type') FROM venue_pools "
+                       "WHERE venue = 'raydium_launchlab'").fetchone()[0] == "1"   # nested values stay JSON, not JSON strings
     pools = con.execute("SELECT venue, pool, base_mint, quote_mint, create_slot FROM venue_pools ORDER BY venue").fetchall()
     assert pools == [("meteora_damm_v2", "D1", "BASE", WSOL, 100), ("meteora_dbc", "P1", "BASE", WSOL, 98),
                      ("raydium_cpmm", "C1", "BASE", WSOL, 96), ("raydium_launchlab", "L1", "BASE", WSOL, 97)]
@@ -140,9 +154,12 @@ def test_the_venue_store_on_a_fake_chunk(tmp_path):
         ("meteora_damm_v2", True), ("raydium_amm_v4", False), ("raydium_cpmm", True)]
     checks = {c["check"]: c for c in meta["checks"]}
     assert checks["dbc_chained_share"]["status"] == "red" and checks["dbc_chained_share"]["value"] == pytest.approx(1 / 3, abs=1e-5)
-    assert checks["cpmm_balance_share"]["status"] == "green" and checks["graduations_linked_share"]["value"] == 1.0
+    assert checks["cpmm_balance_share"]["status"] == "red" and checks["cpmm_balance_share"]["value"] == 0.5   # 1 of 2 swaps
+    assert checks["graduations_linked_share"]["value"] == 1.0 and checks["dbc_reserve_continuity"]["status"] == "green"
     assert checks["launchlab_continuity"]["status"] == "green" and checks["launchlab_continuity"]["value"] == 1.0
-    assert meta["counts"] == {"dbc": 3, "damm2": 2, "launchlab": 2, "cpmm": 2, "venue_pools": 4, "venue_graduations": 3}
+    assert checks["launchlab_constant_product"]["status"] == "green" and checks["launchlab_constant_product"]["value"] == 1.0
+    assert checks["launchlab_quote_legs"]["value"] == {"buys": 1, "buy_gross_in": 1, "sells": 1, "sell_net_out": 1, "sell_gross_out": 0}
+    assert meta["counts"] == {"dbc": 3, "damm2": 2, "launchlab": 2, "cpmm": 3, "venue_pools": 4, "venue_graduations": 3}
     stored = json.loads(con.execute("SELECT json FROM meta").fetchone()[0])
     assert stored["chunks"][0]["commit"] == "abc" and stored["period"] == "dev"
     con.close()

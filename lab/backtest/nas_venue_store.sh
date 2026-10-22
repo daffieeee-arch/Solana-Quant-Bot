@@ -13,7 +13,8 @@
 #   STEP=smoke LAB_PY=/lab/venv/bin/python bash lab/backtest/nas_venue_store.sh
 #   STEP=epoch LAB_PY=/lab/venv/bin/python bash lab/backtest/nas_venue_store.sh
 #
-# Overrides for a dry run (never for the evidence): SMOKE_ROOT, VENUES_ROOT, MEMORY (DuckDB, default 6GB), THREADS.
+# Overrides for a dry run (never for the evidence): SMOKE_ROOT, VENUES_ROOT, MEMORY (DuckDB, default 6GB), THREADS,
+# LAB_SPILL_MAX (DuckDB spill cap, default 8GB).
 set -euo pipefail
 export LC_ALL=C  # the same sort order and tool output on the VPS and in the NAS container
 
@@ -31,7 +32,7 @@ SMOKE_ROOT=${SMOKE_ROOT:-$DATA/backtests/venues-eb6d8ca/smoke-on}   # #513's smo
 VENUES_ROOT=${VENUES_ROOT:-$DATA/events/venues-v2/chunks}
 MEMORY=${MEMORY:-6GB}
 THREADS=${THREADS:-2}
-export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$REPO/lab LAB_DUCKDB_TMP=${LAB_DUCKDB_TMP:-$DATA/tmp-duckdb}
+export PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=$REPO/lab LAB_DUCKDB_TMP=${LAB_DUCKDB_TMP:-$DATA/tmp-duckdb} LAB_SPILL_MAX=${LAB_SPILL_MAX:-8GB}
 mkdir -p "$LAB_DUCKDB_TMP"
 
 if [ "$STEP" = smoke ]; then
