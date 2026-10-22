@@ -89,7 +89,7 @@ fn main() -> Result<()> {
         let sha = |t: &str| hex::encode(Sha256::digest(t.as_bytes()));
         serde_json::json!({"programs": v.ids().into_iter().map(|(l, id)| serde_json::json!({"label": l, "id": id})).collect::<Vec<_>>(),
                            "idl_sha256": {"meteora_dbc.json": sha(extract::DBC_IDL), "meteora_damm_v2.json": sha(extract::DAMM_V2_IDL),
-                                           "raydium_launchlab.json": sha(extract::LAUNCHLAB_IDL)},
+                                           "raydium_launchlab.json": sha(extract::LAUNCHLAB_IDL), "raydium_cpmm.json": sha(extract::CPMM_IDL)},
                            "older_idl_sha256": extract::DBC_OLDER_IDLS.iter().map(|(f, t)| ((*f).to_owned(), serde_json::json!(sha(*t))))
                                .collect::<serde_json::Map<_, _>>(),
                            "spec": "research/venue-decoders-spec-2026-10-21.md v0.2"})
@@ -201,6 +201,11 @@ fn main() -> Result<()> {
             "venue_events": c(&counters.venue_events),
             "venue_graduations": c(&counters.venue_graduations),
             "venue_unknown_events": c(&counters.venue_unknown_events),
+            "venue_inits": c(&counters.venue_inits),
+            "venue_log_truncated": c(&counters.venue_log_truncated),
+            "venue_log_unpaired": c(&counters.venue_log_unpaired),
+            "venue_log_undecodable": c(&counters.venue_log_undecodable),
+            "venue_balance_rows": c(&counters.venue_balance_rows),
             // Rewards of a type the firehose does not know (Alpenglow's VATDebit): skipped, not fatal.
             "rewards_unknown_type_skipped": c(&jetstreamer_firehose::firehose::UNKNOWN_REWARD_TYPES_SKIPPED),
         },
