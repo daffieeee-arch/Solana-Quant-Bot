@@ -1036,6 +1036,8 @@ impl Census {
                 }
                 venues.insert(label);
                 let (name, pool) = self.instruction(label, ix.data);
+                // A newer account layout than the pinned IDL's (VENUE_ACCOUNT_LAYOUTS): its pool position.
+                let pool = layout_pool(label, name, ix.accounts.len()).or(pool);
                 // An instruction the IDLs do not know: its first eight bytes, to be named (LAB review on #506).
                 let name = if name == "?" { format!("?{}", hex::encode(&ix.data[..ix.data.len().min(8)])) } else { name.to_owned() };
                 let pool = pool.and_then(|p| ix.accounts.get(usize::from(p))).and_then(|&a| v.keys.get(usize::from(a))).map(|k| b58(*k)).unwrap_or_default();
@@ -1142,7 +1144,8 @@ pub const VENUE_EVENT_CONTEXT: [(&str, Kind); 20] = [
     ("payload_len", Kind::U64),
     // Accounts of the parent instruction by IDL name: the trader (payer / signer / owner / creator / user), the pool
     // (pool_state / pool / virtual_pool / ...), the base and quote mints (base_mint / token_a_mint / base_token_mint and
-    // their quote counterparts). The events lack some of these (DAMM v2's swap names no mint, none names the trader).
+    // their quote counterparts). The events lack some of these (DAMM v2's swap event names no mint, its instruction
+    // does; no event names the trader).
     ("ix_trader", Kind::Utf8),
     ("ix_pool", Kind::Utf8),
     ("ix_base_mint", Kind::Utf8),
@@ -1223,6 +1226,32 @@ pub const VENUE_INITS: [(&str, &str); 2] = [("raydium_cpmm", "initialize"), ("ra
 pub const VENUE_BALANCE_SWAPS: [(&str, &str, bool); 2] = [("raydium_cpmm", "swap_base_input", true), ("raydium_cpmm", "swap_base_output", false)];
 /// Programs whose events are emit! log lines (no self-CPI).
 const VENUE_LOG_EVENTS: [&str; 1] = ["raydium_cpmm"];
+/// Account layouts newer than the pinned IDL: (program label, instruction, number of accounts, the census's pool
+/// account, the account names in order). An instruction with that many accounts reads them by these names.
+/// LaunchLab's migrate_to_amm since its 2026-09-09 upgrade: no arguments, nine OpenBook accounts gone, 23 accounts
+/// (pool_state 23 -> 14, amm_pool 13 -> 5). Source: Raydium's docs, raydium-io/raydium-docs-v1 @ 3682384 (2026-10-20),
+/// products/launchlab/instructions.mdx, "MigrateToAmm / MigrateToCpswap", fetched 2026-10-22; raydium-idl (e7e0c96, the
+/// pinned IDL) has not been updated. The older 32-account layout keeps the IDL's names.
+pub const VENUE_ACCOUNT_LAYOUTS: [(&str, &str, usize, &str, &[&str]); 1] = [(
+    "raydium_launchlab",
+    "migrate_to_amm",
+    23,
+    "pool_state",
+    &[
+        "payer", "base_mint", "quote_mint", "market", "amm_program", "amm_pool", "amm_authority", "amm_lp_mint", "amm_base_vault",
+        "amm_quote_vault", "amm_target_orders", "amm_config", "amm_create_fee_destination", "authority", "pool_state", "global_config",
+        "base_vault", "quote_vault", "pool_lp_token", "spl_token_program", "associated_token_program", "system_program", "rent_program",
+    ],
+)];
+
+/// The census's pool position of an instruction under a newer account layout (VENUE_ACCOUNT_LAYOUTS), if any.
+fn layout_pool(label: &str, name: &str, n_accounts: usize) -> Option<u8> {
+    VENUE_ACCOUNT_LAYOUTS
+        .iter()
+        .find(|l| l.0 == label && l.1 == name && l.2 == n_accounts)
+        .and_then(|l| l.4.iter().position(|a| *a == l.3))
+        .and_then(|p| u8::try_from(p).ok())
+}
 const VENUE_TRADER_ACCOUNTS: [&str; 5] = ["payer", "signer", "owner", "creator", "user"];
 const VENUE_POOL_ACCOUNTS: [&str; 7] = ["pool_state", "lb_pair", "whirlpool", "whirlpool_one", "pool", "virtual_pool", "amm"];
 const VENUE_BASE_ACCOUNTS: [&str; 4] = ["base_mint", "token_a_mint", "base_token_mint", "token_0_mint"];
@@ -1239,8 +1268,10 @@ struct VenueIx {
     pool: Option<usize>,
     base: Option<usize>,
     quote: Option<usize>,
-    /// (from pool, to pool, base, quote, to venue) positions of a graduation instruction.
-    graduation: Option<(Option<usize>, Option<usize>, Option<usize>, Option<usize>, &'static str)>,
+    /// Newer account layouts by number of accounts (VENUE_ACCOUNT_LAYOUTS).
+    layouts: Vec<(usize, Vec<String>)>,
+    /// (from pool, to pool, base, quote account names, to venue) of a graduation instruction.
+    graduation: Option<(&'static str, &'static str, &'static str, &'static str, &'static str)>,
     /// A pool creation without an event (VENUE_INITS).
     init: bool,
     /// A swap with the balance fallback (VENUE_BALANCE_SWAPS): its base_input.
@@ -1250,6 +1281,14 @@ struct VenueIx {
 impl VenueIx {
     fn at(&self, name: &str) -> Option<usize> {
         self.accounts.iter().position(|a| a == name)
+    }
+
+    /// The account's position in an instruction with `n` accounts: a newer layout of that size, else the IDL's.
+    fn at_n(&self, name: &str, n: usize) -> Option<usize> {
+        match self.layouts.iter().find(|(k, _)| *k == n) {
+            Some((_, names)) => names.iter().position(|a| a == name),
+            None => self.at(name),
+        }
     }
 }
 
@@ -1409,14 +1448,17 @@ impl Venues {
                         continue; // a newer IDL defines it
                     }
                     let name: &'static str = Box::leak(ix.name.clone().into_boxed_str());
-                    let graduation = VENUE_GRADUATIONS.iter().find(|g| g.0 == label && g.1 == ix.name).map(|g| {
-                        let at = |a: &str| ix.accounts.iter().position(|x| x == a);
-                        (at(g.2), at(g.3), at(g.4), at(g.5), g.6)
-                    });
+                    let graduation = VENUE_GRADUATIONS.iter().find(|g| g.0 == label && g.1 == ix.name).map(|g| (g.2, g.3, g.4, g.5, g.6));
+                    let layouts = VENUE_ACCOUNT_LAYOUTS
+                        .iter()
+                        .filter(|l| l.0 == label && l.1 == ix.name)
+                        .map(|l| (l.2, l.4.iter().map(|a| (*a).to_owned()).collect()))
+                        .collect();
                     ixs.insert(ix.discriminator, VenueIx {
                         idl: n,
                         name,
                         accounts: ix.accounts.clone(),
+                        layouts,
                         trader: first(&VENUE_TRADER_ACCOUNTS[..], &ix.accounts[..]),
                         pool: first(&VENUE_POOL_ACCOUNTS[..], &ix.accounts[..]),
                         base: first(&VENUE_BASE_ACCOUNTS[..], &ix.accounts[..]),
@@ -1584,11 +1626,11 @@ impl Venues {
                         Val::Str(v.fee_payer.clone()),
                         Val::Str(vp.label.to_owned()),
                         Val::Str(x.name.to_owned()),
-                        key_of(ix.accounts, from),
+                        key_of(ix.accounts, x.at_n(from, ix.accounts.len())),
                         Val::Str(to_venue.to_owned()),
-                        key_of(ix.accounts, to),
-                        key_of(ix.accounts, base),
-                        key_of(ix.accounts, quote),
+                        key_of(ix.accounts, x.at_n(to, ix.accounts.len())),
+                        key_of(ix.accounts, x.at_n(base, ix.accounts.len())),
+                        key_of(ix.accounts, x.at_n(quote, ix.accounts.len())),
                     ],
                 });
             } else if x.init {
@@ -1660,9 +1702,10 @@ impl Venues {
                 }
                 let acct = |name: &str| x.at(name).and_then(|i| p.accounts.get(i)).copied();
                 let pool = acct("pool_state");
-                // Another instruction of the program on the same pool in this transaction: the vault deltas are shared.
+                // Another instruction of the program on the same pool in this transaction: the vault deltas are shared. One
+                // the pinned IDL does not know (collect_creator_fee_permissionless is newer) may move the vaults as well.
                 let shared = ids.iter().any(|&m| {
-                    m != n && ix_of(m).is_some_and(|y| y.at("pool_state").and_then(|i| v.ixs[m].accounts.get(i)).copied() == pool)
+                    m != n && ix_of(m).map_or(true, |y| y.at("pool_state").and_then(|i| v.ixs[m].accounts.get(i)).copied() == pool)
                 });
                 let bal = |list: &[Bal], a: Option<u8>| a.and_then(|a| list.iter().find(|b| b.idx == a)).and_then(|b| u64::try_from(b.amount).ok());
                 let (in_vault, out_vault) = (acct("input_vault"), acct("output_vault"));
@@ -1930,6 +1973,14 @@ mod venue_tests {
         let out = venues.rows(&view(&f, two, &logs, false, vec![bal(3, 1_000), bal(4, 5_000)], vec![bal(3, 2_200), bal(4, 3_000)]));
         assert_eq!(out.balance_rows, 2);
         assert!(out.rows.iter().all(|r| col(r, "decode_status") == &st("balance_ambiguous") && col(r, "input_amount") == &Val::Null));
+        // A CPMM instruction the pinned IDL does not know may move the vaults too: no amounts.
+        let unknown_ix = [7u8; 8];
+        let with_unknown = vec![
+            IxView { path: "0".into(), program: Some(cpmm), accounts: &f.swap_accounts[..], data: &data[..], parent: None },
+            IxView { path: "1".into(), program: Some(cpmm), accounts: &[2, 3, 4][..], data: &unknown_ix[..], parent: None },
+        ];
+        let out = venues.rows(&view(&f, with_unknown, &logs, false, vec![bal(3, 1_000), bal(4, 5_000)], vec![bal(3, 1_600), bal(4, 4_000)]));
+        assert_eq!((out.balance_rows, col(&out.rows[0], "decode_status")), (1, &st("balance_ambiguous")));
         // A vault without a balance row: no amounts.
         let one = vec![IxView { path: "0".into(), program: Some(cpmm), accounts: &f.swap_accounts[..], data: &data[..], parent: None }];
         let out = venues.rows(&view(&f, one, &logs, false, vec![bal(3, 1_000)], vec![bal(3, 1_600)]));
@@ -1967,6 +2018,28 @@ mod venue_tests {
                    (&st("raydium_cpmm"), &st("log"), &st("0909090909090909"), &Val::U64(0), &st("swap_base_input")));
         let sw = out.rows.iter().find(|r| &*r.table == "raydium_cpmm/SwapEvent").unwrap();
         assert_eq!((col(sw, "event_seq"), col(sw, "event_seq_all")), (&Val::U64(0), &Val::U64(1)));
+    }
+
+    #[test]
+    fn launchlab_migrate_to_amm_reads_its_newer_layout_by_account_count() {
+        // Since LaunchLab's 2026-09-09 upgrade migrate_to_amm takes 23 accounts (pool_state 14, amm_pool 5); before, 32
+        // (pool_state 23, amm_pool 13). base_mint 1 and quote_mint 2 in both.
+        let disc = Idl::parse(LAUNCHLAB_IDL).unwrap().instructions.iter().find(|i| i.name == "migrate_to_amm").unwrap().discriminator;
+        let mut keys: Vec<[u8; 32]> = vec![pk(1), key("LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj")];
+        keys.extend((0..32u8).map(|i| pk(100 + i)));
+        let venues = Venues::new().unwrap();
+        for (n, from, to) in [(23usize, 14usize, 5usize), (32, 23, 13)] {
+            let accounts: Vec<u8> = (0..n as u8).map(|i| i + 2).collect();
+            let ixs = vec![IxView { path: "0".into(), program: Some(&keys[1][..]), accounts: &accounts[..], data: &disc[..], parent: None }];
+            let v = TxView { slot: 1, tx_index: 0, fee_payer: k58(&keys[0]), failed: false, keys: keys.iter().map(|k| &k[..]).collect(), ixs,
+                             logs: &[], pre_lamports: &[], post_lamports: &[], pre_tokens: vec![], post_tokens: vec![] };
+            let out = venues.rows(&v);
+            assert_eq!(out.graduations, 1, "{n} accounts");
+            let r = &out.rows[0];
+            assert_eq!((col(r, "from_pool"), col(r, "to_pool"), col(r, "base_mint"), col(r, "quote_mint")),
+                       (&st(&k58(&keys[from + 2])), &st(&k58(&keys[to + 2])), &st(&k58(&keys[3])), &st(&k58(&keys[4]))), "{n} accounts");
+        }
+        assert_eq!((layout_pool("raydium_launchlab", "migrate_to_amm", 23), layout_pool("raydium_launchlab", "migrate_to_amm", 32)), (Some(14), None));
     }
 
     #[test]
@@ -3284,6 +3357,24 @@ mod tests {
 
     fn labels() -> std::collections::HashMap<[u8; 32], (&'static str, Class)> {
         PROGRAM_LABELS.iter().map(|(id, label, class)| (key(id), (*label, *class))).collect()
+    }
+
+    #[test]
+    fn census_names_the_pool_of_launchlab_migrate_to_amm_in_its_newer_layout() {
+        // pool_state is account 14 of the 23 since LaunchLab's 2026-09-09 upgrade, 23 of the IDL's 32 before.
+        let census = Census::new();
+        let labels = labels();
+        let disc = crate::idl::Idl::parse(LAUNCHLAB_IDL).unwrap().instructions.iter().find(|i| i.name == "migrate_to_amm").unwrap().discriminator;
+        let mut keys: Vec<[u8; 32]> = vec![test_key(41, true), key("LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj")];
+        keys.extend((0..32u8).map(|i| test_key(50 + i, false)));
+        for (n, pool) in [(23usize, 14usize), (32, 23)] {
+            let accounts: Vec<u8> = (0..n as u8).map(|i| i + 2).collect();
+            let view = TxView { logs: &[], slot: 1, tx_index: 0, fee_payer: b58(&keys[0]), failed: false, keys: keys.iter().map(|k| &k[..]).collect(),
+                                ixs: vec![IxView { path: "0".into(), program: Some(&keys[1][..]), accounts: &accounts, data: &disc, parent: None }],
+                                pre_lamports: &[], post_lamports: &[], pre_tokens: vec![], post_tokens: vec![] };
+            let r = census.row(&CensusTx { view, fee: 5_000, signatures: 1, cu_consumed: None }, &labels).unwrap();
+            assert_eq!(col(&r, "dex_ixs"), &st(&format!("raydium_launchlab:migrate_to_amm:{}", b58(&keys[pool + 2]))), "{n} accounts");
+        }
     }
 
     #[test]

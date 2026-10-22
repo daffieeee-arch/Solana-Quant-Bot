@@ -24,14 +24,22 @@
 #              Prints rows and MB per 1,000 slots per table and the epoch extrapolation, the census instructions unknown
 #              to the IDLs with their first eight bytes ('?<hex>'), the IDL events without rows in the chunk (INFO), the
 #              log counters (truncated, unpaired, undecodable) and the venue_inits rows.
+#   STEP=migrate (kort-lang): LaunchLab's migrate_to_amm under its 2026-09-09 account layout (23 accounts; the pinned
+#              IDL has the older 32): the WINDOW slots (default 20,000) of EPOCH's venues-v2 census with the most
+#              migrate_to_amm transactions, extracted with this BIN (LAB_VENUES=1, LAB_VENUE_CENSUS=1); then per
+#              migrate_to_amm graduation of a successful transaction: from_pool is a LaunchLab pool (a TradeEvent or
+#              PoolCreateEvent pool_state of EPOCH's venues-v2 chunks or the window), to_pool is the AMM v4 pool of an
+#              initialize2 in the same transaction (census), and the census names the same pool for migrate_to_amm as
+#              from_pool. GREEN only with at least one graduation and every share >= 99 %.
 #   STEP=epoch (lang, ~1.5-2.5 h): dev epoch 1045 with LAB_VENUES=1 and LAB_VENUE_CENSUS=1 into
 #              $DATA/events/venues-v2/chunks (ops' extract_epochs.sh, THREADS=3; v1 keeps PR 1's 1045 evidence), then the
 #              same decode and count checks per chunk.
 #
 #   BIN=/lab/bin/lab-extractor-<commit7> STEP=smoke LAB_PY=/lab/venv/bin/python bash lab/wallets/nas_venues.sh
 #   BIN=/lab/bin/lab-extractor-<commit7> STEP=epoch LAB_PY=/lab/venv/bin/python bash lab/wallets/nas_venues.sh
+#   BIN=/lab/bin/lab-extractor-<commit7> STEP=migrate LAB_PY=/lab/venv/bin/python bash lab/wallets/nas_venues.sh
 #
-# Overrides for a dry run (never for the evidence): OPS (the ops scripts' directory), SMOKE_SLOTS, EPOCH, VENUES_ROOT.
+# Overrides for a dry run (never for the evidence): OPS (the ops scripts' directory), SMOKE_SLOTS, EPOCH, VENUES_ROOT, WINDOW.
 # Writes to $DATA/backtests/venues-<commit7>/ (job.log, smoke-*/, the checks' logs).
 set -euo pipefail
 export LC_ALL=C  # the same sort order and tool output on the VPS and in the NAS container
@@ -40,7 +48,7 @@ REPO=$(cd "$(dirname "$0")/../.." && pwd)
 DATA=${LAB_DATA_ROOT:-/home/chupa/Solana-project/data-old-faithful-one/lab}
 COMMIT=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || cat "$REPO/COMMIT")
 : "${STEP:?STEP=smoke or epoch}"
-case "$STEP" in smoke | epoch) ;; *) echo "unknown STEP=$STEP"; exit 2 ;; esac
+case "$STEP" in smoke | epoch | migrate) ;; *) echo "unknown STEP=$STEP"; exit 2 ;; esac
 : "${BIN:?BIN=/lab/bin/lab-extractor-<commit7>, this commit build}"
 OUT=$DATA/backtests/venues-${COMMIT:0:7}
 mkdir -p "$OUT"
@@ -266,5 +274,77 @@ if [ "$STEP" = epoch ]; then
     [ "$rc" = 0 ] || bad=1
   done
   [ "$bad" = 0 ] || { log "RED: a chunk check failed"; exit 1; }
+fi
+if [ "$STEP" = migrate ]; then
+  M=$OUT/migrate-$EPOCH
+  [ ! -e "$M" ] || { log "RED: $M exists (made once)"; exit 1; }
+  mkdir -p "$M"
+  window=$("$PY" - "$VENUES_ROOT" "$EPOCH" "${WINDOW:-20000}" <<'EOF'
+import glob, json, os, sys
+import duckdb
+root, epoch, width = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+lo, hi = epoch * 432_000, (epoch + 1) * 432_000
+fs = [f for m in glob.glob(os.path.join(root, "*", "_manifest.json"))
+      if json.load(open(m)).get("status") == "complete" and lo <= json.load(open(m))["slot_start"] < hi
+      for f in glob.glob(os.path.join(os.path.dirname(m), "venue_census", "*.parquet"))]
+if not fs:
+    sys.exit(f"no venue_census of epoch {epoch} under {root}")
+con = duckdb.connect()
+con.execute("SET memory_limit = '4GB'; SET threads = 4")
+slots = [s for (s,) in con.execute("SELECT slot FROM read_parquet(?) WHERE NOT failed AND contains(dex_ixs, 'raydium_launchlab:migrate_to_amm:') ORDER BY slot", [fs]).fetchall()]
+if not slots:
+    sys.exit(f"no migrate_to_amm in the census of epoch {epoch}: no evidence (set EPOCH)")
+best, j = (0, slots[0]), 0
+for i, s in enumerate(slots):
+    while slots[j] < s - width + 1:
+        j += 1
+    if i - j + 1 > best[0]:
+        best = (i - j + 1, slots[j])
+print(f"{best[1]}:{best[1] + width} {best[0]} {len(slots)}")
+EOF
+  2> "$M.window.err") || { log "RED: no window: $(tail -1 "$M.window.err")"; exit 1; }
+  read -r MSLOTS n_win n_all <<< "$window"
+  log "migrate_to_amm in epoch $EPOCH's census: $n_all; window $MSLOTS holds $n_win"
+  rc=0
+  LAB_VENUES=1 LAB_VENUE_CENSUS=1 BIN=$BIN SLOTS=$MSLOTS D=$M OUT=$M/chunk bash "$OPS/smoke_extract.sh" > "$M.log" 2>&1 || rc=$?
+  log "window extraction: rc $rc"
+  [ "$rc" = 0 ] || { tail -20 "$M.log" | tee -a "$OUT/job.log"; exit 1; }
+  rc=0
+  "$PY" - "$M/chunk" "$VENUES_ROOT" "$EPOCH" > "$M-check.log" 2>&1 <<'EOF' || rc=$?
+import glob, json, os, sys
+import duckdb
+chunk, root, epoch = sys.argv[1], sys.argv[2], int(sys.argv[3])
+lo, hi = epoch * 432_000, (epoch + 1) * 432_000
+con = duckdb.connect()
+con.execute("SET memory_limit = '4GB'; SET threads = 4")
+t = lambda d, name: glob.glob(os.path.join(d, name, "*.parquet"))
+dirs = [chunk] + [os.path.dirname(m) for m in glob.glob(os.path.join(root, "*", "_manifest.json"))
+                  if json.load(open(m)).get("status") == "complete" and lo <= json.load(open(m))["slot_start"] < hi]
+pool_files = [f for d in dirs for name in ("raydium_launchlab/TradeEvent", "raydium_launchlab/PoolCreateEvent") for f in t(d, name)]
+con.execute("CREATE TABLE ll AS SELECT DISTINCT pool_state AS pool FROM read_parquet(?, union_by_name = true)", [pool_files])
+grads, census = t(chunk, "venue_graduations"), t(chunk, "venue_census")
+if not grads or not census:
+    sys.exit("RED: the window has no venue_graduations or venue_census")
+n, n_ll, n_amm, n_census = con.execute(f"""
+    WITH g AS (SELECT * FROM read_parquet(?) WHERE ix_name = 'migrate_to_amm'),
+         c AS (SELECT slot, tx_index, unnest(string_split(dex_ixs, ';')) AS x FROM read_parquet(?) WHERE NOT failed)
+    SELECT count(*),
+           count(*) FILTER (WHERE from_pool IN (SELECT pool FROM ll)),
+           count(*) FILTER (WHERE EXISTS (SELECT 1 FROM c WHERE c.slot = g.slot AND c.tx_index = g.tx_index AND c.x = 'raydium_amm_v4:initialize2:' || g.to_pool)),
+           count(*) FILTER (WHERE EXISTS (SELECT 1 FROM c WHERE c.slot = g.slot AND c.tx_index = g.tx_index AND c.x = 'raydium_launchlab:migrate_to_amm:' || g.from_pool))
+    FROM g""", [grads, census]).fetchone()
+share = lambda k: k / n if n else 0.0
+print(f"migrate_to_amm graduations in the window: {n:,}")
+print(f"from_pool a LaunchLab pool: {n_ll:,} ({share(n_ll):.2%}); to_pool the same transaction's AMM v4 initialize2 pool: {n_amm:,} "
+      f"({share(n_amm):.2%}); the census's migrate_to_amm pool equals from_pool: {n_census:,} ({share(n_census):.2%})")
+for row in con.execute("SELECT slot, tx_index, from_pool, to_pool FROM read_parquet(?) WHERE ix_name = 'migrate_to_amm' ORDER BY slot, tx_index LIMIT 5", [grads]).fetchall():
+    print("  example:", row)
+bad = [] if n else ["no migrate_to_amm graduation in the window"]
+bad += [name for name, k in (("from_pool", n_ll), ("to_pool", n_amm), ("census pool", n_census)) if n and k / n < 0.99]
+print("migrate: " + ("GREEN" if not bad else "RED: " + ", ".join(bad) + " below 99 %"))
+sys.exit(1 if bad else 0)
+EOF
+  tee -a "$OUT/job.log" < "$M-check.log"
+  [ "$rc" = 0 ] || { log "RED: the migrate check failed"; exit 1; }
 fi
 log "done $STEP"
