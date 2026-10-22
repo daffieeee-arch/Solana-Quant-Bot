@@ -40,3 +40,11 @@ instruction builders for the account order (amm_pool at 1; at 4 in initialize2).
 The pool account of an instruction: the first of its accounts (nested groups flattened, IDL order) named pool_state,
 lb_pair, whirlpool, whirlpool_one, pool, bonding_curve, virtual_pool or amm; none for instructions without one
 (configs, admin).
+
+Account layouts newer than a pinned IDL (#519; coordinator decision 2026-10-22: Raydium's documented account list, no
+hand-made IDL file). Written by hand in `VENUE_ACCOUNT_LAYOUTS` (extract.rs) and applied by number of accounts, so the
+older layout keeps the pinned IDL's names:
+
+| program | instruction | accounts | source | sha256 of the source file |
+|---|---|---|---|---|
+| raydium_launchlab | migrate_to_amm | 23 (since the 2026-09-09 upgrade; the pinned IDL raydium-idl @ e7e0c96 has the older 32) | github.com/raydium-io/raydium-docs-v1 @ 36823847c22064f9ba0aa4d931f2a181fbbcd5a5 (2026-10-20), products/launchlab/instructions.mdx, section "MigrateToAmm / MigrateToCpswap" (the "remaining 23-account list"), fetched 2026-10-22 | d73ccd21ebff3c80090881ea95d0fd21dbc3b4b3a951a118073c4648c8189340 |
