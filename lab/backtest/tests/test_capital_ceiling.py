@@ -40,6 +40,17 @@ def test_capital_days_is_capital_limited_with_a_day_series(start, maxpos, loss):
     assert 0 < extra["peak_open"] <= maxpos
 
 
+def test_a_ruined_account_takes_no_entry_that_will_fail():
+    # A total loss empties the account; then three entries that will fail (cost 0) and one that would fill.
+    t = [(LO, LO + 5, int(1e9), int(-1e9), False, "2026-09-12", "a", 0, 400.0)]
+    t += [(LO + 10 + i, None, 0, -505_000, True, "2026-09-13", f"f{i}", 0, 400.0) for i in range(3)]
+    t += [(LO + 20, LO + 30, int(1e9), int(0.1e9), False, "2026-09-13", "g", int(1.1e9), 400.0)]
+    old, _ = cc.capital_days(t, 1e9, 5, 10e9, cc.COOLDOWN_MS)
+    new, extra = cc.capital_days(t, 1e9, 5, 10e9, cc.COOLDOWN_MS, size=int(1e9))
+    assert old[1] == 4 and old[6] < 0  # _capital_limited's twin: the three failing entries 'taken', cash below 0
+    assert new[1] == 1 and new[6] == 0.0 and extra["ruin_day"] == "2026-09-13"
+
+
 def test_unsold_conventions():
     assert cc.exit_of((900, 800, 3), "deadline") == 900
     assert cc.exit_of((None, 800, 3), "deadline") == 803
@@ -132,7 +143,10 @@ def test_rows_candidates_and_keys(run):
     # tp4_T600's return falls with size (0.2 - 0.05 x size): positive at 0.5 and 1.25, negative at 5.
     assert mu["largest_positive_size"] == 1.25 and mu["max_useful_capital"] == 25 and mu["edge_eaten_at_size"] == 5.0
     md = cc.report_md(out)
-    assert "## Headline" in md and "20/C" in md and md.count(cc.GAP) == 1 + len(cc.CANDIDATES)
+    assert "## Headline" in md and "20/C" in md and md.count(cc.GAP) == 1 + 2 * len(cc.CANDIDATES)
+    assert "Parity against families-v2-1033-1046: not run." in md and "DRY RUN" not in md
+    # C3: of the two keys, A and C have rows; none is unmatched.
+    assert c3["arm_keys_unmatched"] == {"busy_arm": 0, "busy_non_arm": 0, "no_row": 0}
 
 
 def test_a_run_outside_dev_is_refused(tmp_path):
@@ -145,6 +159,24 @@ def test_rows_outside_dev_are_refused(tmp_path):
     d = write_run(str(tmp_path), "r", [row("tp4_T600", 0.5, 3, cc.DEV[1] + 5, "2026-10-02", "A")])
     with pytest.raises(cc.Refused, match="outside dev"):
         cc.load(duckdb.connect(), [d], "unused")
+
+
+def test_duplicate_positions_are_refused(run):
+    d, keys, tmp = run
+    import shutil
+    shutil.copy(os.path.join(d, "parts", "part-000000.parquet"), os.path.join(d, "parts", "part-000001.parquet"))
+    with pytest.raises(cc.Refused, match="duplicate"):
+        cc.load(duckdb.connect(), [d], keys)
+
+
+def test_parity_needs_every_reference_cell(run, monkeypatch):
+    d, keys, tmp = run
+    con = duckdb.connect()
+    cc.load(con, [d], keys)
+    out = cc.parity(con, d, ["2026-09-12", "2026-09-13", "2026-09-14"])
+    # The fixture has tp4_T600 at 0.5 SOL (d 2 and 3) but not at 1 or 2 SOL: those cells are RED.
+    by = {(x["size"], x["d"]): x["status"] for x in out}
+    assert by[(0.5, 2)] == "GREEN" and by[(0.5, 3)] == "GREEN" and by[(1.0, 2)].startswith("RED")
 
 
 def test_the_first_run_supplies_a_cell(run):
