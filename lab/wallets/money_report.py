@@ -66,7 +66,14 @@ def fmt(x, nd=2, pct=False, sign=False):
 def load(con, money_dir, clusters_dir=None, materialize=True):
     """materialize=False keeps the wallet-day rows (tens of millions on a full run) and the all-days measurement as
     views on the parquet files instead of tables: slower (every statistic rescans the files) but it fits a few GB,
-    so the report and its checks can be re-rendered on the VPS."""
+    so the report and its checks can be re-rendered on the VPS.
+
+    Footprint (money-v2's report on the NAS, 2026-10-22, hit its 16 GB spill cap at the labels step with 6 GB of
+    memory: an honest size problem, not a fan-out — every per-wallet table here is a GROUP BY wallet): a TEMP TABLE
+    lives uncompressed in the buffer pool and is offloaded to the temp directory beyond the memory limit; the
+    41.8 M wallet-day rows take ~200 B each (8.4 GB), the all-days measurement nearly as much again, payers 1.3 GB,
+    the per-wallet helpers ~4 GB. So payers is a view on its parquet (read twice, in load only) and the helper
+    tables are dropped once labels and the measurements exist; the wallet-day rows themselves follow materialize."""
     files = sorted(glob.glob(os.path.join(money_dir, "wallet-day-*.parquet")))
     if not files:
         raise SystemExit(f"no wallet-day-*.parquet in {money_dir}")
@@ -79,8 +86,8 @@ def load(con, money_dir, clusters_dir=None, materialize=True):
         con.execute(f"CREATE OR REPLACE TEMP {kind} wd AS SELECT *, {REF_MS}::DOUBLE AS ms_per_slot, 'unknown' AS regime FROM read_parquet({lit}, union_by_name = true)")
     for name in ("payers", "creators", "venue_flows", "marks", "lp_legs"):
         path = os.path.join(money_dir, name + ".parquet")
-        if os.path.exists(path):
-            con.execute(f"CREATE OR REPLACE TEMP TABLE {name} AS SELECT * FROM '{path}'")
+        if os.path.exists(path):  # payers (10 M rows of three addresses) stays a view: read twice below, never after
+            con.execute(f"CREATE OR REPLACE TEMP {'VIEW' if name == 'payers' else 'TABLE'} {name} AS SELECT * FROM '{path}'")
         elif name == "lp_legs":
             con.execute("CREATE OR REPLACE TEMP TABLE lp_legs (pool VARCHAR, mint VARCHAR, orientation VARCHAR, slot BIGINT, tx_index BIGINT, kind VARCHAR, sol_in BIGINT, depth_pre BIGINT, depth_post BIGINT)")
     con.execute("CREATE OR REPLACE TEMP TABLE wallet_ms AS SELECT wallet, median(ms_per_slot) AS ms FROM wd GROUP BY wallet")
@@ -163,6 +170,11 @@ def load(con, money_dir, clusters_dir=None, materialize=True):
     con.execute(f"""
       CREATE OR REPLACE TEMP {kind} meas_all AS
       SELECT d.*, l.label FROM wd d JOIN labels l ON l.wallet = d.wallet JOIN win w ON w.wallet = d.wallet WHERE d.day > w.label_from_excl""")
+    # the per-wallet helpers served labels and the measurements; nothing below load reads them (labels keeps their
+    # columns); win stays while meas_all is a view over it
+    for name in ("feat", "wallet_ms", "service", "creator_set", "day_cut", "memberships") + (("win",) if materialize else ()):
+        con.execute(f"DROP TABLE IF EXISTS {name}")
+    con.execute("DROP VIEW IF EXISTS payers")
     return len(files)
 
 

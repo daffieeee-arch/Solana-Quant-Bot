@@ -4,9 +4,11 @@
 #
 #   LAB_SPILL_DIR=/lab/tmp/nas-money LAB_SPILL_MAX=16GB MEMORY=12GB REPORT_MEMORY=6GB bash lab/wallets/nas_money.sh
 #   MONEY_OUT=$DATA/wallets/money-v2-<sha7> ... bash lab/wallets/nas_money.sh      (a rerun into a new directory; money-v1 stays)
+#   REPORT_ARGS=--views ... bash lab/wallets/nas_money.sh                           (the report with the wallet-day rows as views:
+#        a few GB instead of ~25 GB of temp tables; money-v2's report hit the 16 GB spill cap on 2026-10-22, see money_report.load)
 #
 # Tunables (env): FROM/TO slots (development only), BUCKETS (wallet hash buckets, bounds the window working set),
-# MEMORY (DuckDB limit), BOOT, PLACEBO.
+# MEMORY (DuckDB limit), REPORT_MEMORY, REPORT_ARGS (extra money_report flags), BOOT, PLACEBO.
 set -euo pipefail
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
@@ -40,10 +42,12 @@ else
   fi
 fi
 
-log "report (boot $BOOT, placebo $PLACEBO)"
+REPORT_ARGS=${REPORT_ARGS:-}
+log "report (boot $BOOT, placebo $PLACEBO, memory ${REPORT_MEMORY:-6GB}, args '$REPORT_ARGS')"
 clusters=""
 [ -d "$CL" ] && clusters="--clusters $CL"
 F7PARTS=$DATA/backtests/f7rev-1033-1046/parts
 export LAB_WALLETS_MEMORY=${REPORT_MEMORY:-6GB}   # the report keeps the wallet-day rows in numpy next to DuckDB: a lower limit than the build
-nice -n 10 "$PY" -m wallets.money_report --money "$MO" $clusters --parts "$F7PARTS" --boot "$BOOT" --placebo "$PLACEBO" --out "$MO/money.md" > "$LOG/report.log" 2>&1
+# shellcheck disable=SC2086  # REPORT_ARGS is a flag list
+nice -n 10 "$PY" -m wallets.money_report --money "$MO" $clusters --parts "$F7PARTS" --boot "$BOOT" --placebo "$PLACEBO" $REPORT_ARGS --out "$MO/money.md" > "$LOG/report.log" 2>&1
 log "done: $MO/money.md"
