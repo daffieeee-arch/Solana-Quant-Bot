@@ -42,7 +42,7 @@ def connect(store=STORE, memory="1GB", threads=2):
                          f"lab-wallets-{os.getpid()}")
     con.execute(f"SET threads TO {threads}; SET memory_limit = '{memory}'; SET temp_directory = '{spill}'; "
                 f"SET max_temp_directory_size = '{os.environ.get('LAB_SPILL_MAX', '1GB')}'; "
-                "SET preserve_insertion_order = false; SET enable_progress_bar = false")
+                "SET preserve_insertion_order = false; SET enable_progress_bar = false; SET TimeZone = 'UTC'")  # to_timestamp() labels stay UTC on the VPS (CEST host)
     return con
 
 

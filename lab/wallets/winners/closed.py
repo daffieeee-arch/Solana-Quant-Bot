@@ -12,7 +12,7 @@ MV = os.path.join(DATA, "wallets", "money-v1")
 import duckdb, time
 t0=time.time()
 def log(*a): print(round(time.time()-t0,1), *a, flush=True)
-con=duckdb.connect(); con.execute(f"SET memory_limit='1500MB'; SET threads TO 2; SET preserve_insertion_order=false; SET temp_directory='{SPILL}'; SET max_temp_directory_size='6GB'")
+con=duckdb.connect(); con.execute(f"SET memory_limit='1500MB'; SET threads TO 2; SET preserve_insertion_order=false; SET TimeZone='UTC'; SET temp_directory='{SPILL}'; SET max_temp_directory_size='6GB'")
 con.execute(f"ATTACH '{STORE}' AS s (READ_ONLY)")
 con.execute(f"CREATE TABLE g AS SELECT wallet, grp, lab_winner, d_lab, d_out, net_lab, net_out FROM '{OUT}/groups.parquet' WHERE grp = 'trader' AND d_lab >= 5 AND d_out >= 3")
 con.execute("""CREATE TABLE samp AS

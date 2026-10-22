@@ -9,7 +9,7 @@ S = os.environ.get("LAB_STORE", f"{DATA}/store/dev2.duckdb")
 W = os.path.join(os.environ.get("LAB_WALLETS_OUT", f"{DATA}/wallets"), "winners-v1")
 X=f"{DATA}/backtests/exits-dev-1033-1046-befacff/parts/*.parquet"
 t0=time.time(); log=lambda *a: print(round(time.time()-t0,1), *a, flush=True)
-con=duckdb.connect(); con.execute(f"SET memory_limit='1400MB'; SET threads TO 2; SET preserve_insertion_order=false; SET temp_directory='{DATA}/tmp/winners-v1'; SET max_temp_directory_size='6GB'")
+con=duckdb.connect(); con.execute(f"SET memory_limit='1400MB'; SET threads TO 2; SET preserve_insertion_order=false; SET TimeZone='UTC'; SET temp_directory='{DATA}/tmp/winners-v1'; SET max_temp_directory_size='6GB'")
 con.execute(f"ATTACH '{S}' AS s (READ_ONLY)")
 con.execute(f"CREATE TABLE c AS SELECT wallet FROM '{W}/closed_wallets.parquet' WHERE d_lab_c >= 7 AND d_lab_c_pos >= 7 AND net_lab_c > 10e9 AND d_out_c >= 3")
 con.execute("CREATE TABLE days AS SELECT strftime(to_timestamp(block_time), '%Y-%m-%d') AS day, min(slot)::BIGINT AS slot0 FROM s.blocks GROUP BY 1 ORDER BY 2")
