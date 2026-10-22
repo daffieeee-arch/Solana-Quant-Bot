@@ -157,6 +157,39 @@ fn main() -> Result<()> {
         "failed"
     };
     let c = |a: &std::sync::atomic::AtomicU64| a.load(Ordering::Relaxed);
+    // The counters on their own: inside the manifest's json! they would pass rustc's default macro recursion limit
+    // (serde_json's json! munches one entry at a time; the manifest at 25 counters reached ~136 of 128 levels).
+    let counters_json = serde_json::json!({
+        "txs_seen": c(&counters.txs_seen),
+        "txs_touching": c(&counters.txs_touching),
+        "txs_failed_touching": c(&counters.txs_failed_touching),
+        "events": c(&counters.events),
+        "anomalies": c(&counters.anomalies),
+        "blocks": c(&counters.blocks),
+        "skipped_markers": c(&counters.skipped_markers),
+        "sink_errors": c(&counters.sink_errors),
+        "firehose_errors": c(&counters.firehose_errors),
+        "http_429": c(&counters.http_429),
+        "missing_meta": c(&counters.missing_meta),
+        "census_rows": c(&counters.census_rows),
+        "venue_events": c(&counters.venue_events),
+        "venue_graduations": c(&counters.venue_graduations),
+        "venue_unknown_events": c(&counters.venue_unknown_events),
+        "venue_inits": c(&counters.venue_inits),
+        "venue_log_truncated": c(&counters.venue_log_truncated),
+        "venue_log_unpaired": c(&counters.venue_log_unpaired),
+        "venue_log_undecodable": c(&counters.venue_log_undecodable),
+        "venue_balance_rows": c(&counters.venue_balance_rows),
+        // LaunchLab's migrate_to_amm rows by number of accounts (INFO): 23 since its 2026-09-09 upgrade (Raydium's docs,
+        // unit tests; no on-chain occurrence yet), 32 under the pinned IDL, another count; and graduation rows of an
+        // instruction with fewer accounts than its IDL and no known newer layout.
+        "venue_migrate_to_amm_23": c(&counters.venue_migrate_to_amm_23),
+        "venue_migrate_to_amm_32": c(&counters.venue_migrate_to_amm_32),
+        "venue_migrate_to_amm_other": c(&counters.venue_migrate_to_amm_other),
+        "venue_graduation_unknown_layout": c(&counters.venue_graduation_unknown_layout),
+        // Rewards of a type the firehose does not know (Alpenglow's VATDebit): skipped, not fatal.
+        "rewards_unknown_type_skipped": c(&jetstreamer_firehose::firehose::UNKNOWN_REWARD_TYPES_SKIPPED),
+    });
     let manifest = serde_json::json!({
         "status": status,
         "slot_start": args.start,
@@ -185,30 +218,7 @@ fn main() -> Result<()> {
         "error": result.as_ref().err().map(|e| e.to_string()),
         "sink_error": tables.as_ref().err().map(|e| format!("{e:#}")),
         "rows": tables.as_ref().ok(),
-        "counters": {
-            "txs_seen": c(&counters.txs_seen),
-            "txs_touching": c(&counters.txs_touching),
-            "txs_failed_touching": c(&counters.txs_failed_touching),
-            "events": c(&counters.events),
-            "anomalies": c(&counters.anomalies),
-            "blocks": c(&counters.blocks),
-            "skipped_markers": c(&counters.skipped_markers),
-            "sink_errors": c(&counters.sink_errors),
-            "firehose_errors": c(&counters.firehose_errors),
-            "http_429": c(&counters.http_429),
-            "missing_meta": c(&counters.missing_meta),
-            "census_rows": c(&counters.census_rows),
-            "venue_events": c(&counters.venue_events),
-            "venue_graduations": c(&counters.venue_graduations),
-            "venue_unknown_events": c(&counters.venue_unknown_events),
-            "venue_inits": c(&counters.venue_inits),
-            "venue_log_truncated": c(&counters.venue_log_truncated),
-            "venue_log_unpaired": c(&counters.venue_log_unpaired),
-            "venue_log_undecodable": c(&counters.venue_log_undecodable),
-            "venue_balance_rows": c(&counters.venue_balance_rows),
-            // Rewards of a type the firehose does not know (Alpenglow's VATDebit): skipped, not fatal.
-            "rewards_unknown_type_skipped": c(&jetstreamer_firehose::firehose::UNKNOWN_REWARD_TYPES_SKIPPED),
-        },
+        "counters": counters_json,
         "coverage": {
             "missing_slots": missing_slots,
             "skipped_slots_verified_by_index": verified_skipped,

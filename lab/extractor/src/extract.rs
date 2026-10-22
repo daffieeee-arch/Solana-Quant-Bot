@@ -1343,6 +1343,13 @@ pub struct VenueRows {
     pub log_undecodable: u64,
     /// Swap rows from the balance fallback.
     pub balance_rows: u64,
+    /// LaunchLab's migrate_to_amm graduation rows by number of accounts (INFO in the manifest's counters): 23 (its newer
+    /// layout since 2026-09-09, VENUE_ACCOUNT_LAYOUTS), 32 (the pinned IDL's), another count. Its newer layout rests on
+    /// Raydium's docs and unit tests; no real one has been seen yet, so the first occurrence shows here.
+    pub migrate_to_amm_accounts: [u64; 3],
+    /// Graduation rows of an instruction with fewer accounts than its IDL and no newer layout of that size
+    /// (VENUE_ACCOUNT_LAYOUTS): the pools may be read from the wrong accounts.
+    pub graduation_unknown_layout: u64,
 }
 
 /// The "Program data:" lines a program logged itself (Anchor's emit!: base64 of discriminator and Borsh body), each with
@@ -1615,6 +1622,14 @@ impl Venues {
             }
             if let Some((from, to, base, quote, to_venue)) = x.graduation {
                 out.graduations += 1;
+                let n_accounts = ix.accounts.len();
+                let newer = x.layouts.iter().any(|(k, _)| *k == n_accounts);
+                if vp.label == "raydium_launchlab" && x.name == "migrate_to_amm" {
+                    out.migrate_to_amm_accounts[if newer { 0 } else if n_accounts == x.accounts.len() { 1 } else { 2 }] += 1;
+                }
+                if n_accounts < x.accounts.len() && !newer {
+                    out.graduation_unknown_layout += 1;
+                }
                 out.rows.push(Row {
                     table: self.grad_table.clone(),
                     columns: self.grad_cols.clone(),
@@ -2028,17 +2043,30 @@ mod venue_tests {
         let mut keys: Vec<[u8; 32]> = vec![pk(1), key("LanMV9sAd7wArD4vJFi2qDdfnVhFxYSUg6eADduJ3uj")];
         keys.extend((0..32u8).map(|i| pk(100 + i)));
         let venues = Venues::new().unwrap();
-        for (n, from, to) in [(23usize, 14usize, 5usize), (32, 23, 13)] {
+        let tx = |n: usize, failed: bool| {
             let accounts: Vec<u8> = (0..n as u8).map(|i| i + 2).collect();
             let ixs = vec![IxView { path: "0".into(), program: Some(&keys[1][..]), accounts: &accounts[..], data: &disc[..], parent: None }];
-            let v = TxView { slot: 1, tx_index: 0, fee_payer: k58(&keys[0]), failed: false, keys: keys.iter().map(|k| &k[..]).collect(), ixs,
+            let v = TxView { slot: 1, tx_index: 0, fee_payer: k58(&keys[0]), failed, keys: keys.iter().map(|k| &k[..]).collect(), ixs,
                              logs: &[], pre_lamports: &[], post_lamports: &[], pre_tokens: vec![], post_tokens: vec![] };
-            let out = venues.rows(&v);
+            venues.rows(&v)
+        };
+        for (n, from, to) in [(23usize, 14usize, 5usize), (32, 23, 13)] {
+            let out = tx(n, false);
             assert_eq!(out.graduations, 1, "{n} accounts");
             let r = &out.rows[0];
             assert_eq!((col(r, "from_pool"), col(r, "to_pool"), col(r, "base_mint"), col(r, "quote_mint")),
                        (&st(&k58(&keys[from + 2])), &st(&k58(&keys[to + 2])), &st(&k58(&keys[3])), &st(&k58(&keys[4]))), "{n} accounts");
+            // The INFO count by number of accounts (the manifest's venue_migrate_to_amm_23 / _32): both layouts are known.
+            assert_eq!((out.migrate_to_amm_accounts, out.graduation_unknown_layout), (if n == 23 { [1, 0, 0] } else { [0, 1, 0] }, 0), "{n} accounts");
         }
+        // 20 accounts: a shorter layout neither the IDL nor VENUE_ACCOUNT_LAYOUTS knows (pools perhaps misread); 34: the
+        // IDL's 32 and two remaining accounts (positions unchanged); a failed transaction: no row, no count.
+        for (n, unknown) in [(20usize, 1u64), (34, 0)] {
+            let out = tx(n, false);
+            assert_eq!((out.graduations, out.migrate_to_amm_accounts, out.graduation_unknown_layout), (1, [0, 0, 1], unknown), "{n} accounts");
+        }
+        let out = tx(23, true);
+        assert_eq!((out.graduations, out.migrate_to_amm_accounts, out.graduation_unknown_layout), (0, [0, 0, 0], 0));
         assert_eq!((layout_pool("raydium_launchlab", "migrate_to_amm", 23), layout_pool("raydium_launchlab", "migrate_to_amm", 32)), (Some(14), None));
     }
 
@@ -2124,6 +2152,12 @@ pub struct Counters {
     pub venue_log_unpaired: AtomicU64,
     pub venue_log_undecodable: AtomicU64,
     pub venue_balance_rows: AtomicU64,
+    /// LaunchLab's migrate_to_amm rows with 23 accounts, 32, another count; graduation rows of an unknown shorter layout
+    /// (VenueRows).
+    pub venue_migrate_to_amm_23: AtomicU64,
+    pub venue_migrate_to_amm_32: AtomicU64,
+    pub venue_migrate_to_amm_other: AtomicU64,
+    pub venue_graduation_unknown_layout: AtomicU64,
 }
 
 /// Old Faithful's storage (Backblaze B2 behind Cloudflare) answers new requests with HTTP 429
@@ -2339,6 +2373,11 @@ impl LabPlugin {
             self.counters.venue_log_unpaired.fetch_add(out.log_unpaired, Ordering::Relaxed);
             self.counters.venue_log_undecodable.fetch_add(out.log_undecodable, Ordering::Relaxed);
             self.counters.venue_balance_rows.fetch_add(out.balance_rows, Ordering::Relaxed);
+            let [m23, m32, m_other] = out.migrate_to_amm_accounts;
+            self.counters.venue_migrate_to_amm_23.fetch_add(m23, Ordering::Relaxed);
+            self.counters.venue_migrate_to_amm_32.fetch_add(m32, Ordering::Relaxed);
+            self.counters.venue_migrate_to_amm_other.fetch_add(m_other, Ordering::Relaxed);
+            self.counters.venue_graduation_unknown_layout.fetch_add(out.graduation_unknown_layout, Ordering::Relaxed);
             rows.extend(out.rows);
         }
         if let Some(c) = census {
@@ -3622,6 +3661,8 @@ mod tests {
         let venues = Venues::new().unwrap();
         let out = venues.rows(&view(false));
         assert_eq!((out.graduations, out.events, out.unknown_events), (2, 0, 1));
+        // Both are their IDLs' own layouts; neither is migrate_to_amm.
+        assert_eq!((out.migrate_to_amm_accounts, out.graduation_unknown_layout), ([0, 0, 0], 0));
         let got: Vec<Vec<Val>> = out.rows.iter().filter(|r| &*r.table == "venue_graduations").map(|r| ["venue", "ix_name", "from_pool", "to_venue", "to_pool", "base_mint", "quote_mint", "outer_ix", "inner_ix"]
             .iter().map(|c| col(r, c).clone()).collect()).collect();
         // The unknown event is kept to be named: its venue, discriminator and parent.
