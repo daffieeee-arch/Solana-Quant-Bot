@@ -76,6 +76,10 @@ def test_planted_relation_is_found_and_the_run_is_repeatable(tmp_path):
     te = t2["test"]
     # the model ranks on f1: the selected coins hit far more often than the base rate
     assert te["hit"] > 1.5 * t2["base_rate"]["test"] and te["precision_vs_base"] > 1.5 and te["auc"] > 0.7
+    # the ratio uses the chosen moment's own test base rate, not the all-moments rate
+    assert te["precision_vs_base"] == pytest.approx(te["hit"] / te["base_rate_moment"]) and te["base_rate_moment"] == pytest.approx(t2["all_coins_test"]["hit"])
+    if t2.get("logit_reference"):
+        assert t2["logit_reference"]["test"]["precision_vs_base"] == pytest.approx(t2["logit_reference"]["test"]["hit"] / t2["logit_reference"]["test"]["base_rate_moment"])
     assert set(te["boot"]) == {"10", "25", "100"} and te["boot"]["100"]["days"] == res["days"]["test"]
     assert sum(te["trades_per_test_day"].values()) == te["trades"] and te["dsr"]["trials"] == t2["cells"]
     assert t2["cscv"]["splits"] == 12870 and 0 <= t2["cscv"]["pbo"] <= 1

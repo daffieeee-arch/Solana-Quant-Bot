@@ -1,5 +1,5 @@
 #!/bin/bash
-# x10-jager (research/x10-jager-plan-2026-10-23.md v0.2, roadmap #167) on the NAS: stage A labels per dev epoch (sizes 0.5
+# x10-jager (research/x10-jager-plan-2026-10-23.md v0.3, roadmap #167) on the NAS: stage A labels per dev epoch (sizes 0.5
 # and 2 SOL), stage B features, stage C model (when lightgbm is installed on the NAS lab-py; otherwise stage C runs on
 # the VPS on the archived parquet). Dev 1033-1046 only.
 #

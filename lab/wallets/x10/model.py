@@ -18,7 +18,8 @@ with Holm, the day bootstrap, DSR / CSCV and the report.
   Choice     per target on validation: X* = the largest capital level with >= MIN_TRADES_PER_DAY taken trades per day
              (a trade-count rule, nothing chosen at test); the cell with the highest validation SOL/day at X* wins
              (ties: fewer trades, then the order of the grid). Cells without any eligible X* are skipped.
-  Test       the chosen cell per target: trades per UTC day, precision vs base rate, calibration (10 bins), EV per
+  Test       the chosen cell per target: trades per UTC day, precision vs the chosen moment's test base rate (the
+             all-moments rate is a report figure only), calibration (10 bins), EV per
              trade, SOL/day at 10 / 25 / 100 (nested) with a day bootstrap (BOOT draws, seed SEED), one-sided p =
              share of bootstrap means <= 0, Holm over the three targets at X*, top-1 % P&L share, stop-first share,
              feature importance (gain), the logistic baseline's chosen cell and "all coins" as references; DSR on the
@@ -354,7 +355,11 @@ def run(features_path, out_dir, boot=BOOT, moments=MOMENTS, models=MODELS, leave
         dte = {kk: v[te_mask_m] for kk, v in d.items() if isinstance(v, np.ndarray)}
         xs = key["x_star"] = met["x_star"]
         test = cell_metrics(sel_te, dte, exits24[key["exit"]][te_mask_m], days["test"], boot=boot)
-        test["precision_vs_base"] = (test["hit"] / tres["base_rate"]["test"]) if test["hit"] is not None and tres["base_rate"]["test"] else None
+        # the ratio and the gate use the CHOSEN MOMENT's test base rate (LAB must-fix on #530): mig and curve entries differ;
+        # the all-moments rate stays a report figure (base_rate["test"])
+        moment_base = float(dte["y"].mean()) if len(dte["y"]) else None
+        test["base_rate_moment"] = moment_base
+        test["precision_vs_base"] = (test["hit"] / moment_base) if test["hit"] is not None and moment_base else None
         test["calibration"] = calibration(s_te, dte["y"])
         test["auc"] = _auc(s_te, dte["y"])
         test["trades_per_test_day"] = {dd: int((dte["day"][sel_te] == dd).sum()) for dd in days["test"]}
@@ -374,6 +379,9 @@ def run(features_path, out_dir, boot=BOOT, moments=MOMENTS, models=MODELS, leave
             dlt = {kk: v[lte] for kk, v in d.items() if isinstance(v, np.ndarray)}
             lt = cell_metrics(lsel_te, dlt, exits24[lkey["exit"]][lte], days["test"], boot=boot)
             lt["boot"] = {X: {kk: vv for kk, vv in b.items() if kk != "per_day"} for X, b in lt["boot"].items()}
+            lbase = float(dlt["y"].mean()) if len(dlt["y"]) else None
+            lt["base_rate_moment"] = lbase
+            lt["precision_vs_base"] = (lt["hit"] / lbase) if lt["hit"] is not None and lbase else None
             tres["logit_reference"] = lkey | {"val_sol_day": lmet["sol_day"], "test": lt}
         if key["model"] == "lgbm":
             imp = obj.feature_importance(importance_type="gain")
