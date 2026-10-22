@@ -155,7 +155,7 @@ def main(argv=None):
     os.makedirs(W, exist_ok=True)
     os.makedirs(f"{DATA}/tmp/winners-v1", exist_ok=True)  # DuckDB does not create its temp_directory (NAS job 99p)
     con = duckdb.connect()
-    con.execute(f"SET memory_limit='{MEM}'; SET threads TO 2; SET preserve_insertion_order=false; SET temp_directory='{DATA}/tmp/winners-v1'; SET max_temp_directory_size='40GB'")
+    con.execute(f"SET memory_limit='{MEM}'; SET threads TO 2; SET preserve_insertion_order=false; SET TimeZone='UTC'; SET temp_directory='{DATA}/tmp/winners-v1'; SET max_temp_directory_size='40GB'")
     con.execute(f"ATTACH '{S}' AS s (READ_ONLY)")
     lo_all, hi_all = epochs[0][0], epochs[-1][1]
     con.execute("CREATE TABLE days AS SELECT day, slot0, row_number() OVER (ORDER BY slot0) AS di FROM (SELECT strftime(to_timestamp(block_time), '%Y-%m-%d') AS day, min(slot)::BIGINT AS slot0 FROM s.blocks GROUP BY 1)")

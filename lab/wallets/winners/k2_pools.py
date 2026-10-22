@@ -22,7 +22,7 @@ t0=time.time(); log=lambda *a: print(round(time.time()-t0,1), *a, flush=True)
 def main(argv=None):
   ap = argparse.ArgumentParser(); ap.add_argument("--smoke", action="store_true"); a = ap.parse_args(argv)
   os.makedirs(W, exist_ok=True); os.makedirs(f"{DATA}/tmp/winners-v1", exist_ok=True)
-  con=duckdb.connect(); con.execute(f"SET memory_limit='{MEM}'; SET threads TO 2; SET preserve_insertion_order=false; SET temp_directory='{DATA}/tmp/winners-v1'; SET max_temp_directory_size='20GB'")
+  con=duckdb.connect(); con.execute(f"SET memory_limit='{MEM}'; SET threads TO 2; SET preserve_insertion_order=false; SET TimeZone='UTC'; SET temp_directory='{DATA}/tmp/winners-v1'; SET max_temp_directory_size='20GB'")
   con.execute(f"ATTACH '{S}' AS s (READ_ONLY)")
   con.execute(f"CREATE TABLE fac AS SELECT DISTINCT entry_pool AS pool FROM '{W_IN}/c_pos.parquet' WHERE entry_venue = 'pool_reversed' AND wallet IN (SELECT wallet FROM '{W_IN}/c_pos.parquet' WHERE entry_venue = 'pool_reversed' GROUP BY 1 HAVING count(*) >= 100)")
   con.execute("CREATE TABLE days AS SELECT strftime(to_timestamp(block_time), '%Y-%m-%d') AS day, min(slot)::BIGINT AS slot0 FROM s.blocks GROUP BY 1 ORDER BY 2")

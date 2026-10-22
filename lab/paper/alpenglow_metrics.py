@@ -88,7 +88,7 @@ def _rows(con, sql):
 
 def compute(recorder=None, kept=(), journal=None, switch_slot=None):
     con = duckdb.connect()
-    con.execute("SET memory_limit='512MB'")
+    con.execute("SET memory_limit='512MB'; SET TimeZone='UTC'")  # hour and day buckets in UTC, whatever the host zone (the VPS runs CEST)
     blocks, footers = _files(recorder, kept, "blocks"), _files(recorder, kept, "block_footers")
     con.execute(f"CREATE TABLE b AS SELECT DISTINCT * FROM read_parquet({blocks!r}, union_by_name = true)" if blocks else
                 "CREATE TABLE b (slot BIGINT, parent_slot BIGINT, block_time BIGINT, block_height BIGINT, executed_tx_count BIGINT, "

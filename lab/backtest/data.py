@@ -83,4 +83,5 @@ def connect(threads=None, memory=None, temp=None):
     if tmp:
         con.execute(f"SET temp_directory = '{tmp}'")
     con.execute("SET preserve_insertion_order = false")
+    con.execute("SET TimeZone = 'UTC'")  # day and hour labels from to_timestamp() never follow the host zone (VPS = CEST)
     return con
