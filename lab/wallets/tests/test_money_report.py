@@ -138,3 +138,20 @@ def test_load_on_read_only_store(tmp_path):
     labels = dict(con.execute("SELECT wallet, label FROM labels").fetchall())
     assert labels["S0"] == "sniper" and labels["B0"] == "bot"
     assert con.execute("SELECT count(*) FROM meas_all").fetchone()[0] > 0
+
+
+def test_placebo_draws_are_the_same_over_tables_views_and_a_repeat(tmp_path):
+    """The placebo's deciles, members and candidate pool break ties by wallet and the rows are ordered, so the seeded
+    draws do not depend on the scan order (LAB review on #517: before, two runs of the same code gave different
+    'above k / 100'). Retail has 200 wallets with tied n_positions, so the ntile tie-break is exercised."""
+    d = _dir(tmp_path)
+    results = []
+    for materialize in (True, False, True):
+        con = duckdb.connect()
+        con.execute("SET memory_limit = '300MB'; SET threads TO 2")
+        R.load(con, d, materialize=materialize)
+        q = R.placebo(con, "retail", 30, 100)
+        results.append((q["draws"], q["below"], q["median"], q["p05"], q["p95"], q["unmatched"], q["members"]))
+        con.close()
+    # the continuous quantiles of the draws (median, p05, p95) would move if a single draw picked another wallet
+    assert results[0] == results[1] == results[2] and results[0][0] == 30 and results[0][6] == 198

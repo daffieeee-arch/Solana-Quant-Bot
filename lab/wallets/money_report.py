@@ -72,8 +72,10 @@ def load(con, money_dir, clusters_dir=None, materialize=True):
     memory: an honest size problem, not a fan-out — every per-wallet table here is a GROUP BY wallet): a TEMP TABLE
     lives uncompressed in the buffer pool and is offloaded to the temp directory beyond the memory limit; the
     41.8 M wallet-day rows take ~200 B each (8.4 GB), the all-days measurement nearly as much again, payers 1.3 GB,
-    the per-wallet helpers ~4 GB. So payers is a view on its parquet (read twice, in load only) and the helper
-    tables are dropped once labels and the measurements exist; the wallet-day rows themselves follow materialize."""
+    the per-wallet helpers ~4 GB. So payers is dropped right after creator_set (as a view on its parquet the self-join
+    lost its CTE materialisation and ran 32x slower, LAB review) and the helper tables are dropped once labels and
+    the measurements exist; the wallet-day rows themselves follow materialize. The placebo's strata, candidate pool
+    and rows are ordered (ties broken by wallet), so two runs, tables or views, give the same draws."""
     files = sorted(glob.glob(os.path.join(money_dir, "wallet-day-*.parquet")))
     if not files:
         raise SystemExit(f"no wallet-day-*.parquet in {money_dir}")
@@ -86,8 +88,8 @@ def load(con, money_dir, clusters_dir=None, materialize=True):
         con.execute(f"CREATE OR REPLACE TEMP {kind} wd AS SELECT *, {REF_MS}::DOUBLE AS ms_per_slot, 'unknown' AS regime FROM read_parquet({lit}, union_by_name = true)")
     for name in ("payers", "creators", "venue_flows", "marks", "lp_legs"):
         path = os.path.join(money_dir, name + ".parquet")
-        if os.path.exists(path):  # payers (10 M rows of three addresses) stays a view: read twice below, never after
-            con.execute(f"CREATE OR REPLACE TEMP {'VIEW' if name == 'payers' else 'TABLE'} {name} AS SELECT * FROM '{path}'")
+        if os.path.exists(path):
+            con.execute(f"CREATE OR REPLACE TEMP TABLE {name} AS SELECT * FROM '{path}'")
         elif name == "lp_legs":
             con.execute("CREATE OR REPLACE TEMP TABLE lp_legs (pool VARCHAR, mint VARCHAR, orientation VARCHAR, slot BIGINT, tx_index BIGINT, kind VARCHAR, sol_in BIGINT, depth_pre BIGINT, depth_post BIGINT)")
     con.execute("CREATE OR REPLACE TEMP TABLE wallet_ms AS SELECT wallet, median(ms_per_slot) AS ms FROM wd GROUP BY wallet")
@@ -127,6 +129,7 @@ def load(con, money_dir, clusters_dir=None, materialize=True):
         JOIN (SELECT wallet, min(day) AS day FROM creators GROUP BY wallet) c ON c.wallet = p1.wallet
         WHERE p2.fee_payer NOT IN (SELECT fee_payer FROM service))
       GROUP BY wallet""")
+    con.execute("DROP TABLE IF EXISTS payers")  # 10 M rows of three addresses; nothing below reads it (a view instead made the self-join 32x slower)
     # bundler memberships (cluster events bought into), before the label window's end
     # cluster memberships up to the wallet's label window end (the last traded slot before its measure_from)
     con.execute("""
@@ -174,7 +177,6 @@ def load(con, money_dir, clusters_dir=None, materialize=True):
     # columns); win stays while meas_all is a view over it
     for name in ("feat", "wallet_ms", "service", "creator_set", "day_cut", "memberships") + (("win",) if materialize else ()):
         con.execute(f"DROP TABLE IF EXISTS {name}")
-    con.execute("DROP VIEW IF EXISTS payers")
     return len(files)
 
 
@@ -228,7 +230,7 @@ class Rows:
     slice [ptr[i], ptr[i + 1]). Built once per report; a placebo draw is a weighted bincount over them."""
 
     def __init__(self, con):
-        t = con.execute("SELECT wallet, day, pnl FROM meas ORDER BY wallet").fetchnumpy()
+        t = con.execute("SELECT wallet, day, pnl FROM meas ORDER BY wallet, day").fetchnumpy()
         wallets = np.asarray(t["wallet"], dtype=object)
         self.days, self.day_idx = np.unique(np.asarray(t["day"], dtype=object), return_inverse=True)
         self.pnl = np.asarray(t["pnl"], dtype=float)
@@ -252,15 +254,16 @@ def placebo(con, group, draws, boot, seed=7, rows=None):
     the members for whom no stratum (nor a neighbouring one) had a candidate."""
     rows = rows or Rows(con)
     con.execute("""
-      CREATE OR REPLACE TABLE strata AS
-      SELECT wallet, label, ntile(10) OVER (ORDER BY COALESCE(n_positions, 0)) AS pos_dec, least(COALESCE(active_days, 0), 9) AS act,
-             ntile(10) OVER (ORDER BY COALESCE(median_buy_sol, 0)) AS buy_dec
+      CREATE OR REPLACE TEMP TABLE strata AS
+      SELECT wallet, label, ntile(10) OVER (ORDER BY COALESCE(n_positions, 0), wallet) AS pos_dec, least(COALESCE(active_days, 0), 9) AS act,
+             ntile(10) OVER (ORDER BY COALESCE(median_buy_sol, 0), wallet) AS buy_dec
       FROM labels WHERE wallet IN (SELECT DISTINCT wallet FROM meas)""")
-    members = con.execute("SELECT pos_dec, act, buy_dec, count(*) FROM strata WHERE label = ? GROUP BY ALL", [group]).fetchall()
+    # deciles, members and the candidate pool are ordered with the wallet as tie-break: the seeded draws are reproducible
+    members = con.execute("SELECT pos_dec, act, buy_dec, count(*) FROM strata WHERE label = ? GROUP BY ALL ORDER BY ALL", [group]).fetchall()
     if not members:
         return None
     pool = {}
-    for pd_, act, bd, w in con.execute("SELECT pos_dec, act, buy_dec, wallet FROM strata WHERE label <> ?", [group]).fetchall():
+    for pd_, act, bd, w in con.execute("SELECT pos_dec, act, buy_dec, wallet FROM strata WHERE label <> ? ORDER BY wallet", [group]).fetchall():
         if w in rows.wallet_id:
             pool.setdefault((pd_, act, bd), []).append(rows.wallet_id[w])
     pool = {k: np.array(v) for k, v in pool.items()}
