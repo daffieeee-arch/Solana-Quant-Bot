@@ -40,3 +40,28 @@ instruction builders for the account order (amm_pool at 1; at 4 in initialize2).
 The pool account of an instruction: the first of its accounts (nested groups flattened, IDL order) named pool_state,
 lb_pair, whirlpool, whirlpool_one, pool, bonding_curve, virtual_pool or amm; none for instructions without one
 (configs, admin).
+
+Account layouts newer than a pinned IDL (#519; coordinator decision 2026-10-22: Raydium's documented account list, no
+hand-made IDL file). Written by hand in `VENUE_ACCOUNT_LAYOUTS` (extract.rs) and applied by number of accounts, so the
+older layout keeps the pinned IDL's names:
+
+| program | instruction | accounts | source | sha256 of the source file |
+|---|---|---|---|---|
+| raydium_launchlab | migrate_to_amm | 23 (since the 2026-09-09 upgrade; the pinned IDL raydium-idl @ e7e0c96 has the older 32) | github.com/raydium-io/raydium-docs-v1 @ 36823847c22064f9ba0aa4d931f2a181fbbcd5a5 (2026-10-20), products/launchlab/instructions.mdx, section "MigrateToAmm / MigrateToCpswap" (the "remaining 23-account list"), fetched 2026-10-22 | d73ccd21ebff3c80090881ea95d0fd21dbc3b4b3a951a118073c4648c8189340 |
+
+Status of the migrate_to_amm layout (LAB review on #519, 2026-10-22): the layout comes from the documentation and is
+verified by unit tests on 23 and 32 accounts; on-chain evidence is open until the first occurrence. Every extraction with
+LAB_VENUES=1 counts migrate_to_amm rows by number of accounts in its manifest's counters (`venue_migrate_to_amm_23`,
+`_32`, `_other`; `nas_venues.sh` prints them as INFO and flags `_other`), and `nas_venues.sh STEP=migrate` is the fixed
+check for the first window that holds one. Searched so far, none found:
+
+- Epoch 1045, exhaustively: its venues-v2 census (99zzzzz4 on eb6d8ca) has no migrate_to_amm in a successful
+  transaction (99zzzzz48 on fde687a). The coordinator read migrate_type 1 (CPMM) for all 6,947 LaunchLab pools of 1045
+  (ops/nas/QUEUE.md #526).
+- The window 451,740,000-451,760,000 (99zzzzz49, script b74e44e, BIN fde687a): 0 migrate_to_amm graduations.
+- Dev 1033-1046, 1052 and 1053-1054 only through one wallet: the 77 successful signatures of RAYzrepo…, the
+  migrate_to_amm wallet that all 5 LaunchLab GlobalConfigs read name (QUEUE #526). Triton getSignaturesForAddress and
+  getTransaction, classified by discriminator on the VPS: 75 create_config / update_config, 2 with only the System
+  program, 0 migrate_to_amm (backtests/venues-b74e44e/). That none happened there is a hypothesis: another GlobalConfig
+  may name another wallet, and failed signatures were not classified. The wallet's signatures from epoch 1064 on were
+  fetched but not classified.
