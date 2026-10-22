@@ -47,7 +47,7 @@ def make_chunk(root, lo=1000, hi=2000):
     chunk = os.path.join(root, f"{lo}-{hi}")
     os.makedirs(chunk)
     with open(os.path.join(chunk, "_manifest.json"), "w") as f:
-        json.dump({"status": "complete", "slot_start": lo, "slot_end_exclusive": hi, "commit": "abc", "venues": {"idl_sha256": {"x": "y"}},
+        json.dump({"status": "complete", "slot_start": lo, "slot_end_exclusive": hi, "extractor_sha256": "e5", "venues": {"idl_sha256": {"x": "y"}},
                    "counters": {"venue_events": 1}}, f)
     plain(chunk, "venue_census", "slot UBIGINT, tx_index UBIGINT, failed BOOLEAN, tx_fee UBIGINT, priority_fee UBIGINT, jito_tip UBIGINT, cu_consumed UBIGINT",
           [[s, t, False, 5000, 100, 7, 50000] for s, t in ((99, 0), (100, 0), (100, 1), (100, 2), (100, 3), (101, 0), (102, 0), (103, 0), (104, 0))])
@@ -180,7 +180,8 @@ def test_the_venue_store_on_a_fake_chunk(tmp_path):
     assert meta["counts"] == {"dbc": 5, "damm2": 2, "launchlab": 2, "cpmm": 3, "venue_pools": 4, "venue_graduations": 3}
     assert not os.path.exists(out + ".part")
     stored = json.loads(con.execute("SELECT json FROM meta").fetchone()[0])
-    assert stored["chunks"][0]["commit"] == "abc" and stored["period"] == "dev"
+    assert stored["chunks"][0]["extractor_sha256"] == "e5" and stored["period"] == "dev"
+    assert checks["quote_not_wsol"]["value"]["dbc"] == 0.0 and checks["quote_not_wsol"]["value"]["venue_pools"]["raydium_cpmm"] == 0.0
     con.close()
     with pytest.raises(SystemExit, match="built once"):
         venue_store.build("dev", out, venue_store.chunks_for(str(root), 1000, 2000), log=lambda *_: None)
@@ -207,13 +208,14 @@ def test_a_gate_without_rows_is_red_and_info_only_on_a_short_window(tmp_path):
     con = d.connect()
     con.execute("ATTACH ':memory:' AS v")
     for t, cols in (("dbc", "pool VARCHAR, slot UBIGINT, tx_index UBIGINT, outer_ix UBIGINT, parent_inner_ix UBIGINT, reserve_source VARCHAR, "
-                            "quote_reserve_event UBIGINT, quote_reserve_delta HUGEINT"),
+                            "quote_reserve_event UBIGINT, quote_reserve_delta HUGEINT, quote_mint VARCHAR"),
+                    ("venue_pools", "venue VARCHAR, quote_mint VARCHAR"),
                     ("cpmm", "kind VARCHAR, source VARCHAR, decode_status VARCHAR"),
                     ("venue_graduations", "to_venue VARCHAR, linked BOOLEAN"),
                     ("launchlab", "pool VARCHAR, slot UBIGINT, tx_index UBIGINT, outer_ix UBIGINT, parent_inner_ix UBIGINT, real_base_before UBIGINT, "
                                   "real_quote_before UBIGINT, real_base_after UBIGINT, real_quote_after UBIGINT, virtual_base UBIGINT, virtual_quote UBIGINT, "
                                   "is_buy BOOLEAN, amount_in UBIGINT, amount_out UBIGINT, protocol_fee UBIGINT, platform_fee UBIGINT, creator_fee UBIGINT, "
-                                  "share_fee UBIGINT, curve VARCHAR")):
+                                  "share_fee UBIGINT, curve VARCHAR, quote_mint VARCHAR")):
         con.execute(f"CREATE TABLE v.{t} ({cols})")
     for strict in (True, False):
         st = {c["check"]: c["status"] for c in venue_store.run_checks(con, log=lambda *_: None, strict=strict)}

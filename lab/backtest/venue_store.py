@@ -22,7 +22,9 @@ state back; costs from venue_census on (slot, tx_index)):
                  the event's (EvtSwap2/3, reserve_source 'event', the reserve after the swap) or chained from the pool's
                  nearest earlier anchor plus the deltas since ('chained'; NULL when a delta in between is unknown), NULL
                  without an anchor. Since 0.1.6 every swap carries its reserve, so a chained row points to a decode problem.
-                 is_buy: the trader pays quote (trade_direction 1, QuoteToBase).
+                 is_buy: the trader pays quote (trade_direction 1, QuoteToBase). Not every DBC pool is quoted in SOL
+                 (1045: 3.6 % of the rows have another quote mint): SOL prices, depth and P&L filter quote_mint = WSOL;
+                 meta.checks reports the share per venue (INFO quote_not_wsol).
   damm2          DAMM v2 swaps (EvtSwap2, kind 'swap', a_to_b from trade_direction 0) and liquidity changes
                  (EvtLiquidityChange, kind 'add' / 'remove' from change_type 0 / 1). Swaps: amount_in / amount_out are
                  trader-side (transfer fee included in / excluded out), pool_amount_in / pool_amount_out what reached / left
@@ -337,7 +339,8 @@ def _build(period, out_path, chunks, memory, threads, log):
         s = Src((lo, hi, d))
         with open(os.path.join(d, "_manifest.json")) as f:
             man = json.load(f)
-        manifests.append({"slots": [lo, hi], "dir": os.path.basename(d), "commit": man.get("commit") or man.get("extractor_commit"),
+        # the extractor's manifest names its binary by sha256 (extractor_sha256), not by commit (LAB review on #518)
+        manifests.append({"slots": [lo, hi], "dir": os.path.basename(d), "extractor_sha256": man.get("extractor_sha256"),
                           "venues": (man.get("venues") or {}).get("idl_sha256"), "counters": {k: v for k, v in (man.get("counters") or {}).items() if k.startswith("venue")}})
         for table, fn in TABLES.items():
             sql = fn(s)
@@ -443,6 +446,11 @@ def run_checks(con, log=print, strict=True):
         count(*) FILTER (WHERE NOT is_buy AND real_quote_before::HUGEINT - real_quote_after = amount_out) FROM v.launchlab""").fetchone()
     out.append({"check": "launchlab_quote_legs", "value": dict(zip(("buys", "buy_gross_in", "sells", "sell_net_out", "sell_gross_out"), legs)),
                 "status": "info"})
+    out.append({"check": "quote_not_wsol", "status": "info", "value": {
+        "dbc": con.execute(f"SELECT round(avg((quote_mint IS DISTINCT FROM '{WSOL}')::INT), 6) FROM v.dbc").fetchone()[0],
+        "launchlab": con.execute(f"SELECT round(avg((quote_mint IS DISTINCT FROM '{WSOL}')::INT), 6) FROM v.launchlab").fetchone()[0],
+        "venue_pools": dict(con.execute(f"SELECT venue, round(avg((quote_mint IS DISTINCT FROM '{WSOL}')::INT), 6) FROM v.venue_pools "
+                                        "GROUP BY 1 ORDER BY 1").fetchall())}})
     out.append({"check": "cpmm_not_ok_rows", "value": dict(con.execute("SELECT decode_status, count(*) FROM v.cpmm WHERE decode_status <> 'ok' "
                                                                        "GROUP BY 1 ORDER BY 1").fetchall()), "status": "info"})
     return out
