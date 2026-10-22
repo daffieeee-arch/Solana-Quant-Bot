@@ -31,7 +31,7 @@ Per SOL geschaalde koopomzet: −0,0212 SOL (feit, modelaanname voor impact s²/
 ## 3. Wat de varianten zeggen
 
 - **Beste cel waar dan ook:** k 1, variant (ii) (zonder eigen impact), min-fees 5.000 lamports, alle wallets: −25,42 SOL/dag [−40,33; −11,72], 1/10 dagen > 0. Zelfs het gunstigste model (geen impact, bijna gratis transacties, de kortste horizon) blijft negatief (feit).
-- **Fees zijn niet de hele verklaring:** (ii) zonder fees bij k 3 is al −182 (base) / −88 (min) SOL/dag; de prijsbeweging ná de eigen leg is tegen de richting van de leg (reconstructie: hun cash komt uit het samenspel van eigen impact en tegenpartijen in dezelfde slot, niet uit een voorspelbare prijsdrift).
+- **Fees zijn niet de hele verklaring:** (ii) bij k 3 is zonder fees al −87,8 SOL/dag (min-fees −88,41 plus 130.792 × 5.000 lamports per dag; met base-fees −182,01) — *correctie 2026-10-22 (LAB review): de eerdere tekst '−182 (base) / −88 (min) zonder fees' was fout, value_sql trekt in elke variant het fee-scenario af; conclusie ongewijzigd*; de prijsbeweging ná de eigen leg is tegen de richting van de leg (reconstructie: hun cash komt uit het samenspel van eigen impact en tegenpartijen in dezelfde slot, niet uit een voorspelbare prijsdrift).
 - **Eigen impact meegenomen (i)** is nog slechter (−375 bij k 3): op 0,25 SOL-maat betaalt de nabootser zijn eigen prijsbeweging en krijgt die niet terug.
 - **Per wallet:** alleen Ar2Y6o1Q is +2,2 SOL op de primaire maat (25.630 legs, eigen cash +533); de grote (2tgUbS9U −306,6, FB5jAs5Q −270,7) dragen het verlies (feit). Eén positieve wallet van 26 is geen lead: de poort is populatiebreed en de wallet is ná de run aangewezen (post hoc).
 
