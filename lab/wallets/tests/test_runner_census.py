@@ -94,3 +94,12 @@ def test_wiped_markout_and_movement_reset(tmp_path, monkeypatch):
     assert [e["hour"] - H0 for e in ent] == [100, 199] and ent[0]["net_24h"] == -1.0 and ent[0]["net_1h"] > -0.02
     res = json.load(open(out / "census.json"))
     assert res["markouts"]["SOL_inside"]["net_24h"]["wiped"] == 1.0  # the one pool's mean at 24 h is the wiped entry averaged with the second entry (None -> excluded)
+
+
+def test_day_labels_are_utc_whatever_the_session_timezone():
+    import duckdb
+    con = duckdb.connect()
+    con.execute("SET TimeZone = 'Europe/Amsterdam'")
+    # 2026-09-20 23:00 UTC is already 21 Sep in Amsterdam (CEST); the label must stay on the UTC day
+    con.execute("CREATE TEMP TABLE hb AS SELECT 1 AS hour, 1789945200 AS first_block_time UNION ALL SELECT 2, 1789948800")
+    assert rc.day_labels(con) == {1: "2026-09-20", 2: "2026-09-21"}

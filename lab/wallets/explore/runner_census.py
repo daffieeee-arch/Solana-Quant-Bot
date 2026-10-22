@@ -299,6 +299,13 @@ def markdown(res, hours_dir):
     return "\n".join(L) + "\n"
 
 
+def day_labels(con):
+    """hour -> the UTC day of the hour's first block, for the day bootstrap (spec: UTC days). Fixed to UTC: DuckDB's
+    to_timestamp() renders in the session's TimeZone (Europe/Amsterdam on the VPS), which shifted the labels by two hours
+    (first census run, 2026-10-22: 14 of 193 entry pools on another day)."""
+    return dict(con.execute("SELECT hour, strftime(to_timestamp(first_block_time) AT TIME ZONE 'UTC', '%Y-%m-%d') FROM hb").fetchall())
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("hours_dir")
@@ -319,7 +326,7 @@ def main():
     runners, entries = detect(con, a.parts)
     print(f"{len(runners):,} runner rows, {len(entries):,} entries ({time.time() - t0:.0f} s)", file=sys.stderr, flush=True)
     mk = markouts(con, entries)
-    hb = dict(con.execute("SELECT hour, strftime(to_timestamp(first_block_time), '%Y-%m-%d') FROM hb").fetchall())
+    hb = day_labels(con)
     res = analyse(con, runners, entries, mk, a.boot, lambda h: hb.get(h, str(h)))
     res["input"] = sizes | {"runner_rows": len(runners), "entries": len(entries), "parts": a.parts, "seconds": round(time.time() - t0, 1)}
     if runners:
