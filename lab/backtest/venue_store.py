@@ -311,8 +311,22 @@ TABLES = {"dbc": dbc_sql, "damm2": damm2_sql, "launchlab": launchlab_sql, "cpmm"
 
 
 def build(period, out_path, chunks, memory="3GB", threads=2, log=print):
-    if os.path.exists(out_path):
-        raise SystemExit(f"{out_path} exists: a venue store is built once")
+    """Built into <out>.part and renamed at the end; a failed build leaves no file (LAB review on 58d306d)."""
+    part = out_path + ".part"
+    for p in (out_path, part):
+        if os.path.exists(p):
+            raise SystemExit(f"{p} exists: a venue store is built once")
+    try:
+        meta = _build(period, part, chunks, memory, threads, log)
+    except BaseException:
+        if os.path.exists(part):
+            os.remove(part)
+        raise
+    os.replace(part, out_path)
+    return meta
+
+
+def _build(period, out_path, chunks, memory, threads, log):
     con = data.connect(threads=threads, memory=memory)
     # a bounded spill (LAB_DUCKDB_TMP): the default would be the whole free disk
     con.execute(f"SET max_temp_directory_size = '{os.environ.get('LAB_SPILL_MAX', '8GB')}'")
@@ -369,8 +383,11 @@ def build(period, out_path, chunks, memory="3GB", threads=2, log=print):
         con.execute("DROP TABLE v.grad_raw")
     else:
         con.execute("CREATE TABLE v.venue_graduations (venue VARCHAR, to_venue VARCHAR, to_pool VARCHAR, linked BOOLEAN)")
-    checks = run_checks(con, log)
     counts = {t: con.execute(f"SELECT count(*) FROM v.{t}").fetchone()[0] for t in ("dbc", "damm2", "launchlab", "cpmm", "venue_pools", "venue_graduations")}
+    empty = [t for t in ("dbc", "damm2", "launchlab", "cpmm", "venue_pools") if not counts[t]]
+    if empty:
+        raise SystemExit(f"no rows in {empty}: refused (an empty input is no evidence; #419)")
+    checks = run_checks(con, log, strict=period == "dev")
     meta = {"period": period, "slots": [chunks[0][0], chunks[-1][1]], "chunks": manifests, "counts": counts, "checks": checks,
             "commit": git_commit(), "built_unix": int(time.time()), "spec": "research/venue-decoders-spec-2026-10-21.md v0.2",
             "note": "illustration only (forward), never for strategy results" if period == "forward" else None}
@@ -380,35 +397,43 @@ def build(period, out_path, chunks, memory="3GB", threads=2, log=print):
     return meta
 
 
-def run_checks(con, log=print):
-    """Spec §6 / §8 gates on the built store: (name, value, limit, 'green' / 'red')."""
+def run_checks(con, log=print, strict=True):
+    """Spec §6 / §8 gates on the built store: (name, value, limit, 'green' / 'red'). A gate without rows is red (no
+    evidence); on a short window (strict False: a forward smoke) the graduation link and the constant-product gates
+    without rows are 'info' with a value that says so (a smoke may hold no graduation, and its pools' curves are known
+    only for pools created inside it)."""
     out = []
 
-    def gate(name, value, limit, ok):
-        out.append({"check": name, "value": value, "limit": limit, "status": "green" if ok else "red"})
-        log(f"check {name}: {value} (limit {limit}) {'GREEN' if ok else 'RED'}")
+    def gate(name, value, limit, ok, n=1, empty_info=False):
+        if not n:
+            status = "info" if empty_info and not strict else "red"
+            value = "no rows to check" + (" (a short window)" if status == "info" else "")
+        else:
+            status = "green" if ok else "red"
+        out.append({"check": name, "value": value, "limit": limit, "status": status})
+        log(f"check {name}: {value} (limit {limit}) {status.upper()}")
 
     n, chained, none = con.execute("SELECT count(*), count(*) FILTER (WHERE reserve_source = 'chained'), "
                                    "count(*) FILTER (WHERE reserve_source IS NULL) FROM v.dbc").fetchone()
-    gate("dbc_chained_share", round(chained / n, 6) if n else 0.0, DBC_CHAINED_MAX, not n or chained / n <= DBC_CHAINED_MAX)
+    gate("dbc_chained_share", round(chained / n, 6) if n else None, DBC_CHAINED_MAX, n and chained / n <= DBC_CHAINED_MAX, n)
     out.append({"check": "dbc_no_anchor_rows", "value": none, "status": "info"})
     n, ok = con.execute("""SELECT count(*), count(*) FILTER (WHERE quote_reserve_event = pq + quote_reserve_delta) FROM (
         SELECT quote_reserve_event, quote_reserve_delta, lag(quote_reserve_event) OVER (PARTITION BY pool ORDER BY slot, tx_index, outer_ix,
                parent_inner_ix NULLS FIRST) AS pq FROM v.dbc) WHERE quote_reserve_event IS NOT NULL AND pq IS NOT NULL""").fetchone()
-    gate("dbc_reserve_continuity", round(ok / n, 6) if n else None, CONTINUITY_MIN, not n or ok / n >= CONTINUITY_MIN)
+    gate("dbc_reserve_continuity", round(ok / n, 6) if n else None, CONTINUITY_MIN, n and ok / n >= CONTINUITY_MIN, n)
     n, bal = con.execute("SELECT count(*) FILTER (WHERE kind = 'swap'), count(*) FILTER (WHERE kind = 'swap' AND source = 'balance') FROM v.cpmm").fetchone()
-    gate("cpmm_balance_share", round(bal / n, 6) if n else 0.0, CPMM_BALANCE_MAX, not n or bal / n <= CPMM_BALANCE_MAX)
+    gate("cpmm_balance_share", round(bal / n, 6) if n else None, CPMM_BALANCE_MAX, n and bal / n <= CPMM_BALANCE_MAX, n)
     n, linked = con.execute("SELECT count(*), count(*) FILTER (WHERE linked) FROM v.venue_graduations "
                             "WHERE to_venue IN ('meteora_damm_v2', 'raydium_cpmm')").fetchone()
-    gate("graduations_linked_share", round(linked / n, 6) if n else None, LINK_MIN, not n or linked / n >= LINK_MIN)
+    gate("graduations_linked_share", round(linked / n, 6) if n else None, LINK_MIN, n and linked / n >= LINK_MIN, n, empty_info=True)
     n, cont = con.execute("""SELECT count(*), count(*) FILTER (WHERE real_base_before = pb AND real_quote_before = pq) FROM (
         SELECT real_base_before, real_quote_before, lag(real_base_after) OVER w AS pb, lag(real_quote_after) OVER w AS pq
         FROM v.launchlab WINDOW w AS (PARTITION BY pool ORDER BY slot, tx_index, outer_ix, parent_inner_ix NULLS FIRST)) WHERE pb IS NOT NULL""").fetchone()
-    gate("launchlab_continuity", round(cont / n, 6) if n else None, CONTINUITY_MIN, not n or cont / n >= CONTINUITY_MIN)
+    gate("launchlab_continuity", round(cont / n, 6) if n else None, CONTINUITY_MIN, n and cont / n >= CONTINUITY_MIN, n)
     n, cp = con.execute("""SELECT count(*), count(*) FILTER (WHERE abs((virtual_quote::DOUBLE + real_quote_after) * (virtual_base::DOUBLE - real_base_after)
         / nullif((virtual_quote::DOUBLE + real_quote_before) * (virtual_base::DOUBLE - real_base_before), 0) - 1) < 1e-6)
         FROM v.launchlab WHERE curve = 'Constant'""").fetchone()
-    gate("launchlab_constant_product", round(cp / n, 6) if n else None, CONTINUITY_MIN, not n or cp / n >= CONTINUITY_MIN)
+    gate("launchlab_constant_product", round(cp / n, 6) if n else None, CONTINUITY_MIN, n and cp / n >= CONTINUITY_MIN, n, empty_info=True)
     out.append({"check": "launchlab_curves", "value": dict(con.execute("SELECT COALESCE(curve, '(pool before the period)'), count(*) FROM v.launchlab "
                                                                        "GROUP BY 1 ORDER BY 1").fetchall()), "status": "info"})
     legs = con.execute("""SELECT count(*) FILTER (WHERE is_buy),
