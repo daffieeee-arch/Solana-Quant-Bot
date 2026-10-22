@@ -149,6 +149,26 @@ def test_rows_candidates_and_keys(run):
     assert c3["arm_keys_unmatched"] == {"busy_arm": 0, "busy_non_arm": 0, "no_row": 0}
 
 
+def test_max_useful_flags_a_curve_that_is_not_monotone():
+    def cell(size, v, net):
+        return {"candidate": "K3", "size": size, "d": 3, "scenario": "base", "unlimited": {"net_per_filled_sol": net},
+                "limited": [{"mapping": "primary", "unsold": "deadline", "sol_day": v}]}
+    clean = cc.max_useful([cell(0.5, 2.0, 0.01), cell(1.25, 1.0, 0.005), cell(5.0, -1.0, -0.01)], "K3")
+    assert clean["monotone"] and clean["non_positive_below_largest"] == [] and clean["largest_positive_size"] == 1.25
+    bumpy = cc.max_useful([cell(0.5, 1.0, 0.01), cell(1.25, -0.5, -0.002), cell(5.0, 0.3, 0.001)], "K3")
+    assert not bumpy["monotone"] and bumpy["non_positive_below_largest"] == [1.25] and bumpy["largest_positive_size"] == 5.0
+
+
+def test_the_sandwich_flag_reports_its_coverage(run):
+    d, keys, tmp = run
+    con = duckdb.connect()
+    cc.load(con, [d], keys)
+    # A fee for pool A's trigger only (1 % per side): depth 200 SOL, so 0.5 SOL is not flagged and 5 SOL is.
+    con.execute(f"CREATE TABLE fee AS SELECT 'A' AS pool, {LO + 10_000}::UBIGINT AS t, 0.01 AS f")
+    assert cc.flag_share(con, "tp4_T600", None, False, 0.5, 3) == (0.0, 20.0)  # 1 of K3's 5 rows has a fee
+    assert cc.flag_share(con, "tp4_T600", None, False, 5.0, 3) == (100.0, 20.0)
+
+
 def test_a_run_outside_dev_is_refused(tmp_path):
     d = write_run(str(tmp_path), "clean", [row("tp4_T600", 0.5, 3, 455_800_000, "2026-10-14", "A")], store=(455_328_000, 459_648_000))
     with pytest.raises(cc.Refused, match="not dev2"):
