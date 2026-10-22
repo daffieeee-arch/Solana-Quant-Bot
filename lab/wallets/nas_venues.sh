@@ -31,6 +31,9 @@
 #              PoolCreateEvent pool_state of EPOCH's venues-v2 chunks or the window), to_pool is the AMM v4 pool of an
 #              initialize2 in the same transaction (census), and the census names the same pool for migrate_to_amm as
 #              from_pool. GREEN only with at least one graduation and every share >= 99 %.
+#              MIGRATE_CHUNK=<a chunk dir> checks an existing chunk of this BIN instead (no search, no extraction; e.g.
+#              STEP=smoke's own 1054 chunk); MSLOTS=<lo:hi> extracts that window instead of the census search (a slot
+#              found by address, e.g. Old Faithful's getSignaturesForAddress). Hold-out and clean slots are refused.
 #   STEP=epoch (lang, ~1.5-2.5 h): dev epoch 1045 with LAB_VENUES=1 and LAB_VENUE_CENSUS=1 into
 #              $DATA/events/venues-v2/chunks (ops' extract_epochs.sh, THREADS=3; v1 keeps PR 1's 1045 evidence), then the
 #              same decode and count checks per chunk.
@@ -276,9 +279,28 @@ if [ "$STEP" = epoch ]; then
   [ "$bad" = 0 ] || { log "RED: a chunk check failed"; exit 1; }
 fi
 if [ "$STEP" = migrate ]; then
-  M=$OUT/migrate-$EPOCH
+  M=$OUT/migrate-${MSLOTS:-$EPOCH}
+  M=${M//:/-}
+  [ -n "${MIGRATE_CHUNK:-}" ] && M=$OUT/migrate-chunk
   [ ! -e "$M" ] || { log "RED: $M exists (made once)"; exit 1; }
   mkdir -p "$M"
+  if [ -n "${MSLOTS:-}" ]; then
+    lo=${MSLOTS%%:*}; hi=${MSLOTS##*:}
+    if { [ "$hi" -gt 452304000 ] && [ "$lo" -lt 454464000 ]; } || { [ "$hi" -gt 455760000 ] && [ "$lo" -lt 459648000 ]; }; then
+      log "RED: $MSLOTS touches the hold-out (1047-1051) or the clean epochs (1055-1063)"; exit 1
+    fi
+  fi
+  if [ -n "${MIGRATE_CHUNK:-}" ]; then
+    CHUNK=$MIGRATE_CHUNK
+    log "checking the existing chunk $CHUNK (no extraction)"
+  elif [ -n "${MSLOTS:-}" ]; then
+    CHUNK=$M/chunk
+    rc=0
+    LAB_VENUES=1 LAB_VENUE_CENSUS=1 BIN=$BIN SLOTS=$MSLOTS D=$M OUT=$CHUNK bash "$OPS/smoke_extract.sh" > "$M.log" 2>&1 || rc=$?
+    log "window $MSLOTS extraction: rc $rc"
+    [ "$rc" = 0 ] || { tail -20 "$M.log" | tee -a "$OUT/job.log"; exit 1; }
+  else
+  CHUNK=$M/chunk
   window=$("$PY" - "$VENUES_ROOT" "$EPOCH" "${WINDOW:-20000}" <<'EOF'
 import glob, json, os, sys
 import duckdb
@@ -306,11 +328,12 @@ EOF
   read -r MSLOTS n_win n_all <<< "$window"
   log "migrate_to_amm in epoch $EPOCH's census: $n_all; window $MSLOTS holds $n_win"
   rc=0
-  LAB_VENUES=1 LAB_VENUE_CENSUS=1 BIN=$BIN SLOTS=$MSLOTS D=$M OUT=$M/chunk bash "$OPS/smoke_extract.sh" > "$M.log" 2>&1 || rc=$?
+  LAB_VENUES=1 LAB_VENUE_CENSUS=1 BIN=$BIN SLOTS=$MSLOTS D=$M OUT=$CHUNK bash "$OPS/smoke_extract.sh" > "$M.log" 2>&1 || rc=$?
   log "window extraction: rc $rc"
   [ "$rc" = 0 ] || { tail -20 "$M.log" | tee -a "$OUT/job.log"; exit 1; }
+  fi
   rc=0
-  "$PY" - "$M/chunk" "$VENUES_ROOT" "$EPOCH" > "$M-check.log" 2>&1 <<'EOF' || rc=$?
+  "$PY" - "$CHUNK" "$VENUES_ROOT" "$EPOCH" > "$M-check.log" 2>&1 <<'EOF' || rc=$?
 import glob, json, os, sys
 import duckdb
 chunk, root, epoch = sys.argv[1], sys.argv[2], int(sys.argv[3])
@@ -334,7 +357,9 @@ n, n_ll, n_amm, n_census = con.execute(f"""
            count(*) FILTER (WHERE EXISTS (SELECT 1 FROM c WHERE c.slot = g.slot AND c.tx_index = g.tx_index AND c.x = 'raydium_launchlab:migrate_to_amm:' || g.from_pool))
     FROM g""", [grads, census]).fetchone()
 share = lambda k: k / n if n else 0.0
-print(f"migrate_to_amm graduations in the window: {n:,}")
+n_census_all = con.execute("SELECT count(*) FROM (SELECT unnest(string_split(dex_ixs, ';')) AS x FROM read_parquet(?) WHERE NOT failed) "
+                           "WHERE starts_with(x, 'raydium_launchlab:migrate_to_amm:')", [census]).fetchone()[0]
+print(f"migrate_to_amm graduations in the window: {n:,} (census migrate_to_amm instructions of successful transactions: {n_census_all:,})")
 print(f"from_pool a LaunchLab pool: {n_ll:,} ({share(n_ll):.2%}); to_pool the same transaction's AMM v4 initialize2 pool: {n_amm:,} "
       f"({share(n_amm):.2%}); the census's migrate_to_amm pool equals from_pool: {n_census:,} ({share(n_census):.2%})")
 for row in con.execute("SELECT slot, tx_index, from_pool, to_pool FROM read_parquet(?) WHERE ix_name = 'migrate_to_amm' ORDER BY slot, tx_index LIMIT 5", [grads]).fetchall():
