@@ -2,9 +2,10 @@
 
 | | |
 |---|---|
-| spec | `data-old-faithful-one/lab/research/spec-runner-census-2026-10-21.md` v0.2 (drempels vooraf vastgelegd, vóór enige blik op de data; verkennend, geen toets) |
-| code | stap 1 `wallets/explore/runner_hours.py` + `nas_runner_hours.sh` (#514, pin 2d1d300); stap 2 `wallets/explore/runner_census.py` (#515, 759a14f); census gedraaid op main 1ea3e7e |
-| run | stap 1 NAS-job 99zzzzz5 op 2d1d300 (rc 0, 1 test passed) → `wallets/runners-hours-2d1d300/` (hours.parquet sha256 **b7450895be72931a10fc9dd7f6df49aa4bfe94828c9ce8567b6d319273d2ca77**, pools.parquet 09004cc7…, hour_bounds.parquet 023b30ed…, run-runner-hours.json 9199b366…; 1.543.272 rijen, 149.522 pools, 473 uren, null_close_hours 250); stap 2 VPS 2026-10-22 06:34Z in een 3G-scope (DuckDB 2 GB, 2 threads), 71 s → `wallets/runner-census-1ea3e7e/` (census.json sha256 **6be8a5f857872284f64a7c10050891e2ffc5d4b00cabab8360298b1029ba42b2**, census.md 0598edf8…, runners.parquet 656e7156…, entries.parquet 8243adb8…) |
+| spec | `data-old-faithful-one/lab/research/spec-runner-census-2026-10-21.md` v0.2, sha256 3979c71d274737717ef6609a86549937d2b2b459bc2563204e979aa08c733ead (buiten Git; drempels vooraf vastgelegd, vóór enige blik op de data; verkennend, geen toets) |
+| code | stap 1 `wallets/explore/runner_hours.py` + `nas_runner_hours.sh` (#514, pin 2d1d300); stap 2 `wallets/explore/runner_census.py` (#515, 759a14f); census gedraaid op e0382c5 (UTC-daglabels, zie de correctie onder de run-rij) |
+| run | stap 1 NAS-job 99zzzzz5 op 2d1d300 (rc 0, 1 test passed) → `wallets/runners-hours-2d1d300/` (hours.parquet sha256 **b7450895be72931a10fc9dd7f6df49aa4bfe94828c9ce8567b6d319273d2ca77**, pools.parquet 09004cc7…, hour_bounds.parquet 023b30ed…, run-runner-hours.json 9199b366…; 1.543.272 rijen, 149.522 pools, 473 uren, null_close_hours 250); stap 2 VPS 2026-10-22 in een 3G-scope (DuckDB 2 GB, 2 threads), 70 s → `wallets/runner-census-e0382c5/` (census.json sha256 **92d1e8dc4fdb39d80d31a55b724403ffe97109c9c54a0dec05d052b443754b1a**, census.md c6682515…, runners.parquet 656e7156…, entries.parquet 8243adb8…) |
+| correctie | de eerste run (`runner-census-1ea3e7e/`, census.json 6be8a5f8…, 06:34Z) labelde de bootstrap-dagen met `to_timestamp()` in de sessie-tijdzone van de VPS (Europe/Amsterdam): de dag-bootstrap groepeerde op CEST-dagen in plaats van UTC-dagen (spec §3; 14 van de 193 instap-pools op een andere dag). Gerepareerd in e0382c5 (`day_labels`, vast UTC, test); herrun: runners.parquet en entries.parquet byte-gelijk, gemiddelden gelijk, alleen de intervallen schuiven (1 u [−9,7; +1,1] → [−10,0; +1,6]; 6 u [−34,0; −21,2] → [−34,2; −20,3]; 24 u [−68,3; −52,2] → [−67,8; −52,7]); conclusies ongewijzigd. De eerste run blijft staan als bewijs |
 | data | dev2 1033–1046 (verbruikt), slots 446.256.000–452.304.000; alle PumpSwap-pools (store v2 heeft alleen legs van SOL-markten: de 6.345 'other'-pools zijn geteld, zonder uren); F7-triggers uit `backtests/f7rev-1033-1046/parts` |
 
 Labels: feit / reconstructie / modelaanname / onbekend. Runner = uur-close ≥ 3 × de minimum-close over de bestaande uren van [u − 72 u, u − 24 u] (pool ≥ 24 u oud; gedeeltelijk venster toegestaan en geteld) met diepte op het uur van dat minimum ≥ 500 SOL (primair) of ≥ 100 SOL (secundair, alleen telling); één per pool per beweging (reset onder 1,5 × het minimum). "Gezien" = SOL-quoted PumpSwap-pool (normal of reversed).
@@ -18,7 +19,7 @@ Labels: feit / reconstructie / modelaanname / onbekend. Runner = uur-close ≥ 3
 
 - "Gezien 100 %" is op store v2 een constructie-feit, geen uitkomst: alleen SOL-markten hebben legs, dus het niet-geziene deel is alleen als pool-aantal meetbaar (6.345 'other'-pools = 4 % van 155.867; 5.457 zonder SOL-pool van de quote, 622 USDC, 266 met SOL-pool). Runners in Meteora/Raydium-pools: onbekend (geen decoders in de store; de venue-store 1045 van #518 is de route).
 - Leeftijd van de pool op het runner-uur: mediaan 24 u (p10 24, p90 73 u) bij de primaire vloer; het venster bestaat dus meestal uit één uur (het eerste uur van de pool). De runners zijn jonge pools, geen gevestigde tokens.
-- Per UTC-dag 2–43 primaire runners (20 dagen; 12 sep 2, piek 20 sep 43).
+- Per UTC-dag 2–42 primaire runners (20 dagen; 12 sep 2, piek 20 sep 42).
 
 ## 2. Wat de runners zijn (beschrijvende snede ná de run: 2 kijkmomenten)
 
@@ -41,7 +42,7 @@ Instap = einde van het eerste uur met close ≥ 2 × de close van 24 u eerder é
 
 | set | instappen | pools | netto 1 u | 6 u | 24 u | wiped 24 u | zonder horizon 1 u / 6 u / 24 u |
 |---|---|---|---|---|---|---|---|
-| SOL, binnen universum | 210 | 193 | −3,5 pt [−9,7; +1,1] | −27,0 [−34,0; −21,2] | **−59,9 [−68,3; −52,2]** | 56 % (mediaan −100 %) | 0 / 2 / 9 |
+| SOL, binnen universum | 210 | 193 | −3,5 pt [−10,0; +1,6] | −27,0 [−34,2; −20,3] | **−59,9 [−67,8; −52,7]** | 56 % (mediaan −100 %) | 0 / 2 / 9 |
 | buiten universum, USDC | 0 | 0 | – | – | – | – | 0 |
 
 - Instapdiepte mediaan 1.458 SOL (minimum 501); 91 van de 193 instap-pools zijn ook primaire runner; 0 instappen in F7-pools (feit).
