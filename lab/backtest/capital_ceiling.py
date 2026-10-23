@@ -356,8 +356,8 @@ def max_useful(cells, name, d=PRIMARY["d"], scen=PRIMARY["scenario"], mapping=PR
     pos = [s for s, v, _ in curve if v > 0]
     eaten = next((s for s, _, n in curve if n is not None and n <= 0), None)
     already = eaten is not None and eaten == curve[0][0]
-    # A clean curve (LAB review on #529): with-limits SOL/day never rises with size, and no size below the largest
-    # positive one is <= 0.
+    # LAB review on #529: a clean curve has no size <= 0 below the largest positive one (non_positive_below_largest
+    # empty); monotone says whether with-limits SOL/day never rises with size (a curve that peaks is clean, not monotone).
     monotone = all(a[1] >= b[1] for a, b in zip(curve, curve[1:]))
     best = max(curve, key=lambda x: x[1])
     top = max(s for s, _, _ in curve)
@@ -419,9 +419,10 @@ def report_md(out):
                 row.append(f">= {max(CAPITALS)} SOL (positive up to size {mu['largest_positive_size']:g}, C {mu['max_useful_capital']:g})")
             else:
                 row.append(f"{mu['max_useful_capital']:g} SOL (size {mu['largest_positive_size']:g})")
-            if mu["largest_positive_size"] is not None and not mu["monotone"]:
-                row[-1] += (" — curve not monotone" + (f"; <= 0 at {', '.join(f'{s:g}' for s in mu['non_positive_below_largest'])}"
-                                                      if mu["non_positive_below_largest"] else ""))
+            if mu["non_positive_below_largest"]:
+                row[-1] += f" — not a clean curve: <= 0 at {', '.join(f'{s:g}' for s in mu['non_positive_below_largest'])}"
+            elif mu["largest_positive_size"] is not None:
+                row[-1] += f"; SOL/day peaks at size {mu['best_size']:g}"
             row.append(f"not within the grid (> {max(mu['sizes']):g} SOL)" if mu["edge_eaten_at_size"] is None else
                        (f"no edge even at {mu['edge_eaten_at_size']:g} SOL (the smallest size)" if mu["no_edge_at_smallest"]
                         else f"{mu['edge_eaten_at_size']:g} SOL"))
