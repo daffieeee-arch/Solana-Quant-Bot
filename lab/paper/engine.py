@@ -1102,7 +1102,10 @@ class Engine:
                     self.rs.counts["journal_exits_before_the_replay"] += 1
                 elif x["tokens"]:
                     self.rs.counts["journal_exits_of_positions_not_in_replay"] += 1
-            self._exit_effects(p, x["pnl"], x["exit_slot"], x["tokens"], x["proceeds"], x["cost"], slot)
+            later = x["exit_reason"] == "written_off" and self.day is not None and x["day"] > self.day
+            if later:  # written off at a later resume (the row's day): its loss counts on that day, when the replay gets there
+                self.rs.later_losses.setdefault(x["day"], []).append((p, x["pnl"]))
+            self._exit_effects(p, x["pnl"], x["exit_slot"], x["tokens"], x["proceeds"], x["cost"], slot, book=not later)
 
     def _resume(self, slot):
         """The HWM is reached (its commit point, or the first slot after it): the replay is checked against the
