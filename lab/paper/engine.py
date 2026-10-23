@@ -385,7 +385,7 @@ class Engine:
                         o.flows.add(legs)
                     o.sim.on_slot(slot, legs)
                     self._settle_if_done(o, slot)
-                    if not o.sim.done:
+                    if not o.sim.done and not self._write_off_if_stuck(o, slot):
                         self._put_position(o)
         # 2. entries due in this slot
         for p in self.pending.pop(slot, []):
@@ -438,6 +438,8 @@ class Engine:
                 if key not in active and o.opened < slot and o.sim is not None:
                     o.sim.advance(slot)
                     self._settle_if_done(o, slot)
+                    if not o.sim.done:
+                        self._write_off_if_stuck(o, slot)
         for pool in list(self.grad_wait):
             if ("pool", pool) not in by_key:
                 self._graduation_exits(pool, slot, [])
@@ -463,6 +465,9 @@ class Engine:
             self.day = day
             for g in self.groups:
                 g.day_loss = 0
+            if self.replaying:  # journaled exits booked on a later day than their slot's (a write-off at a resume)
+                for p, pnl in self.rs.later_losses.pop(day, ()):
+                    self._book_loss(p, pnl)
         if minute != self.minute:
             gap = slot - self.last_slot - 1 if self.last_slot is not None else 0
             self.j.put("heartbeat", minute=minute, day=day, last_slot=self.last_slot, last_event=self.last_event,
@@ -1055,12 +1060,36 @@ class Engine:
         self._exit_effects(p, pnl, r.exit_slot, r.tokens, r.proceeds, r.cost, slot)
         self._drop(o)
 
+    def _write_off_if_stuck(self, o, slot):
+        """A position whose exit can no longer fill is written off (owner, 2026-10-23: a drained pool kept its place,
+        and so a group's max_open, forever). It has decided its exit at or after its rule's deadline (entry_slot + the
+        rule's max_slots: from there on every exit rule says exit), that decision's fill failed (pending None) and no
+        sale is possible now (sell() None: a pool whose liquidity was withdrawn). A slippage miss is no write-off: the
+        position sells at its next decision. exit_reason 'written_off' at the failed attempt's slot (decision + d),
+        proceeds 0, settled like the backtest's unsold row (settle: the exit's modelled close returns the rent, each
+        failed attempt before it pays the failed-tx fee); the normal exit path frees its place, books its loss on the
+        day, starts the pool's cooldown and sets busy. True when written off."""
+        sim, r = o.sim, o.r
+        if (sim is None or sim.done or o.grad or sim.pending is not None or sim.deadline is None
+                or r.exit_decision_slot is None or r.exit_decision_slot < sim.deadline or slot < r.exit_decision_slot + sim.d):
+            return False
+        if sim.sell(sim.state, r.tokens) is not None:
+            return False
+        r.exit_reason, r.exit_slot, r.proceeds, r.vault_capped = "written_off", r.exit_decision_slot + sim.d, 0, False
+        sim._finish()
+        self._settle_if_done(o, slot)
+        return True
+
     def _exit_effects(self, p, pnl, exit_slot, tokens, proceeds, cost, slot, day=None):
         """An exit's effect on the risk state: the daily loss, the paper wallet, the pool cooldown and busy. day: a
         journaled exit's day; its loss counts in that day only (an exit filled at an end-of-run HWM's slot, the next
         day, is booked on the run's last day)."""
         if day is None or day == self.day:
             self._book_loss(p, pnl)
+        elif self.replaying and self.day is not None and day > self.day:
+            # A write-off the journal booked at a later resume (written_off_at_resume, day = the resume's): its loss
+            # counts on that day, when the replay gets there.
+            self.rs.later_losses.setdefault(day, []).append((p, pnl))
         self._wallet_tx(p, "sell", exit_slot or slot, pnl + self.scn.entry_total(cost) if tokens else pnl, settled=pnl)
         g = self._group(p)
         if (not p.family.startswith("N2_") and g.risk is not None and g.risk.pool_cooldown_h > 0 and tokens
@@ -1090,6 +1119,10 @@ class Engine:
         k = (p.family, p.variant, p.key, p.t)
         self._drop(o)
         x = self.rs.exits.get(k)
+        if x is None and r.exit_reason == "written_off" and k not in self.rs.closed:
+            # The journal holds it open (written by an engine without the write-off): written off at the HWM (_resume).
+            self.rs.written_off[k] = o
+            return
         if x is None or k in self.rs.closed:
             self.rs.counts["replay_exits_not_in_journal"] += 1
             return
@@ -1175,9 +1208,11 @@ class Engine:
         # Open positions: the journal's table. One the replay does not hold is closed at its last mark.
         jpos = {RS.key_of(r): r for r in j.rows("positions")}
         mem = {(o.p.family, o.p.variant, o.p.key, o.p.t): o for v in self.open.values() for o in v}
+        # A position the replay wrote off that the journal still holds open is written off below: in the exposure too.
+        held = {**mem, **{k: o for k, o in rs.written_off.items() if k in jpos}}
         for g in self.groups:  # the exposure (cost of the open F7 positions) per group, before the journal's is taken
             mine = lambda k: not k[0].startswith("N2_") and self.variant_group.get(k[1]) is g  # noqa: E731
-            if sum(o.r.cost for k, o in mem.items() if mine(k)) != sum(r["cost"] for k, r in jpos.items() if mine(k)):
+            if sum(o.r.cost for k, o in held.items() if mine(k)) != sum(r["cost"] for k, r in jpos.items() if mine(k)):
                 c["exposure_different"] += 1
         for k, o in mem.items():
             if k not in jpos:
@@ -1187,7 +1222,15 @@ class Engine:
                     jpos[k]["mark_slot"], jpos[k]["mark_proceeds"]):
                 c["marks_different"] += 1
         for k, r in jpos.items():
-            if k not in mem:
+            if k in mem:
+                continue
+            o = rs.written_off.get(k)
+            if o is not None and (o.r.entry_slot, o.r.tokens, o.r.cost) == (r["entry_slot"], r["tokens"], r["cost"]):
+                # The replay wrote it off (an engine without the write-off left it open): its write-off now, at its
+                # own exit slot, booked on this day.
+                self._settle_if_done(o, slot, force=True)
+                c["written_off_at_resume"] += 1
+            else:
                 self._close_lost(r, slot)
         # Pending entries: the journal's entered signals without an order.
         mpend = {(p.family, p.variant, p.key, p.t): (e, p) for e, ps in self.pending.items() for p in ps}
