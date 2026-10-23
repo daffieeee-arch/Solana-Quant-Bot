@@ -2,7 +2,7 @@
 
 Twee opdrachten van de coördinator na de onafhankelijke controle van 23 oktober (`research/onafhankelijke-controle-2026-10-23/rapport.md` sha256 28b4fae5…, `criticus.md` e06f6a99…): (1) de mint-verkoopbaarheidscheck die de eigenaar op 17 oktober goedkeurde ("mint rugcheck", spec `research/spec-mint-rugcheck-live-2026-10-17.md`) maar die nooit is uitgevoerd, en (2) de live triggermix per makersklasse, als tegenhanger van de bevinding van de criticus dat de dev-winst van Terugveer lang (H5) vrijwel geheel bij staartmakers zit. Beide zijn **tellingen zonder P&L**: geen F7/H-regel wordt live beoordeeld, geen rendement wordt berekend, niets gaat naar paper of de engine.
 
-Archief (buiten git): `research/creator-mix-live-2026-10-23/` (mix.py daa02f5d…, mix.out 096c1205…, mix.json 8833f9b2…; SHA256SUMS 1e1a53c7…). Mint-check: `lab/wallets/mint_check.py` (list/fetch/report, 6 tests) en `wallets/mint-check-2026-10-23/mints.parquet` (4b7f0fef…). Elk getal hieronder staat in mix.out, tenzij "(niet gepind)".
+Archief (buiten git): `research/creator-mix-live-2026-10-23/` (mix.py daa02f5d…, mix.out 096c1205…, mix.json 8833f9b2…; SHA256SUMS 1e1a53c7…). Mint-check: `lab/wallets/mint_check.py` (list/fetch/report, 7 tests) en `wallets/mint-check-2026-10-23/mints.parquet` (4b7f0fef…). Elk getal hieronder staat in mix.out, tenzij "(niet gepind)".
 
 ## 0. Kort
 
@@ -10,7 +10,7 @@ Archief (buiten git): `research/creator-mix-live-2026-10-23/` (mix.py daa02f5d�
 - **Feit:** de staartklasse (makers met < 10 pools in de dev-H5-set, +146,9 SOL op dev) is live **afwezig**: 0 van de 586 triggers komt van een maker uit die set met < 10 pools; op de ruimere dev2-telling (1–9 reversed pools op dev) zijn het 6 triggers (1,0 %) op 5 pools.
 - **Feit:** 17,1 % van de live triggers (100, 44 pools) komt van makers die in de hele dev-periode geen enkele reversed pool maakten ("nieuw"); 5,1 % (30, 11 pools) van herhaalde operators (≥ 10 pools). Bij de probe-pools zelf is de verdeling heel anders: 91,5 % nieuw, 6,4 % system program, 1,3 % herhaald.
 - **Hypothese:** het live aanbod is niet alleen kleiner (E67: 0,29× dev) maar ook van een andere soort: system-program-pools leveren live 26,8 triggers per pool (dev 12,7), en de top 10 pools (alle system program) dragen 367 van de 586 triggers (62,6 %). Als de dev-H5-winst klassegebonden is, zoals de criticus beschrijft, dan zit de klasse die hem droeg niet in het huidige live aanbod. Of dat ook voor de schone dagen 1055–1063 geldt, is pas na zaterdag te zien (dezelfde telling, geen P&L).
-- **Mint-check:** 104 H/K3-pools (K3, H4 en H5 delen dezelfde triggerset) = 104 mints, plus 324 N2-pools en 1.272 probe-pools → 1.367 mints = **14 `getMultipleAccounts`-calls** (5 voor alleen het journal). De calls zijn geteld vóór ze gemaakt worden en nog **niet uitgevoerd** (de coördinator draait de fetch-stap; §3 wordt dan aangevuld). De "~226" uit de audit was het aantal Token-2022-mints onder 283 reversed pools in segmenten 4800–5100, niet het aantal H/K3-mints.
+- **Mint-check (feit, 14 calls gedraaid 23 okt 21:24Z):** **0 van de 104 H/K3-mints draagt een vetovlag**, en 0 van alle 1.367 mints (journal + probe-pools): geen mint authority, geen freeze authority, geen transfer fee, geen transfer hook, geen permanent delegate, niet non-transferable, geen default-frozen, niet pausable. De Token-2022-mints (83 van 104; 1.264 van 1.367) dragen alleen metadata pointer + token metadata, de launchpad-standaardindeling; de rest is klassieke SPL Token. De mint-laag is op dit venster dus geen verkoopbaarheidsrisico voor H/K3; het risico blijft de LP-drain (E36). De "~226" uit de audit was het aantal Token-2022-mints onder 283 reversed pools in segmenten 4800–5100, niet het aantal H/K3-mints (104).
 
 ## 1. Data en definities
 
@@ -42,7 +42,7 @@ Triggers per pool (feit): live sys 26,8, nieuw 2,3, repeat 2,7; dev K3 sys 12,7,
 
 Journal-status per klasse (feit, t ≥ 459.648.000; "entered" is de paper-instap, geen P&L gelezen): K3 entered 223 = sys 108, nieuw 95, repeat 20 (skipped 490, waarvan sys 435); H4 entered 10 = nieuw 7, repeat 2, sys 1; H5 entered 4 = nieuw 3, repeat 1. Per arm (feit, journal-kolom `reason`): K3 skipped 490 = busy 318, daily loss limit 142, max open positions 30; H4 skipped 703 = farm flagged 354, max open positions 290, daily loss limit 38, busy 14, farm history incomplete 7; H5 skipped 709 = farm flagged 354, max open positions 308, daily loss limit 38, farm history incomplete 7, busy 2. De H-armen sloegen dus 703 respectievelijk 709 van 713 triggers over: de helft door het organische farm-filter (de arm-eigen regel), de andere helft door de gedeelde plekken en dagverlieslimiet (audit punt 5), zodat de paper-H-meting op dit venster vrijwel geen instappen heeft.
 
-## 3. Mint-verkoopbaarheidscheck (status: lijst klaar, calls nog niet gemaakt)
+## 3. Mint-verkoopbaarheidscheck (feit: 14 calls, 1.367 mints, 0 vetovlaggen)
 
 Wat gecheckt wordt (spec §1), per mint via één `getMultipleAccounts` per 100 mints over het bestaande token-meta-pad (`backtest.token_meta_rpc.rpc_accounts`, Triton RPC). De dagcap van 5.000 wordt eenrichtings gedeeld: het script telt de calls van de sidecar (rpc/state.json, vandaag 995) mee en weigert boven de cap, maar de sidecar leest de telling van het script niet. Elke call wordt vóór gebruik geteld en elk antwoord direct weggeschreven, zodat een fout bij call k de k−1 betaalde antwoorden bewaart.
 
@@ -52,7 +52,18 @@ Wat gecheckt wordt (spec §1), per mint via één `getMultipleAccounts` per 100 
 
 Omvang (feit, `mint_check list`): journal t ≥ 459.648.000: K3/H4/H5 104 pools = 104 mints (49 makers, 21 system program); N2 324 pools (20 overlap met F7) → 408 journal-mints = 5 calls; met de 1.272 probe-pools (1.271 mints) 1.367 mints = 14 calls. De ruwe accountbytes worden bewaard (accounts.parquet), zodat de parse herhaald kan worden zonder nieuwe calls. Pump.fun-mints zijn zelf ook Token-2022 (metadata pointer + token metadata, update authority TSLvdd1p… in de recorder-tabel token_meta; reconstructie): "Token-2022" alleen is dus geen vlag; de telling splitst op de extensies.
 
-Tellingen per vlag en per familie: **volgen zodra de fetch gedraaid is** (coördinator), in een vervolgcommit op deze noot met pins van accounts.parquet, flags.parquet en counts.json.
+Uitvoer (feit; `wallets/mint-check-2026-10-23/`, SHA256SUMS c9041168…: accounts.parquet 23a4268b…, flags.parquet 15080d60…, counts.json aec5f415…, counts.md = report.out db78f369…, rpc-calls.json 85d1b885…, check.py/check.out 2867a787…/223b76f3…): de coördinator draaide de fetch op 23 okt 21:24Z, 14 calls (sidecar stond op 1.002, samen 1.016 van 5.000); alle 1.367 mints gevonden, 0 parse-fouten. "1.368 rijen, 1.367 te doen" is één mint (5hyyjwZq…pump) achter twee probe-pools, geen lege sleutel.
+
+| familie | mints | gevonden | Token-2022 | SPL Token | mint authority | freeze authority | transfer fee | transfer hook | permanent delegate | non-transferable | default frozen | pausable | **veto (één of meer)** | metadata pointer | token metadata |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| K3 = H4 = H5 | 104 | 104 | 83 | 21 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | **0** | 83 | 83 |
+| N2 | 324 | 324 | 307 | 17 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | **0** | 307 | 307 |
+| journal samen | 408 | 408 | 374 | 34 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | **0** | 374 | 374 |
+| probe-pools | 1.271 | 1.271 | 1.180 | 91 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | **0** | 1.180 | 1.177 |
+
+Overige extensies (mint close authority, interest bearing, scaled UI amount, confidential, permissioned burn, onbekend): 0 in elke familie. Suffix en programma (check.out): H/K3 104 = 0 "pump", 2 "bonk", 102 overig (83 Token-2022, 21 SPL Token; decimals 6 bij 103, 9 bij 1); N2 43 pump / 6 bonk / 275 overig; probe-pools 178 pump / 84 bonk / 1.009 overig (73 met 9 decimals). Alle 178 pump-mints onder de probe-pools zijn Token-2022 met alleen de metadata-extensies, net als de niet-pump Token-2022-mints: die indeling is de launchpad-standaard en geen vlag (reconstructie).
+
+Lezing: de check van spec §1 zou op dit venster 0 van de 104 H/K3-instappen vetoën (en 0 van 1.367 mints). Een veto in paper blijft een aparte vastlegging na een eigenaarsbesluit (spec §4); op deze telling is er geen reden toe. Wat dit niet zegt: niets over de LP-laag (E36: 99,95 % van de reversed pools wordt leeggetrokken), niets over latere `SetAuthority`- of extensiewijzigingen na de instap (een mint zonder mint- en freeze-authority kan die niet meer krijgen; transfer-fee en hook-instellingen kunnen alleen veranderen als de extensie al bestond, en die bestaat hier bij geen enkele mint), en niets over de schone dagen of 1064 als forward-venster.
 
 ## 4. Wat dit niet is
 
