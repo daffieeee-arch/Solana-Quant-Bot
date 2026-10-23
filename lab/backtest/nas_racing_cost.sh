@@ -47,8 +47,14 @@ SIZES=0.5,1.25,5
 mkdir -p "$OUT"
 export PYTHONPATH=$REPO/lab PYTHONDONTWRITEBYTECODE=1 LAB_STORE=$STORE LAB_BACKTESTS=$DATA/backtests LAB_ENGINE_COMMIT=$COMMIT
 export LAB_SPILL_DIR=${LAB_SPILL_DIR:-/lab/tmp/racing-cost} LAB_SPILL_MAX=${LAB_SPILL_MAX:-24GB}
+# The spill dir is removed on every exit path: only a dir under /lab/tmp/ or $DATA/tmp/ (LAB review of #536).
+case "$LAB_SPILL_DIR" in
+  /lab/tmp/?*|"$DATA"/tmp/?*) ;;
+  *) echo "RED: LAB_SPILL_DIR $LAB_SPILL_DIR is not under /lab/tmp/ or $DATA/tmp/" | tee -a "$OUT/job.log"; exit 1;;
+esac
+clean_spill() { rm -rf -- "${LAB_SPILL_DIR:?}"; }
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$OUT/job.log"; }
-red() { log "RED: $*"; rm -rf "$LAB_SPILL_DIR"; exit 1; }
+red() { log "RED: $*"; clean_spill; exit 1; }
 
 # ---------------------------------------------------------------- the pipeline (in its own process group, see below)
 if [ "${1:-}" = "--pipeline" ]; then
@@ -105,7 +111,7 @@ EOF
   (cd "$OUT" && sha256sum race/race.parquet race/race_txs.parquet race/race.json report/racing.json report/racing.md \
      "../$RUN_A/config.json" "../$RUN_B/config.json" > SHA256SUMS)
   [ "$rc" = 0 ] || red "a gate is RED (report rc $rc; racing.md, report.log)"
-  rm -rf "$LAB_SPILL_DIR"
+  clean_spill
   log "done: $OUT/report/racing.md"
   exit 0
 fi
@@ -143,15 +149,20 @@ log "guards: dev2 only, inputs pinned, E63 $(ls "$E63"/parts/*.parquet | wc -l) 
 setsid bash "$0" --pipeline &
 PG=$!
 (
-  sleep $((kill_at - now))
+  # The sleep runs as a child the watcher kills when it is stopped, so no sleep outlives a normal finish holding the
+  # inherited descriptors until KILL_AT (coordinator, NAS 99zzzzz58).
+  sleep $((kill_at - now)) &
+  SP=$!
+  trap 'kill "$SP" 2>/dev/null; exit 0' TERM
+  wait "$SP"
   log "KILL_AT $KILL_AT reached: killing process group $PG"
   kill -TERM -- "-$PG" 2>/dev/null || true
   sleep 30
   kill -KILL -- "-$PG" 2>/dev/null || true
-  rm -rf "$LAB_SPILL_DIR"
+  clean_spill
 ) &
 WATCH=$!
-trap 'kill -TERM -- "-$PG" 2>/dev/null || true; kill "$WATCH" 2>/dev/null || true; rm -rf "$LAB_SPILL_DIR"' INT TERM
+trap 'kill -TERM -- "-$PG" 2>/dev/null || true; kill "$WATCH" 2>/dev/null || true; clean_spill' INT TERM
 rc=0
 wait "$PG" || rc=$?
 kill "$WATCH" 2>/dev/null || true

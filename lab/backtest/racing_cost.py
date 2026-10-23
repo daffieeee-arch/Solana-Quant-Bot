@@ -7,6 +7,7 @@ nothing is sent, nothing is signed.
   python -m backtest.racing_cost table  --parts RUN_DIR [RUN_DIR ...] --store dev2.duckdb --out DIR
   python -m backtest.racing_cost report --parts RUN_DIR [RUN_DIR ...] --race DIR --c3-keys PARQUET --store dev2.duckdb
                                         --route-ii PARQUET --e63-json JSON --out DIR [--draws 200] [--workers 4]
+                                        (E63's run last in --parts: G0 compares every run's grid with it)
   python -m backtest.racing_cost w8b    --e1 PARQUET --out DIR
 
 - Rows (plan sections 1 and 2): the runs' F7 pool_reversed positions of flow300_tp100_H6 and hold300 at 0.5 / 1.25 /
@@ -114,6 +115,34 @@ def _guard(con, run, src, cols):
         raise Refused(f"{run}: G1 RED: {bad[0]} d 0 rows not at q 1.0 (a fill inside the trigger slot: a lookahead), "
                       f"{bad[1]} d >= 1 rows not at q 0.5, {bad[2]} rows with d < 0 or NULL")
     return cfg
+
+
+# The settings every run must share with E63's (capital-ceiling-d15ac45), so that its d 2 and 3 cells are like for like with
+# the new d 0 / 1 / 5 / 8 / 13 cells by construction (LAB review of #536): equal fields, and the leads' variants and sizes
+# inside each run's sets (busy is kept per (family, variant), so other variants in a run do not change these rows).
+SAME = ("families", "segments", "f7_grid", "m1_grid", "tau", "tol", "n2_k", "only", "decide_range")
+
+
+def grid_check(runs):
+    cfgs = []
+    for run in runs:
+        with open(os.path.join(run, "config.json")) as f:
+            cfgs.append(json.load(f))
+    ref = cfgs[-1]  # the last run: E63's
+    bad = []
+    for run, c in zip(runs, cfgs):
+        diff = [k for k in SAME if c.get(k) != ref.get(k)]
+        if (c.get("store") or {}).get("git_commit") != (ref.get("store") or {}).get("git_commit"):
+            diff.append("store.git_commit")
+        if not set(VARIANTS) <= set(c.get("variants") or []):
+            diff.append(f"variants {c.get('variants')}")
+        if not set(SIZES) <= set(c.get("sizes_sol") or []):
+            diff.append(f"sizes {c.get('sizes_sol')}")
+        if diff:
+            bad.append(f"{run}: {diff}")
+    if bad:
+        raise Refused(f"the runs' grids differ from E63's (the last run): {bad}")
+    return {"runs": len(runs), "fields": list(SAME) + ["store.git_commit", "variants and sizes inside"], "status": "GREEN"}
 
 
 def load(con, runs, c3_keys, store):
@@ -608,10 +637,11 @@ def report(a):
     tmp = os.environ.get("LAB_SPILL_DIR")
     if tmp:
         con.execute(f"SET temp_directory = '{tmp}'")
+    grid = grid_check(a.parts)
     info = load(con, a.parts, a.c3_keys, a.store)
     con.execute(f"CREATE TABLE race AS SELECT * FROM read_parquet('{os.path.join(a.race, 'race.parquet')}')")
     con.execute(f"CREATE TABLE race_txs AS SELECT * FROM read_parquet('{os.path.join(a.race, 'race_txs.parquet')}')")
-    gates = {"G1": {"status": "GREEN", "why": "every run passed the q guard (load)"},
+    gates = {"G0": grid, "G1": {"status": "GREEN", "why": "every run passed the q guard (load)"},
              "G5": gate_g5(con, a.route_ii)}
     if gates["G5"]["rows_without_race"]:
         raise Refused(f"G5 RED: {gates['G5']['rows_without_race']} (pool, t) of the rows have no race row (build the table over the same runs)")

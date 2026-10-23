@@ -38,11 +38,13 @@ def write_parquet(path, rows, extra=()):
     con.execute(f"COPY x TO '{path}' (FORMAT parquet)")
 
 
-def write_run(root, name, rows, slot_range=None):
+def write_run(root, name, rows, slot_range=None, f7_grid="v1,exits,big", variants=("tp4_T600",) + rc.VARIANTS):
     d = os.path.join(root, name)
     os.makedirs(os.path.join(d, "parts"))
     with open(os.path.join(d, "config.json"), "w") as f:
-        json.dump({"engine_commit": "abc", "store": {"slot_start": cc.DEV[0], "slot_end_exclusive": cc.DEV[1]}, "slot_range": slot_range}, f)
+        json.dump({"engine_commit": "abc", "store": {"slot_start": cc.DEV[0], "slot_end_exclusive": cc.DEV[1], "git_commit": "s"},
+                   "slot_range": slot_range, "families": ["F7"], "segments": ["pool_reversed"], "f7_grid": f7_grid, "tau": ["empirical"],
+                   "variants": list(variants), "sizes_sol": [0.5, 1.0, 1.25, 5.0]}, f)
     write_parquet(os.path.join(d, "parts", "part-000000.parquet"), rows)
     return d
 
@@ -194,7 +196,8 @@ def test_the_report_and_its_gates(lab):
                            route_ii=lab["route"], e63_json=lab["e63"], out=out, draws=40, workers=1, memory="1GB", threads=1)
     assert rc.report(a) == 0
     res = json.load(open(os.path.join(out, "racing.json")))
-    assert {k: v["status"] for k, v in res["gates"].items()} == {"G1": "GREEN", "G2": "GREEN", "G3": "GREEN", "G4": "GREEN", "G5": "GREEN"}
+    assert {k: v["status"] for k, v in res["gates"].items()} == {"G0": "GREEN", "G1": "GREEN", "G2": "GREEN", "G3": "GREEN", "G4": "GREEN",
+                                                                 "G5": "GREEN"}
     assert res["gates"]["G4"]["cells"] == 2 * 3 * 2 * 2 and res["gates"]["G5"]["mismatch"] == 0
     h5 = res["leads"]["H5"]
     x = h5["sizes"]["0.5"]["scenarios"]["base"]
@@ -216,7 +219,17 @@ def test_the_report_and_its_gates(lab):
     c3 = res["leads"]["C3/hold300"]["sizes"]["0.5"]["scenarios"]["base"]["cells"]["0"]
     assert c3["n_t1"] == {"0": 1, "1": 0, "2": 1, "3": 0}  # the arm keys A and C (D has one paid buyer)
     md = open(os.path.join(out, "racing.md")).read()
-    assert "DRY RUN" not in md and "Gates: G1 GREEN" in md and "Landed means first in t + 1" in md
+    assert "DRY RUN" not in md and "Gates: G0 GREEN; G1 GREEN" in md and "Landed means first in t + 1" in md
+
+
+def test_a_run_on_another_grid_than_e63s_is_refused(tmp_path, lab):
+    assert rc.grid_check([lab["a"], lab["b"], lab["e"]])["status"] == "GREEN"
+    other = write_run(str(tmp_path), "other", rows_for((1,), ret), f7_grid="v1")
+    with pytest.raises(cc.Refused, match="f7_grid"):
+        rc.grid_check([lab["a"], other, lab["e"]])
+    narrow = write_run(str(tmp_path), "narrow", rows_for((1,), ret), variants=("hold300",))
+    with pytest.raises(cc.Refused, match="variants"):
+        rc.grid_check([narrow, lab["e"]])
 
 
 def test_a_differing_e63_cell_is_red(lab):
