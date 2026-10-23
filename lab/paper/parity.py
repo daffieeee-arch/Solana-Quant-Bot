@@ -156,9 +156,19 @@ def written_off_row(bt, en, k):
                 and (x.get("tokens"), x.get("cost")) == (y.get("tokens"), y.get("cost")))
 
 
+def written_off_later_sold(bt, en, k):
+    """The engine wrote the position off at its rule's deadline (no sale possible then); the backtest sold it later,
+    after the pool got liquidity again: the late sale the write-off forgoes by the owner's rule. Explained, listed apart."""
+    x, y = bt.get(k), en.get(k)
+    return bool(x and y and x["status"] == y["status"] == "filled" and y.get("exit_reason") == "written_off"
+                and not y.get("proceeds") and (x.get("tokens"), x.get("cost")) == (y.get("tokens"), y.get("cost"))
+                and x.get("exit_slot") is not None and y.get("exit_slot") is not None and x["exit_slot"] > y["exit_slot"])
+
+
 def _split(diffs, bt, en):
-    """(unexplained diffs, explained unsold_busy diffs, explained written_off diffs)."""
-    wo = [d for d in diffs if "diff" in d and written_off_row(bt, en, tuple(d["key"]))]
+    """(unexplained diffs, explained unsold_busy diffs, explained written_off diffs: written_off_row or
+    written_off_later_sold)."""
+    wo = [d for d in diffs if "diff" in d and (written_off_row(bt, en, tuple(d["key"])) or written_off_later_sold(bt, en, tuple(d["key"])))]
     expl = [d for d in diffs if "diff" in d and d not in wo and unsold_busy(bt, en, tuple(d["key"]))]
     return [d for d in diffs if d not in expl and d not in wo], expl, wo
 

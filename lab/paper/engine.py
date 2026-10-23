@@ -465,6 +465,9 @@ class Engine:
             self.day = day
             for g in self.groups:
                 g.day_loss = 0
+            if self.replaying:  # journaled exits booked on a later day than their slot's (a write-off at a resume)
+                for p, pnl in self.rs.later_losses.pop(day, ()):
+                    self._book_loss(p, pnl)
         if minute != self.minute:
             gap = slot - self.last_slot - 1 if self.last_slot is not None else 0
             self.j.put("heartbeat", minute=minute, day=day, last_slot=self.last_slot, last_event=self.last_event,
@@ -1083,6 +1086,10 @@ class Engine:
         day, is booked on the run's last day)."""
         if day is None or day == self.day:
             self._book_loss(p, pnl)
+        elif self.replaying and self.day is not None and day > self.day:
+            # A write-off the journal booked at a later resume (written_off_at_resume, day = the resume's): its loss
+            # counts on that day, when the replay gets there.
+            self.rs.later_losses.setdefault(day, []).append((p, pnl))
         self._wallet_tx(p, "sell", exit_slot or slot, pnl + self.scn.entry_total(cost) if tokens else pnl, settled=pnl)
         g = self._group(p)
         if (not p.family.startswith("N2_") and g.risk is not None and g.risk.pool_cooldown_h > 0 and tokens

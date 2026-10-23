@@ -105,10 +105,12 @@ for w in W1 W2; do
   engine main "$OUT/strict-$w-main" "$win" --ignore-risk
   engine head "$OUT/strict-$w-head" "$win" --ignore-risk
   rc=0
-  PYTHONPATH=$REPO/lab "$PY" - "$OUT/strict-$w-main" "$OUT/strict-$w-head" > "$OUT/strict-$w.log" 2>&1 <<'EOF' || rc=$?
+  PYTHONPATH=$REPO/lab "$PY" - "$OUT/strict-$w-main" "$OUT/strict-$w-head" "${win##*:}" "$OUT/strict-$w.n_written_off" \
+    > "$OUT/strict-$w.log" 2>&1 <<'EOF' || rc=$?
 import json, sqlite3, sys
 from paper.journal_diff import compare, writeoff_causes
-a, b = sys.argv[1:3]
+a, b, hi, n_file = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.argv[4]
+TAIL = 100  # slots: a position whose deadline + d lies this close to the window's end may have had no tick after it
 
 
 def groups(path):
@@ -131,12 +133,23 @@ q = lambda p, sql: sqlite3.connect(f"file:{p}/journal.sqlite?mode=ro", uri=True)
 n_wo = q(b, "SELECT count(*) FROM exits WHERE exit_reason = 'written_off'")
 n_unsold = q(a, "SELECT count(*) FROM exits WHERE tokens > 0 AND exit_slot IS NULL AND proceeds = 0")
 counts = {t: [v["rows_a"], v["rows_b"]] for t, v in r["tables"].items()}
+# Completeness: every position main left unsold whose deadline + d lies inside the window (a tick after it) is written
+# off by head (a position that would be sellable at the tick is sold by main too, so it is not unsold).
+db = lambda p: sqlite3.connect(f"file:{p}/journal.sqlite?mode=ro", uri=True)  # noqa: E731
+eligible = {tuple(r[:4]) for r in db(a).execute(
+    """SELECT family, variant, key, t FROM exits WHERE tokens > 0 AND exit_slot IS NULL AND proceeds = 0 AND cap_slots IS NOT NULL
+       AND entry_slot + cap_slots + (entry_slot - t) < ?""", (hi - TAIL,))}
+done = {tuple(r) for r in db(b).execute("SELECT family, variant, key, t FROM exits WHERE exit_reason = 'written_off'")}
+missed = sorted(eligible - done)
+open(n_file, "w").write(f"{n_wo}\n")
 print(f"rows (main, head) {counts}")
-print(f"written_off in head {n_wo}; main's unsold positions (exit_slot NULL, proceeds 0) {n_unsold}; explained {r['explained']}")
+print(f"written_off in head {n_wo}; main's unsold positions (exit_slot NULL, proceeds 0) {n_unsold}, of them past their deadline "
+      f"+ d inside the window {len(eligible)}, not written off by head {len(missed)} {missed[:5]}; explained {r['explained']}")
 for t, v in r["tables"].items():
     if v["unexplained"]:
         print(f"  {t}: only main {v['only_a_first'][:3]}, only head {v['only_b_first'][:3]}, different {v['different_first'][:3]}")
-ok = r["unexplained"] == 0 and not r["schema_diff"] and not mismatch and n_wo <= n_unsold and any(v["rows_a"] for v in r["tables"].values())
+ok = (r["unexplained"] == 0 and not r["schema_diff"] and not mismatch and not missed
+      and any(v["rows_a"] for v in r["tables"].values()))
 print(f"strict: unexplained {r['unexplained']}, schema diff {bool(r['schema_diff'])}, state mismatch {mismatch} (risk paths from lab/): {'GREEN' if ok else 'RED'}")
 sys.exit(0 if ok else 1)
 EOF
@@ -144,6 +157,9 @@ EOF
   [ "$rc" = 0 ] || bad=1
 done
 [ "$bad" = 0 ] || { log "RED: strict parity"; exit 1; }
+n_wo=$(( $(cat "$OUT/strict-W1.n_written_off") + $(cat "$OUT/strict-W2.n_written_off") ))
+[ "$n_wo" -gt 0 ] || { log "RED: no write-off in W1 or W2 (the proof would be vacuous)"; exit 1; }
+log "strict: $n_wo write-offs over W1 and W2"
 
 # 3. risk on: identical up to each group's first write-off
 for w in W1 W2; do
@@ -170,9 +186,15 @@ def rows(p, table):
 wo = rows(b, "exits")
 bad = []
 for g, variants in GROUPS.items():
-    offs = [r["exit_slot"] for k, r in wo.items() if k[1] in variants and r["exit_reason"] == "written_off"]
+    # The group's F7 rows are judged up to its first F7 write-off (its risk state: day loss, places, cooldowns); an N2
+    # write-off has no risk effect, so N2 rows are judged everywhere except a key's rows after its own write-off (busy).
+    offs = [r["exit_slot"] for k, r in wo.items() if k[0] == "F7" and k[1] in variants and r["exit_reason"] == "written_off"]
+    n2_off = {}
+    for k, r in wo.items():
+        if k[0].startswith("N2_") and k[1] in variants and r["exit_reason"] == "written_off":
+            n2_off[k[:3]] = min(n2_off.get(k[:3], r["exit_slot"]), r["exit_slot"])
     cut = min(offs) if offs else None
-    same = after = 0
+    same = after = explained = 0
     for table in ("signals", "orders", "fills", "exits"):
         ra, rb = rows(a, table), rows(b, table)
         for k in set(ra) | set(rb):
@@ -182,13 +204,16 @@ for g, variants in GROUPS.items():
             if x == y:
                 same += 1
                 continue
-            if cut is not None and k[3] >= cut:
+            if x is not None and y is not None and written_off(table, k, x, y):
+                explained += 1
+            elif k[0] == "F7" and cut is not None and k[3] >= cut:
                 after += 1
-            elif x is not None and y is not None and written_off(table, k, x, y):
-                pass
+            elif k[0].startswith("N2_") and k[:3] in n2_off and k[3] > n2_off[k[:3]]:
+                after += 1
             else:
                 bad.append((g, table, k))
-    print(f"{g}: write-offs {len(offs)}, first at {cut}; rows equal {same}; different from the first write-off on {after} (the cascade)")
+    print(f"{g}: F7 write-offs {len(offs)}, the first at {cut}; N2 write-offs {len(n2_off)}; rows equal {same}; the write-offs' own "
+          f"rows {explained}; different after a write-off {after} (the cascade, not judged)")
 print("risk on: " + ("GREEN" if not bad else f"RED: {len(bad)} rows differ before their group's first write-off, e.g. {bad[:5]}"))
 sys.exit(1 if bad else 0)
 EOF

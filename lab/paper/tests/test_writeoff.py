@@ -63,6 +63,22 @@ def test_a_drained_pool_is_written_off_at_its_failed_deadline_attempt():
     assert c.eng.busy[("F7", "tp4_T600", nx)] == deadline + D
 
 
+def test_a_pool_with_events_but_no_sale_is_written_off_in_its_own_slot():
+    # Step 1: zero-LP withdraws keep the drained pool's events coming (no other pool ticks); at the event after the
+    # deadline's failed attempt the position is written off in its own slot.
+    c = C2.Case("writeoff_step1", "NX drained at t + 105, zero-LP withdraw events at t + 800 and t + 900", n2_k=0)
+    t = T0
+    p = c.pool("NX")
+    legs = C2.reversed_trigger(c, p, t + 100, 400 * SOL)
+    w = c.withdraw(p, legs[-1], t + 105, 0, 1_000_000, 1_000_000)
+    w = c.withdraw(p, w, t + 800, 0, 0, 1)
+    c.withdraw(p, w, t + 900, 0, 0, 1)
+    c.build()
+    x = c.one("exits", key=p)
+    assert x["exit_reason"] == "written_off" and x["exit_slot"] == x["exit_decision_slot"] + D, x
+    assert x["exit_decision_slot"] >= t + 102 + CAP and not c.rows("positions"), x
+
+
 def test_without_a_tick_after_the_deadline_the_data_end_closes_it_as_before():
     # C2's golden NX: the case's events end before deadline + d, so end() closes it (exit_slot NULL), as without the fix.
     c = C2.Case("writeoff_no_tick", "NX alone: no event after the withdraw", n2_k=0)
@@ -180,7 +196,8 @@ def test_a_write_off_before_the_hwm_is_replayed_once(tmp_path):
     xs = r.journal.rows("exits", "key = ?", (nx,))
     assert len(xs) == 1 and xs[0]["exit_reason"] == "written_off", xs
     rec = json.loads(r.journal.state(RS.RESTARTS_KEY))[-1]
-    assert not rec["counts"].get("exits_different") and not rec["counts"].get("written_off_at_resume"), rec["counts"]
+    # The replay made the write-off itself and matched the journal's row: no difference at all (not forced from it).
+    assert {k: v for k, v in rec["counts"].items() if v and k not in RS.BEFORE} == {}, rec["counts"]
 
 
 def test_a_position_an_older_engine_left_open_is_written_off_at_the_resume(tmp_path, monkeypatch):
@@ -205,6 +222,29 @@ def test_a_position_an_older_engine_left_open_is_written_off_at_the_resume(tmp_p
     lines = RS.restart_lines(r.journal, rec["day"])
     assert any("written off at the HWM" in line for line in lines) and not any("written_off_at_resume" in line for line in lines), lines
     assert hwm["slot"] > x["exit_slot"]
+
+
+def test_a_second_restart_after_a_write_off_at_the_resume_across_midnight_is_clean(tmp_path, monkeypatch):
+    # NX's write-off (t + 703) is on 2026-09-21, before MIDNIGHT; the first restart writes it off at its HWM on 09-22
+    # (the row's day). The second restart's replay reaches it on 09-21 and books it on 09-22 when it gets there.
+    t = 450_130_000
+    c = C2.Case("writeoff_midnight", "NX drained before midnight; ticks to well after it", n2_k=0)
+    nx = drained(c, "NX", t + 100)
+    ticker(c, list(range(t + 250, t + 4_001, 250)))
+    case = c.build()
+    j = str(tmp_path / "j")
+    with monkeypatch.context() as m:
+        m.setattr(Engine, "_write_off_if_stuck", lambda self, o, slot: False)
+        crash(live_engine(case, j, crash_at=t + 2_500))
+    first = crash(live_engine(case, j, crash_at=t + 3_500))
+    r = live_engine(case, j)
+    r.run()
+    recs = json.loads(r.journal.state(RS.RESTARTS_KEY))
+    assert recs[0]["counts"].get("written_off_at_resume") == 1, recs[0]
+    assert {k: v for k, v in recs[-1]["counts"].items() if v and k not in RS.BEFORE} == {}, recs[-1]["counts"]
+    xs = r.journal.rows("exits", "key = ?", (nx,))
+    assert len(xs) == 1 and xs[0]["exit_reason"] == "written_off" and xs[0]["day"] == recs[0]["day"] != C2._day(C1.block_time(xs[0]["exit_slot"])), xs
+    assert first["slot"] > t + 2_500
 
 
 # ------------------------------------------------------------------------------------------------- the tools
@@ -244,6 +284,12 @@ def test_journal_diff_names_the_write_off_and_the_freed_pool(tmp_path):
     assert res["unexplained"] == 0 and res["explained"] == {"written_off": 2, "busy_freed": 1}, res["explained"]
     # Without the causes every difference is unexplained.
     assert journal_diff.compare(a, b)["unexplained"] == 3
+    # Main sold it later (the pool got liquidity again): written_off_later_sold, listed apart.
+    d = str(tmp_path / "d")
+    _journal(d, [_exit(day="2026-09-23", exit_slot=900, exit_decision_slot=898, proceeds=400, pnl=-150, exit_reason="stop_loss")],
+             [dict(sell, slot=900, quote=400)], {"cost_scenario": scn})
+    res = journal_diff.compare(d, b, causes=journal_diff.writeoff_causes(d, b))
+    assert res["unexplained"] == 0 and res["explained"] == {"written_off_later_sold": 2, "busy_freed": 1}, res["explained"]
     # A write-off that does not match (another entry) stays unexplained.
     c = str(tmp_path / "c")
     _journal(c, [_exit(exit_slot=703, exit_reason="written_off", entry_slot=103)], [dict(sell, slot=703)], {"cost_scenario": scn})
@@ -260,5 +306,8 @@ def test_parity_explains_a_written_off_row_and_its_busy_window():
     _, diffs, _ = parity.compare(bt, en, 0, 1_000)
     unexplained, busy, wo = parity._split(diffs, bt, en)
     assert (len(unexplained), len(busy), len(wo)) == (0, 1, 1)
+    # The backtest sold it later (a pool with liquidity again): explained too.
+    sold = {**bt, k1: {**bt[k1], "exit_slot": 900, "proceeds": 400}}
+    assert parity.written_off_later_sold(sold, en, k1) and not parity.written_off_row(sold, en, k1)
     # After the write-off the engine's pool is free: a trigger past it is no unsold_busy.
     assert not parity.unsold_busy(bt, {**en, k1: {**en[k1], "exit_slot": 250}}, k2)

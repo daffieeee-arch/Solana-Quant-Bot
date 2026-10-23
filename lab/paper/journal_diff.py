@@ -272,8 +272,10 @@ def writeoff_causes(path_a, path_b):
     """The causes of an engine without the write-off (A) against one with it (B, engine._write_off_if_stuck), both on the
     same input: `written_off`, B's exit 'written_off' (and its sell fill) where A's position never sold (exit_slot NULL,
     proceeds 0, e.g. closed by the data's end), with the same entry; B's exit at its last decision + d, that decision at or
-    after the rule's deadline (entry_slot + cap_slots), and the P&L apart by the failed attempts only. `busy_freed`: a
-    row of a (family, variant, key) after B's write-off there (its pool freed, where A's position still held it)."""
+    after the rule's deadline (entry_slot + cap_slots), and the P&L apart by the failed attempts only.
+    `written_off_later_sold`: the same write-off where A's position sold later, after B's write-off (the pool got
+    liquidity again: the late sale the write-off forgoes, by the owner's rule); listed apart. `busy_freed`: a row of a
+    (family, variant, key) after B's write-off there (its pool freed, where A's position still held it)."""
     wo = {tuple(r[c] for c in TABLES["exits"][0]): r for r in _raw(path_b, "exits") if r["exit_reason"] == "written_off"}
     failed_tx = json.loads(_state(path_b).get("cost_scenario") or "{}").get("failed_tx")
     freed = {}
@@ -286,15 +288,24 @@ def writeoff_causes(path_a, path_b):
         x = wo.get(tuple(key[:4]))
         if x is None:
             return None
-        if table == "fills":  # its sell fill: A's without a slot, B's at the write-off, both at quote 0
-            return "written_off" if (key[4] == "sell" and (a["slot"], a["quote"], b["slot"], b["quote"], a["tokens"])
-                                     == (None, 0, x["exit_slot"], 0, b["tokens"])) else None
+        if table == "fills":  # its sell fill: B's at the write-off at quote 0; A's without a slot (or a later sale)
+            if key[4] != "sell" or (b["slot"], b["quote"], a["tokens"]) != (x["exit_slot"], 0, b["tokens"]):
+                return None
+            if (a["slot"], a["quote"]) == (None, 0):
+                return "written_off"
+            return "written_off_later_sold" if a["slot"] is not None and a["slot"] > x["exit_slot"] else None
         d = x["entry_slot"] - key[3]  # x: B's exits row with every column (cap_slots is not compared)
-        same = (a["exit_slot"] is None and not a["proceeds"] and (a["entry_slot"], a["tokens"], a["cost"]) == (x["entry_slot"], x["tokens"], x["cost"])
+        b_ok = ((a["entry_slot"], a["tokens"], a["cost"]) == (x["entry_slot"], x["tokens"], x["cost"])
                 and x["exit_slot"] == x["exit_decision_slot"] + d and x["cap_slots"] is not None
-                and x["exit_decision_slot"] >= x["entry_slot"] + x["cap_slots"]
-                and failed_tx is not None and x["pnl"] - a["pnl"] == (a["exit_attempts"] - x["exit_attempts"]) * failed_tx)
-        return "written_off" if same else None
+                and x["exit_decision_slot"] >= x["entry_slot"] + x["cap_slots"] and not x["proceeds"])
+        if not b_ok:
+            return None
+        if (a["exit_slot"] is None and not a["proceeds"] and failed_tx is not None
+                and x["pnl"] - a["pnl"] == (a["exit_attempts"] - x["exit_attempts"]) * failed_tx):
+            return "written_off"
+        if a["exit_slot"] is not None and a["exit_slot"] > x["exit_slot"]:
+            return "written_off_later_sold"
+        return None
 
     def busy_freed(table, key, a, b):
         slots = freed.get(tuple(key[:3]))

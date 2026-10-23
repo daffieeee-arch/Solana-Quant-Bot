@@ -108,6 +108,7 @@ class Restart:
         self.exit_order, self.next_exit = [], 0  # [(slot, key)] of the journal's exits, in order
         self.applied, self.closed = set(), set()  # signal keys decided in the replay; exits applied in memory
         self.written_off = {}  # key -> the replay's written-off position the journal still holds open (engine._resume)
+        self.later_losses = {}  # day -> [(position, pnl)]: journaled exits booked on a later day than their slot's
         self.natural = {}  # signal key -> the replay's own decision ('entered' / 'skipped')
         self.first_slot = self.warm = self.first_day = None  # the replay's first slot; an hour after it; its UTC day
 
