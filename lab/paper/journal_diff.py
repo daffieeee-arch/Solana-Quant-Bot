@@ -268,11 +268,55 @@ def report_signals(res):
     return lines
 
 
-def run(journal_a, journal_b, out, lo_day=None, hi_day=None, new_tables=(), scope="all"):
+def writeoff_causes(path_a, path_b):
+    """The causes of an engine without the write-off (A) against one with it (B, engine._write_off_if_stuck), both on the
+    same input: `written_off`, B's exit 'written_off' (and its sell fill) where A's position never sold (exit_slot NULL,
+    proceeds 0, e.g. closed by the data's end), with the same entry; B's exit at its last decision + d, that decision at or
+    after the rule's deadline (entry_slot + cap_slots), and the P&L apart by the failed attempts only. `busy_freed`: a
+    row of a (family, variant, key) after B's write-off there (its pool freed, where A's position still held it)."""
+    wo = {tuple(r[c] for c in TABLES["exits"][0]): r for r in _raw(path_b, "exits") if r["exit_reason"] == "written_off"}
+    failed_tx = json.loads(_state(path_b).get("cost_scenario") or "{}").get("failed_tx")
+    freed = {}
+    for k, r in wo.items():
+        freed.setdefault(k[:3], []).append(r["exit_slot"])
+
+    def written_off(table, key, a, b):
+        if table not in ("exits", "fills") or a is None or b is None:
+            return None
+        x = wo.get(tuple(key[:4]))
+        if x is None:
+            return None
+        if table == "fills":  # its sell fill: A's without a slot, B's at the write-off, both at quote 0
+            return "written_off" if (key[4] == "sell" and (a["slot"], a["quote"], b["slot"], b["quote"], a["tokens"])
+                                     == (None, 0, x["exit_slot"], 0, b["tokens"])) else None
+        d = x["entry_slot"] - key[3]  # x: B's exits row with every column (cap_slots is not compared)
+        same = (a["exit_slot"] is None and not a["proceeds"] and (a["entry_slot"], a["tokens"], a["cost"]) == (x["entry_slot"], x["tokens"], x["cost"])
+                and x["exit_slot"] == x["exit_decision_slot"] + d and x["cap_slots"] is not None
+                and x["exit_decision_slot"] >= x["entry_slot"] + x["cap_slots"]
+                and failed_tx is not None and x["pnl"] - a["pnl"] == (a["exit_attempts"] - x["exit_attempts"]) * failed_tx)
+        return "written_off" if same else None
+
+    def busy_freed(table, key, a, b):
+        slots = freed.get(tuple(key[:3]))
+        return "busy_freed" if slots and key[3] > min(slots) else None
+
+    return (written_off, busy_freed)
+
+
+def _raw(path, table):
+    db = sqlite3.connect(f"file:{path}/journal.sqlite?mode=ro", uri=True)
+    db.row_factory = sqlite3.Row
+    try:
+        return [dict(r) for r in db.execute(f"SELECT * FROM {table}")]
+    finally:
+        db.close()
+
+
+def run(journal_a, journal_b, out, lo_day=None, hi_day=None, new_tables=(), scope="all", causes=()):
     if scope == "signals":
-        res = compare_signals(journal_a, journal_b, lo_day, hi_day, new_tables=new_tables)
+        res = compare_signals(journal_a, journal_b, lo_day, hi_day, causes=causes, new_tables=new_tables)
     else:
-        res = compare(journal_a, journal_b, lo_day, hi_day, new_tables=new_tables)
+        res = compare(journal_a, journal_b, lo_day, hi_day, causes=causes, new_tables=new_tables)
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "journal_diff.json"), "w") as f:
         json.dump(res, f, indent=1, default=str)
@@ -294,8 +338,11 @@ def main(argv=None):
                     help="a table a newer engine adds: in one journal only it is no schema difference (repeatable)")
     ap.add_argument("--scope", choices=("all", "signals"), default="all",
                     help="signals: M1 C1b's comparison, the signals table only and no status beyond the farm gates")
+    ap.add_argument("--writeoff-causes", action="store_true",
+                    help="A an engine without the write-off, B with it: name the causes written_off and busy_freed")
     a = ap.parse_args(argv)
-    res = run(a.journal_a, a.journal_b, a.out, a.from_day, a.to_day, tuple(a.new_table), a.scope)
+    causes = writeoff_causes(a.journal_a, a.journal_b) if a.writeoff_causes else ()
+    res = run(a.journal_a, a.journal_b, a.out, a.from_day, a.to_day, tuple(a.new_table), a.scope, causes)
     return 0 if res["green"] else 1
 
 

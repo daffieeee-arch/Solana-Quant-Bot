@@ -82,7 +82,8 @@ def test_the_arms_trade_with_their_windows_in_the_exits(runs):
     _, clock, both, _ = runs
     xs = both.j.rows("exits", "variant IN ('flow300_H6', 'flow300_tp100_H6') AND tokens > 0")
     assert xs, "no arm position on the slice"
-    assert {x["exit_reason"] for x in xs} <= {"outflow", "take_profit", "time", "end_of_data"}
+    # written_off: a drained pool's position at its deadline (engine._write_off_if_stuck)
+    assert {x["exit_reason"] for x in xs} <= {"outflow", "take_profit", "time", "end_of_data", "written_off"}
     for x in xs:
         assert x["n_flow_slots"] == clock.slots(300_000, x["t"]) and x["cap_slots"] == clock.slots(6 * 3_600_000, x["t"])
         assert x["peak_mark"] is not None and x["peak_slot"] >= x["entry_slot"]

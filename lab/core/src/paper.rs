@@ -928,6 +928,11 @@ impl Paper {
 
     /// `_settle_if_done` (engine.py:1025-1043): a closed position's sell fill and exit, the positions delete, busy, and
     /// the position leaves the open ones. A graduation waiting for its pool is not settled yet.
+    ///
+    /// Not ported (a documented divergence until the Rust route resumes): the Python engine's write-off
+    /// (`_write_off_if_stuck`, owner 2026-10-23): a position past its rule's deadline whose last attempt failed with
+    /// no sale possible closes as 'written_off' at that attempt's slot. Here such a position stays open until
+    /// end_of_data, as Python did before; the golden cases do not reach it.
     fn settle_if_done(&mut self, eng: &SignalEngine, id: usize, force: bool, slot: u64) {
         let o = &self.opens[&id];
         if (!force && !o.done()) || o.grad.is_some() {
