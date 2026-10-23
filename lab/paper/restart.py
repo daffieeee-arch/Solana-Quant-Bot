@@ -47,6 +47,8 @@ WINDOW_H = 36
 BEFORE = ("journal_entries_before_the_replay", "journal_exits_before_the_replay",
           "journal_signals_in_the_replays_first_hour", "replay_signals_in_its_first_hour_not_in_journal",
           "day_loss_from_before_the_replay")
+# What a resume does with the journal's open positions (reported on a line of its own, not as a difference).
+RESUME_ACTIONS = ("written_off_at_resume",)
 # Journal rows from this many slots before the replay's first slot: entries due inside the replay of signals
 # just before it.
 MARGIN_SLOTS = 2_000
@@ -104,6 +106,8 @@ class Restart:
         self.entered, self.next_entered = [], 0  # [(t, key)] of the journal's entered signals, in order
         self.exit_order, self.next_exit = [], 0  # [(slot, key)] of the journal's exits, in order
         self.applied, self.closed = set(), set()  # signal keys decided in the replay; exits applied in memory
+        self.written_off = {}  # key -> the replay's written-off position the journal still holds open (engine._resume)
+        self.later_losses = {}  # day -> [(position, pnl)]: journaled write-offs booked on a later day than their slot's
         self.natural = {}  # signal key -> the replay's own decision ('entered' / 'skipped')
         self.first_slot = self.warm = self.first_day = None  # the replay's first slot; an hour after it; its UTC day
 
@@ -193,11 +197,14 @@ def restart_lines(journal, day):
     lines = ["", "## Restarts", ""]
     for r in today:
         c = r.get("counts", {})
-        diff = ", ".join(f"{k} {v}" for k, v in sorted(c.items()) if v and k not in BEFORE)
+        diff = ", ".join(f"{k} {v}" for k, v in sorted(c.items()) if v and k not in BEFORE and k not in RESUME_ACTIONS)
         before = ", ".join(f"{k} {c[k]}" for k in BEFORE if c.get(k))
         lines.append(f"- resumed at the HWM slot {r['hwm']}, the replay from slot {r.get('first_slot')}: "
                      f"{('differences to the journal: ' + diff) if diff else 'no difference to the journal'}"
                      + (f" (from before the replay or its first hour: {before})" if before else ""))
+        if c.get("written_off_at_resume"):
+            lines.append(f"  - {c['written_off_at_resume']} open positions written off at the HWM: past their rule's deadline "
+                         "with no sale possible (exit_reason written_off, at their own exit slot)")
         if c.get("restart_lost"):
             lines.append(f"  - {c['restart_lost']} open positions the replay could not carry, closed at their last mark "
                          "(exit_reason restart_lost)")
