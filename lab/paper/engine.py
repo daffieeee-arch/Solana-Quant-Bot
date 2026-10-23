@@ -1232,6 +1232,11 @@ class Engine:
                 c["written_off_at_resume"] += 1
             else:
                 self._close_lost(r, slot)
+        # A write-off the journal has neither as an exit nor as an open position (an inconsistent journal): counted as
+        # an exit of the replay's own, as before the write-off (LAB review on #533).
+        unheld = sum(1 for k in rs.written_off if k not in jpos)
+        if unheld:  # (a Counter keeps a key added with 0: the record's counts would no longer be {})
+            c["replay_exits_not_in_journal"] += unheld
         # Pending entries: the journal's entered signals without an order.
         mpend = {(p.family, p.variant, p.key, p.t): (e, p) for e, ps in self.pending.items() for p in ps}
         jpend = {k: r for k, r in rs.sig.items() if r["status"] == "entered" and k not in rs.orders and k[3] < rs.slot}

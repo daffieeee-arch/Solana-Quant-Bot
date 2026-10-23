@@ -32,6 +32,7 @@ interface GroupWallet {
 const EXIT: Record<string, string> = {
   take_profit: "doel geraakt", stop_loss: "stop-loss", time: "tijdslimiet", window_end: "einde data", outflow: "uitstroom", graduation: "migratie",
   restart_lost: "verloren bij herstart", entry_slippage: "instap: slippage", after_window_end: "einde data", end_of_data: "einde data",
+  written_off: "afgeschreven",
 };
 const f3 = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toLocaleString("nl-NL", { minimumFractionDigits: 3, maximumFractionDigits: 3 })}`;
 const solscanAccount = (a: string) => `https://solscan.io/account/${encodeURIComponent(a)}`;

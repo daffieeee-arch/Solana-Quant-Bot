@@ -168,10 +168,11 @@ for w in W1 W2; do
     engine "$side" "$OUT/risk-$w-$side" "$win" --config "$REPO/lab/paper/k3-paper-2026-10-12.yaml" --groups "$REPO/lab/paper/h-arms-2026-10-16.yaml"
   done
   rc=0
-  PYTHONPATH=$REPO/lab "$PY" - "$OUT/risk-$w-main" "$OUT/risk-$w-head" > "$OUT/risk-$w.log" 2>&1 <<'EOF' || rc=$?
+  PYTHONPATH=$REPO/lab "$PY" - "$OUT/risk-$w-main" "$OUT/risk-$w-head" "$OUT/risk-$w.n_f7_written_off" > "$OUT/risk-$w.log" 2>&1 <<'EOF' || rc=$?
 import sqlite3, sys
+from collections import Counter
 from paper.journal_diff import TABLES, writeoff_causes
-a, b = sys.argv[1:3]
+a, b, n_file = sys.argv[1:4]
 GROUPS = {"K3": ("tp4_T600",), "H": ("flow300_H6", "flow300_tp100_H6")}
 written_off, _ = writeoff_causes(a, b)
 
@@ -185,6 +186,7 @@ def rows(p, table):
 
 wo = rows(b, "exits")
 bad = []
+n_f7 = 0
 for g, variants in GROUPS.items():
     # The group's F7 rows are judged up to its first F7 write-off (its risk state: day loss, places, cooldowns); an N2
     # write-off has no risk effect, so N2 rows are judged everywhere except a key's rows after its own write-off (busy).
@@ -194,7 +196,9 @@ for g, variants in GROUPS.items():
         if k[0].startswith("N2_") and k[1] in variants and r["exit_reason"] == "written_off":
             n2_off[k[:3]] = min(n2_off.get(k[:3], r["exit_slot"]), r["exit_slot"])
     cut = min(offs) if offs else None
-    same = after = explained = 0
+    n_f7 += len(offs)
+    same = after = 0
+    explained = Counter()
     for table in ("signals", "orders", "fills", "exits"):
         ra, rb = rows(a, table), rows(b, table)
         for k in set(ra) | set(rb):
@@ -204,8 +208,9 @@ for g, variants in GROUPS.items():
             if x == y:
                 same += 1
                 continue
-            if x is not None and y is not None and written_off(table, k, x, y):
-                explained += 1
+            cause = written_off(table, k, x, y) if x is not None and y is not None else None
+            if cause:
+                explained[cause] += 1
             elif k[0] == "F7" and cut is not None and k[3] >= cut:
                 after += 1
             elif k[0].startswith("N2_") and k[:3] in n2_off and k[3] > n2_off[k[:3]]:
@@ -213,13 +218,17 @@ for g, variants in GROUPS.items():
             else:
                 bad.append((g, table, k))
     print(f"{g}: F7 write-offs {len(offs)}, the first at {cut}; N2 write-offs {len(n2_off)}; rows equal {same}; the write-offs' own "
-          f"rows {explained}; different after a write-off {after} (the cascade, not judged)")
+          f"rows {dict(explained)}; different after a write-off {after} (the cascade, not judged)")
+open(n_file, "w").write(f"{n_f7}\n")
 print("risk on: " + ("GREEN" if not bad else f"RED: {len(bad)} rows differ before their group's first write-off, e.g. {bad[:5]}"))
 sys.exit(1 if bad else 0)
 EOF
   tee -a "$OUT/job.log" < "$OUT/risk-$w.log"
   [ "$rc" = 0 ] || { log "RED: risk on $w"; exit 1; }
 done
+n_f7=$(( $(cat "$OUT/risk-W1.n_f7_written_off") + $(cat "$OUT/risk-W2.n_f7_written_off") ))
+[ "$n_f7" -gt 0 ] || { log "RED: no F7 write-off risk on in W1 or W2 (the first-divergence check would be vacuous; LAB review on #533)"; exit 1; }
+log "risk on: $n_f7 F7 write-offs over W1 and W2"
 
 # 4. the H arms against the backtest, main's engine and this commit's
 IFS=":" read -r lo hi <<< "$W1"
@@ -241,7 +250,7 @@ m, h = (json.load(open(p)) for p in sys.argv[1:3])
 for name, x in (("main", m), ("head", h)):
     o, t = x["organic_busy"], x["tournament_busy"]
     print(f"{x['arm']} {name}: organic busy {o['different']} unexplained, {o['unsold_busy']} unsold_busy, {o.get('written_off', '-')} "
-          f"written_off; tournament busy {t['different']} unexplained")
+          f"written_off, {o.get('written_off_later_sold', '-')} written_off_later_sold; tournament busy {t['different']} unexplained")
 ok = (h["organic_busy"]["different"] <= m["organic_busy"]["different"]
       and h["tournament_busy"]["different"] <= m["tournament_busy"]["different"])
 print(f"{h['arm']}: {'GREEN' if ok else 'RED'} (head no more unexplained than main)")
