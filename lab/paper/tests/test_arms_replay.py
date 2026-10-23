@@ -40,7 +40,16 @@ def _run(journal_dir, clock, with_h=True, crash_slot=None):
     eng = Engine(feed, Journal(journal_dir), conf["risk_path"], variants=conf["variants"], d_ms=conf["d_ms"], q=conf["q"],
                  n2_k=conf["n2_k"], segments=conf["segments"], farm=conf["farm"], clock=clock, backup=False,
                  dev_bounds=(LO - 400_000, HI), groups=groups)
-    eng.run()
+    try:
+        eng.run()
+    except BaseException:
+        # The process died: what it wrote after its last commit is gone, and so is its write lock. Without this the
+        # dead run's connection holds the journal's lock until the garbage collector frees it (the traceback keeps
+        # the engine alive), and the restart's first write can find the database locked (NAS 99zzzzz55; test_restart's
+        # crash() rolls back the same way).
+        eng.journal.db.rollback()
+        eng.journal.close()
+        raise
     return eng
 
 
