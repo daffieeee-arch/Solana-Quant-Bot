@@ -20,6 +20,7 @@ const EXIT: Record<string, string> = {
   take_profit: "doel geraakt", stop_loss: "stop-loss", time: "tijdslimiet", window_end: "einde data", open: "open",
   outflow: "uitstroom", graduation: "migratie", restart_lost: "verloren bij herstart", entry_slippage: "instap: slippage",
   after_window_end: "einde data", end_of_data: "einde data",
+  written_off: "afgeschreven",  // a position past its rule's deadline with no sale possible (engine._write_off_if_stuck)
 };
 const VERDICT: Record<string, { text: string; tone: "buy" | "warn" | "sell" }> = {
   GO: { text: "GO", tone: "buy" }, ADJUST: { text: "BIJSTELLEN", tone: "warn" }, STOP: { text: "STOP", tone: "sell" },

@@ -21,6 +21,7 @@ interface X {
 const EXIT: Record<string, string> = {
   take_profit: "doel geraakt", stop_loss: "stop-loss", time: "tijdslimiet", outflow: "uitstroom", graduation: "migratie",
   window_end: "einde data", restart_lost: "verloren bij herstart", after_window_end: "einde data", end_of_data: "einde data",
+  written_off: "afgeschreven",
 };
 const px = (v: number | null | undefined) => (v == null ? "–" : compactPrice(v));
 const pct = (v: number | null | undefined, d = 2) => (v == null ? "–" : `${v > 0 ? "+" : v < 0 ? "−" : ""}${Math.abs(v).toLocaleString("nl-NL", { maximumFractionDigits: d })}%`);
