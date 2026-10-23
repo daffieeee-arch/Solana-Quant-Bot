@@ -58,11 +58,19 @@ log = logging.getLogger("paper.live")
 
 
 def segment_dirs(root):
-    """Complete segments in order: (seq, dir, meta)."""
+    """Complete segments in order: (seq, dir, meta).
+
+    A segment the hourly retention (ops/live-retention.sh, segments older than 3 days) deletes between the glob and
+    the open is skipped: it is old, so it is behind every reader (the engine's next segment, a restart's 36 h replay).
+    lab-paper exited on this twice on 23 Oct (20:43Z, 22:44Z). A _segment.json that does not parse is not skipped: the
+    recorder writes it atomically (segment.rs write_json_atomic: a .json.tmp renamed), so it would be a real fault."""
     out = []
     for m in glob.glob(os.path.join(root, "segments", "*", "_segment.json")):
-        with open(m) as f:
-            meta = json.load(f)
+        try:
+            with open(m) as f:
+                meta = json.load(f)
+        except FileNotFoundError:
+            continue
         if meta.get("complete"):
             out.append((int(meta["seq"]), os.path.dirname(m), meta))
     return sorted(out)
