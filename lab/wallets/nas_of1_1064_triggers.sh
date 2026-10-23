@@ -1,6 +1,6 @@
 #!/bin/bash
-# Trigger supply, step 2 (coordinator 2026-10-23, roadmap #167): ONE UTC day of OF1 epoch 1064 (2026-10-22, slots
-# 459,823,752-460,230,895, the explore window's full day) extracted on the NAS, a forward store (illustration only) built
+# Trigger supply, step 2 (coordinator 2026-10-23, roadmap #167): ONE day of OF1 epoch 1064 (slots 459,671,698-460,080,000 =
+# 2026-10-21 15:00Z to the epoch's end 10-22 ~15:03Z, 24.0 h: the explore window inside 1064; 1065 is not published) extracted on the NAS, a forward store (illustration only) built
 # from it, and the dev tournament's F7 trigger function counted on it against the live recorder's triggers and probe pools
 # of the same hours (wallets/regime-1064-inputs/, synced from the VPS). TRIGGER COUNTS ONLY.
 #
@@ -9,9 +9,14 @@
 #
 #   STEP=check (kort, ~10 min): the first 1,000 slots of the day through the extractor (Alpenglow format check): the
 #              chunk must be complete, and its blocks / pump creates / graduations must be >= the recorder's counts on the
-#              same slots (check-chunk-recorder.json: 1,000 blocks, 142 mints, 2 graduations); unknown-reward counts logged.
-#   STEP=day   (lang, est. 4-6 h): the whole day in 16 chunks of 27,000 slots into $DATA/events/fwd1064/chunks (resumable:
-#              complete chunks are skipped), then `backtest.store forward --illustration` into
+#              same slots (check-chunk-recorder.json); unknown-reward counts logged.
+#   STEP=day   (lang): EXTRACT=epoch (default, recommended): ops' extract_epochs.sh with EPOCHS=1064 (THREADS=3, ~3-4 h as the
+#              venue census epoch) into $DATA/events/fwd1064/chunks (2 chunks of 216,000 slots tiling the whole epoch), the
+#              forward store over the whole epoch [459,648,000; 460,080,000), the readout over the day only.
+#              EXTRACT=chunks (fallback): the day in 16 chunks of 27,000 slots through smoke_extract.sh, which runs
+#              --threads 1 via the rate-limited proxy: ~9-11 h for 408k slots (VPS reference 6 threads = 216k slots per 36 min;
+#              NAS reference 3 threads = 432k slots per 3-4 h), so only if ops cannot run extract_epochs.sh.
+#              Then `backtest.store forward --illustration` into
 #              $DATA/store/fwd1064-day-<commit7>.duckdb, then wallets.of1_1064.count_triggers into
 #              $DATA/wallets/of1-1064-triggers-<commit7>/ (count_triggers.json + job.log), sha256 of every output.
 #
@@ -19,10 +24,8 @@
 #   BIN=/lab/bin/lab-extractor-<commit7> STEP=day   LAB_PY=/lab/venv/bin/python bash lab/wallets/nas_of1_1064_triggers.sh
 #
 # Runs only after Saturday's clean runs: START_NOT_BEFORE (default 2026-10-24T12:45:00Z, after E56) is enforced.
-# Extraction uses the NAS ops' smoke_extract.sh per chunk (BIN, SLOTS=a:b, D=<log dir>, OUT=<chunk dir>), as the venue census
-# job did (nas_venue_census.sh); if ops prefer extract_epochs.sh (whole epoch 1064), point CHUNKS at its root instead and the
-# store/readout still use only the day's slots. Tunables: MEMORY (DuckDB for the store build, default 8GB), THREADS (3),
-# LAB_SPILL_MAX (40GB), CHUNK (27000), START_NOT_BEFORE, OPS (/lab/ops), INPUTS.
+# Tunables: EXTRACT (epoch | chunks), MEMORY (DuckDB for the store build, default 8GB), THREADS (3), LAB_SPILL_MAX (40GB),
+# CHUNK (27000, chunks mode), START_NOT_BEFORE, OPS (/lab/ops), INPUTS.
 set -euo pipefail
 export LC_ALL=C
 
@@ -33,7 +36,9 @@ PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
 OPS=${OPS:-/lab/ops}
 : "${STEP:?STEP=check or day}"
 case "$STEP" in check | day) ;; *) echo "unknown STEP=$STEP"; exit 2 ;; esac
-DAY_LO=459823752; DAY_HI=460230895          # 2026-10-22 00:00:00Z .. 23:59:59Z (live blocks), epoch 1064 only
+DAY_LO=459671698; DAY_HI=460080000          # 2026-10-21 15:00:00Z .. the end of epoch 1064 (live blocks); epoch 1064 only
+EPOCH_LO=459648000; EPOCH_HI=460080000      # the whole epoch (EXTRACT=epoch tiles it with ops' 216,000-slot chunks)
+EXTRACT=${EXTRACT:-epoch}
 CHECK_HI=$((DAY_LO + 1000))
 CHUNK=${CHUNK:-27000}
 CHUNKS=${CHUNKS:-$DATA/events/fwd1064/chunks}
@@ -93,22 +98,31 @@ PYEOF
 }
 
 if [ "$STEP" = check ]; then
-  extract "$DAY_LO" "$CHECK_HI" "$CHUNKS/$DAY_LO-$CHECK_HI"
-  check_chunk "$CHUNKS/$DAY_LO-$CHECK_HI" 2>&1 | tee -a "$OUT/job.log" || red "format check failed (see job.log)"
+  extract "$DAY_LO" "$CHECK_HI" "$OUT/check-chunk/$DAY_LO-$CHECK_HI"   # outside $CHUNKS: never part of the store's tiling
+  check_chunk "$OUT/check-chunk/$DAY_LO-$CHECK_HI" 2>&1 | tee -a "$OUT/job.log" || red "format check failed (see job.log)"
   log "done check: the ≥ 1064 format decodes; STEP=day may run"
   exit 0
 fi
 
-# STEP=day: the chunks tile [DAY_LO, DAY_HI) exactly (the check chunk is re-extracted as part of the first full chunk)
-for ((s = DAY_LO; s < DAY_HI; s += CHUNK)); do
-  e=$((s + CHUNK < DAY_HI ? s + CHUNK : DAY_HI))
-  extract "$s" "$e" "$CHUNKS/$s-$e"
-done
+# STEP=day
+if [ "$EXTRACT" = epoch ]; then  # the whole epoch through ops' extract_epochs.sh (as nas_venue_census.sh STEP=epoch)
+  rc=0
+  EPOCHS=1064 BIN=$BIN OUT=$CHUNKS LOGD=$OUT/extract-1064 THREADS=${THREADS:-3} bash "$OPS/extract_epochs.sh" >> "$OUT/extract-1064.console.log" 2>&1 || rc=$?
+  log "extract_epochs 1064: rc $rc"
+  [ "$rc" = 0 ] || { tail -20 "$OUT/extract-1064.console.log" | tee -a "$OUT/job.log"; red "extract_epochs rc $rc"; }
+  STORE_LO=$EPOCH_LO; STORE_HI=$EPOCH_HI
+else  # the day in chunks of CHUNK slots tiling [DAY_LO, DAY_HI) exactly (the check chunk is re-extracted inside the first one)
+  for ((s = DAY_LO; s < DAY_HI; s += CHUNK)); do
+    e=$((s + CHUNK < DAY_HI ? s + CHUNK : DAY_HI))
+    extract "$s" "$e" "$CHUNKS/$s-$e"
+  done
+  STORE_LO=$DAY_LO; STORE_HI=$DAY_HI
+fi
 n_complete=$("$PY" -c "import json,glob,sys; print(sum(1 for m in glob.glob(sys.argv[1]+'/*/_manifest.json') if json.load(open(m))['status']=='complete'))" "$CHUNKS")
 log "complete chunks in $CHUNKS: $n_complete"
 [ ! -e "$STORE" ] || red "$STORE exists (built once; remove by hand after a failed build)"
 rc=0
-(cd "$REPO/lab" && "$PY" -m backtest.store forward --illustration --from-slot "$DAY_LO" --to-slot "$DAY_HI" --out "$STORE") > "$OUT/store-build.log" 2>&1 || rc=$?
+(cd "$REPO/lab" && "$PY" -m backtest.store forward --illustration --from-slot "$STORE_LO" --to-slot "$STORE_HI" --out "$STORE") > "$OUT/store-build.log" 2>&1 || rc=$?
 [ "$rc" = 0 ] || { tail -10 "$OUT/store-build.log" | tee -a "$OUT/job.log"; red "store build rc $rc"; }
 log "store built: $(tail -1 "$OUT/store-build.log" | cut -c1-200)"
 rc=0
