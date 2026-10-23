@@ -1,6 +1,6 @@
 #!/bin/bash
 # The capital ceiling on dev (research/capital-ceiling-plan-2026-10-23.md, sha256 2a17f2d2; exploratory, no new rules) on
-# the NAS, the lab runner (kort-lang, ~1-1.5 h est.): one tournament run on dev2 (F7 pool_reversed; tp4_T600, hold300,
+# the NAS, the lab runner (lang, ~1-1.5 h est.): one tournament run on dev2 (F7 pool_reversed; tp4_T600, hold300,
 # flow300_tp100_H6; sizes 0.5, 1, 1.25, 2, 2.5, 5, 10 SOL; d 2 and 3; q 0.5; --no-report), then backtest.capital_ceiling
 # on its rows: the candidates K3, H5 and C3 at C = 10 / 25 / 100 SOL under paper's risk rules scaled with C, the size
 # curves and the sandwich flag. Dev only: the store must be dev2's window [446,256,000, 452,304,000).

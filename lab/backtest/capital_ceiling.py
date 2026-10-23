@@ -59,10 +59,13 @@ CANDIDATES = (("K3", "tp4_T600", None, False), ("H5", "flow300_tp100_H6", "organ
 W8B = ("W8-B (E51; probe scripts/w8est/e1.py, 0.25 SOL, linear impact 0.25/Q, not replayed by the engine): capped net "
        "per pool d 2 +0.35 % [-0.20; +0.90], d 3 +0.05 % [-0.56; +0.64], 780 pools a day; its size curve and capital "
        "ceiling are unknown until the engine can replay it.")
-GAP = ("Dev, pre-Alpenglow, a ceiling. Live paper on 10 SOL lost 2.86 SOL on 22 Oct, the first whole day after "
-       "Alpenglow (the coordinator's status: K3 with the N2 comparison arm; the days before fall in clean epoch 1063 and "
-       "are not quoted here). Dev's trigger supply is an upper bound for live (E09: the live watchlist saw 24 % of all "
-       "F7 triggers, 74 % of the organic ones). Do not read a dev ceiling as reachable.")
+GAP = ("Dev, pre-Alpenglow, a ceiling. One live day, for scale: live paper on 22 Oct, the first whole day after Alpenglow (exit day UTC, "
+       "triggers from epoch 1064; read-only journal snapshot sha256 1691ddc9…, 23 Oct 00:04Z): K3 (F7 tp4_T600, 0.5 SOL "
+       "of 10) realised +1.06 SOL over 135 exits, with 3 positions open in emptied pools marked -1.50 SOL; the N2 "
+       "comparison arm (a control, not a strategy) -1.87 SOL over 317 exits; group H entered nothing (5 positions stuck "
+       "open since 21 Oct, max open). Live F7 trigger supply that day: 398, 180 of them organic, against dev's "
+       "~2,040 and ~630 a day (the v4 run's F7 pool_reversed signal set: 40,737 and 12,641 over 20 days). Do not read a dev "
+       "ceiling as reachable.")
 
 
 class Refused(SystemExit):
@@ -282,9 +285,10 @@ def limited(rows, days, capital, size, unsold):
 def flag_share(con, variant, farm, arm, size, d):
     where = f"r.variant = '{variant}' AND r.size_sol = {size} AND r.d = {d}" + (f" AND r.farm = '{farm}'" if farm else "")
     join = "SEMI JOIN c3 USING (pool, t)" if arm else ""
-    v = con.execute(f"""SELECT avg(({size} * 1e9 > fee.f * r.depth)::INT) FROM (SELECT * FROM r {join} WHERE {where}) r
-                        LEFT JOIN fee USING (pool, t)""").fetchone()[0]
-    return None if v is None else round(100 * v, 1)
+    v, cov = con.execute(f"""SELECT avg(({size} * 1e9 > fee.f * r.depth)::INT), avg((fee.f IS NOT NULL)::INT)
+                             FROM (SELECT * FROM r {join} WHERE {where}) r LEFT JOIN fee USING (pool, t)""").fetchone()
+    # A row without a buy or sell leg at (pool, t) has no fee: it drops out of the share (LAB review on #529: the coverage).
+    return (None if v is None else round(100 * v, 1)), (None if cov is None else round(100 * cov, 1))
 
 
 def arm_unmatched(con, variant, size, d):
@@ -312,7 +316,7 @@ def compute(con, flags):
                 c = {"candidate": name, "variant": variant, "farm": farm or "all", "c3_arm": arm, "size": size, "d": d,
                      "scenario": scen, "unlimited": unlimited(rows, days), "limited": []}
                 if flags and scen == "base":
-                    c["sandwich_flagged_pct"] = flag_share(con, variant, farm, arm, size, d)
+                    c["sandwich_flagged_pct"], c["sandwich_fee_coverage_pct"] = flag_share(con, variant, farm, arm, size, d)
                 if arm:
                     c["arm_keys_matched"] = len({(r[8], r[0]) for r in rows})
                     c["arm_keys_unmatched"] = arm_unmatched(con, variant, size, d)
@@ -353,12 +357,16 @@ def max_useful(cells, name, d=PRIMARY["d"], scen=PRIMARY["scenario"], mapping=PR
     pos = [s for s, v, _ in curve if v > 0]
     eaten = next((s for s, _, n in curve if n is not None and n <= 0), None)
     already = eaten is not None and eaten == curve[0][0]
+    # LAB review on #529: a clean curve has no size <= 0 below the largest positive one (non_positive_below_largest
+    # empty); monotone says whether with-limits SOL/day never rises with size (a curve that peaks is clean, not monotone).
+    monotone = all(a[1] >= b[1] for a, b in zip(curve, curve[1:]))
     best = max(curve, key=lambda x: x[1])
     top = max(s for s, _, _ in curve)
     largest = max(pos) if pos else None
     return {"sizes": [s for s, _, _ in curve], "largest_positive_size": largest,
             "max_useful_capital": None if largest is None else round(largest / frac, 2),
             "positive_at_grid_top": bool(pos) and largest == top, "edge_eaten_at_size": eaten, "no_edge_at_smallest": already,
+            "monotone": monotone, "non_positive_below_largest": [s for s, v, _ in curve if largest is not None and s < largest and v <= 0],
             "best_size": best[0], "best_sol_day": best[1]}
 
 
@@ -412,6 +420,10 @@ def report_md(out):
                 row.append(f">= {max(CAPITALS)} SOL (positive up to size {mu['largest_positive_size']:g}, C {mu['max_useful_capital']:g})")
             else:
                 row.append(f"{mu['max_useful_capital']:g} SOL (size {mu['largest_positive_size']:g})")
+            if mu["non_positive_below_largest"]:
+                row[-1] += f" — not a clean curve: <= 0 at {', '.join(f'{s:g}' for s in mu['non_positive_below_largest'])}"
+            elif mu["largest_positive_size"] is not None:
+                row[-1] += f"; SOL/day peaks at size {mu['best_size']:g}"
             row.append(f"not within the grid (> {max(mu['sizes']):g} SOL)" if mu["edge_eaten_at_size"] is None else
                        (f"no edge even at {mu['edge_eaten_at_size']:g} SOL (the smallest size)" if mu["no_edge_at_smallest"]
                         else f"{mu['edge_eaten_at_size']:g} SOL"))
@@ -429,7 +441,8 @@ def report_md(out):
             L.append(f"| {c['size']:g} | {c['d']} | {c['scenario']} | {u['per_day_rows']:g} | {fmt(u['entry_failed_pct'], 1, False)} | "
                      f"{fmt(u['unsold_pct'], 2, False)} | {fmt(u['net_per_filled_sol'], 4)} ({fmt(u['net_per_filled_pct_of_cost'], 2)} %) | "
                      f"{ci(u['sol_day'], u['lo'], u['hi'])} | {lim(x)} | {x['taken_per_day']:g} | "
-                     f"{fmt(x['worst_day'])} | {fmt(x['max_drawdown_pct'], 1, False)} | {fmt(c.get('sandwich_flagged_pct'), 1, False)} |")
+                     f"{fmt(x['worst_day'])} | {fmt(x['max_drawdown_pct'], 1, False)} | {fmt(c.get('sandwich_flagged_pct'), 1, False)}"
+                     + (f" (of {c['sandwich_fee_coverage_pct']:.0f} % with a fee)" if c.get("sandwich_fee_coverage_pct") is not None else "") + " |")
         L += ["", GAP, "", "At the named capitals (both mappings, every unsold convention):", "",
               "| C | mapping | size | d | costs | unsold | taken/day | skips pool / cooldown / daily / full | SOL/day | positive days | worst day | max DD % | peak open | final SOL |",
               "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
