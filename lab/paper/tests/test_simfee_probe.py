@@ -139,9 +139,16 @@ def test_the_meter_counts_before_the_call_and_stops(tmp_path):
     m.reserve("sim")
     assert m.s["calls"] == 1
     m.s["hour"] = [t[0]] * sp.HOUR_CAP
-    with pytest.raises(sp.Stop) as e:
+    assert m.hour_wait() >= 3599  # a throttle: Rpc.call waits for room
+    with pytest.raises(sp.Stop):
         m.reserve("sim")
-    assert e.value.code == sp.EXIT_RUNAWAY
+    day = m.s["day"]
+    t[0] = (t[0] // 86_400 + 1) * 86_400 - 60  # a minute before midnight UTC: a full hour window
+    m._day()
+    m.s["hour"] = [t[0] - 10] * sp.HOUR_CAP
+    t[0] += 120  # two minutes later: a new UTC day, and the hour window survives it
+    m._day()
+    assert m.s["day"] != day and len(m.s["hour"]) == sp.HOUR_CAP
     open(path, "w").write("{broken")
     with pytest.raises(sp.Stop) as e:
         sp.Meter(path)
@@ -171,6 +178,24 @@ def test_the_rpc_allows_two_methods_backs_off_and_stops(tmp_path):
         for _ in range(sp.MAX_CONSEC):
             rpc2.call(sp.fee_request(key(1), 5000, 1), "sim")
     assert e.value.code == sp.EXIT_ERRORS
+    rpc3 = sp.Rpc(CANARY, m, post=lambda u, b: (429, {}, b""), sleep=lambda s: None, log=lambda s: None)
+    with pytest.raises(sp.Stop) as e:  # a persistent 429 stops too
+        rpc3.call(sp.fee_request(key(1), 5000, 1), "sim")
+    assert e.value.code == sp.EXIT_ERRORS
+    dead = sp.Rpc(CANARY, m, post=lambda u, b: (200, {}, b"{}"), sleep=lambda s: None, log=lambda s: None, alive=lambda: False)
+    with pytest.raises(sp.Stop) as e:
+        dead.call(sp.fee_request(key(1), 5000, 1), "sim")
+    assert e.value.code == 0
+
+
+def test_a_row_is_marked_only_once_its_call_is_counted(tmp_path):
+    m = sp.Meter(str(tmp_path / "state.json"), max_run=1)
+    marked = []
+    rpc = sp.Rpc(CANARY, m, post=lambda u, b: (200, {}, b'{"result": []}'), sleep=lambda s: None, log=lambda s: None)
+    rpc.call(sp.fee_request(key(1), 5000, 1), "fee", on_reserved=lambda: marked.append(1))
+    with pytest.raises(sp.Stop):
+        rpc.call(sp.fee_request(key(1), 7500, 2), "fee", on_reserved=lambda: marked.append(2))
+    assert marked == [1]  # the second was never counted, so never marked
 
 
 def test_the_url_never_leaks(monkeypatch, capsys):
@@ -248,8 +273,10 @@ class FakeRpc:
     def __init__(self, res):
         self.res, self.reqs = res, []
 
-    def call(self, req, kind):
+    def call(self, req, kind, on_reserved=None):
         self.reqs.append(req)
+        if on_reserved:
+            on_reserved()
         return self.res
 
 
@@ -276,6 +303,45 @@ def test_the_entry_readout_against_the_engine_on_the_same_state():
     assert cfg["preExecutionAccountsConfigs"][0] is None and len(cfg["preExecutionAccountsConfigs"][1]["addresses"]) == 4
 
 
+def test_an_acquire_the_market_refuses_is_its_own_class():
+    row, pool = fake_acc()
+    acc, _ = sp.pool_accounts(row, pool)
+    res = {"result": {"context": {"slot": 9}, "value": {"summary": {"failed": {}}, "transactionResults": [
+        {"err": None}, {"err": {"InstructionError": [1, {"Custom": 6004}]}}]}}}
+    _, out = sp.simulate_exit({"tokens": 5, "j_sol": 500_000_000, "pool": pool}, acc, row, payer(), FakeRpc(res), 1)
+    assert out["cls"] == "acquire_market" and out["detail"]["stage"] == "acquire"
+    res["result"]["value"]["transactionResults"][1]["err"] = {"InstructionError": [1, {"Custom": 6057}]}
+    _, out = sp.simulate_exit({"tokens": 5, "j_sol": 500_000_000, "pool": pool}, acc, row, payer(), FakeRpc(res), 1)
+    assert out["cls"] == "structural"
+    _, out = sp.simulate_exit({"tokens": 5, "j_sol": 900_000_000, "pool": pool}, acc, row, payer(), FakeRpc(res), 1, budget=2_000_000_000)
+    assert out["acquire"] == 2_000_000_000  # 3 x 0.9 SOL, capped at the payer budget
+
+
+def test_the_percentile_guard_compares_common_slots(tmp_path):
+    m = sp.Meter(str(tmp_path / "state.json"))
+    same = {p: {"values": [(s, 7 if s % 3 else 0) for s in range(1000 + i, 1150 + i)]} for i, p in enumerate(sp.PCTS)}
+    for _ in range(9):
+        sp._percentile_guard(m, same, lambda s: None)
+    assert not m.s.get("fee_off")
+    sp._percentile_guard(m, same, lambda s: None)
+    assert m.s["fee_off"]
+    m2 = sp.Meter(str(tmp_path / "s2.json"))
+    differ = {5000: {"values": [(s, 5) for s in range(150)]}, 7500: {"values": []}, 9000: {"values": [(s, 9) for s in range(150)]}}
+    for _ in range(12):
+        sp._percentile_guard(m2, differ, lambda s: None)
+    assert not m2.s.get("fee_off")
+
+
+def test_a_second_instance_is_refused(tmp_path):
+    lab = tmp_path / "lab"
+    (lab / "probe" / "simfee").mkdir(parents=True)
+    held = open(lab / "probe" / "simfee" / "probe.lock", "w")
+    sp.fcntl.flock(held, sp.fcntl.LOCK_EX | sp.fcntl.LOCK_NB)
+    with pytest.raises(SystemExit) as e:
+        sp.main(["--lab", str(lab), "--payer", payer()])
+    assert e.value.code == sp.EXIT_LOCKED
+
+
 def test_the_exit_readout_on_the_state_after_the_acquire():
     row, pool = fake_acc()
     acc, _ = sp.pool_accounts(row, pool)
@@ -293,7 +359,7 @@ def test_the_exit_readout_on_the_state_after_the_acquire():
     x = {"tokens": T, "j_sol": 500_000_000, "pool": pool}
     _, out = sp.simulate_exit(x, acc, row, payer(), FakeRpc(res), 1)
     assert out["cls"] == "ok" and out["sim_out"] == eng and out["M_bps"] == 0.0
-    assert out["exit_est"] == rev_sell_token(p1, T).trader_quote and out["acquire"] == 750_000_000  # 1.5 x the journal proceeds
+    assert out["exit_est"] == rev_sell_token(p1, T).trader_quote and out["acquire"] == 1_500_000_000  # 3 x the journal proceeds
 
 
 def make_journal(path):
@@ -353,8 +419,13 @@ def test_the_rule_evaluation(tmp_path):
     rows = [{"side": "entry", "cls": "ok", "M_bps": 30.0 + (i % 5), "D_bps": 40.0, "slots_late": 100} for i in range(40)]
     rows += [{"side": "entry", "cls": "market"}] * 2 + [{"side": "entry", "cls": "structural"}]
     rows += [{"side": "exit", "cls": "ok", "M_bps": (-1) ** i * 3.0} for i in range(40)] + [{"side": "exit", "cls": "skipped"}]
+    rows += [{"side": "exit", "cls": "acquire_market"}, {"side": "exit", "cls": "late"}, {"side": "exit", "cls": "market", "test_late": True}]
+    rows = [dict(r, family="F7", variant="tp4_T600", pool=f"p{i}", t=i) for i, r in enumerate(rows)]
+    rows.append(dict(rows[0], M_bps=-500.0))  # the same position side twice: the first counts
     (d / "sims.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     s = sp.summary(str(tmp_path))
     assert s["entry"]["systematic"] and s["entry"]["uitval_pct"] == round(100 * 2 / 42, 2) and s["entry"]["uitval"]
+    assert s["entry"]["ok_with_M"] == 40 and s["entry"]["M_median"] > 25
     assert not s["exit"]["systematic"] and s["exit"]["attempted"] == 40 and not s["exit"]["uitval"]
+    assert s["exit"]["not_in_sample"] == {"late": 1, "skipped": 1, "acquire_market": 1, "declined": 0}
     assert s["rule"]["sha256"] == sp.RULE_SHA

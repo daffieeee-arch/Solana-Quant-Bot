@@ -19,9 +19,14 @@ the blockhash is zero, and only those two read methods can be posted (METHODS).
 - Readout: the user's token / WSOL account amounts before and after the swap (u64 at data[64:72]), and the pool and vault
   accounts before it: the engine's own math (backtest.venues) on exactly that state gives M (model error, bps); D compares
   with the journal's fill (model error plus the drift since the decision: we simulate at receipt, 20-90 s later).
-- Meter (fail-closed): <LAB>/probe/simfee/state.json per UTC day, each call counted and saved before it is sent; at most
-  5,000 calls a day (fee calls only below 4,000), $0.25 a day estimated, 600 an hour; exit 76 (cap), 77 (runaway),
-  78 (errors or an unreadable state). A 429 waits >= 10 s with exponential backoff.
+- Meter (fail-closed): <LAB>/probe/simfee/state.json per UTC day, each call counted and saved before it is sent (a row is
+  marked seen only once its call is counted); at most 5,000 calls a day (fee calls only below 4,000), $0.25 a day
+  estimated, 600 an hour (a throttle); exit 76 (a cap), 78 (5 failed calls in a row, a 429 included, or an unreadable
+  state), 79 (another instance holds probe/simfee/probe.lock). A 429 waits >= 10 s with exponential backoff; the kill
+  switches (the approval file, locks/disk-stopped) are checked before every attempt.
+- Rows and triggers more than LATE_SLOTS (~5 min) behind the recorder's newest slot get no call (their pools have moved
+  on); simulations come before fee calls, the newest first. --test-late N lets the first test (--max-calls 10) try N
+  late rows, flagged and outside the rule.
 - Default is a DRY RUN: no URL is read, every socket connect raises, and the exact request bodies go to requests.jsonl.
   --enable needs the approval file, LAB_TRITON_RPC_URL (https, *.rpcpool.com; it holds the token and is never printed)
   and --payer, a funded on-curve system account the owner chose (no key needed: the signature check is skipped).
@@ -33,6 +38,7 @@ the blockhash is zero, and only those two read methods can be posted (METHODS).
 import argparse
 import base64
 import datetime as dt
+import fcntl
 import glob
 import hashlib
 import json
@@ -56,7 +62,7 @@ from backtest.venues import Pool, rev_buy_token, rev_sell_token
 from . import txwire
 
 RULE = "research/simfee-probe-rule-2026-10-23.md"
-RULE_SHA = "5e434eccabc86511a7eba566b7f78fcf117cb82cab9afe0e243b20bac1a5cd77"
+RULE_SHA = "ce2717e568da0047e7936c2922abe0a93a5ed2a443cffd50084340a5cf555d9e"  # v2
 FLOOR = 459_648_000  # the first slot after the clean lock (epoch 1064, Alpenglow)
 DAY0 = "2026-10-23"
 FAMILY = "F7"
@@ -67,9 +73,11 @@ PCTS = (5000, 7500, 9000)
 CAP_DAY, FEE_UNTIL, HOUR_CAP, USD_CAP = 5000, 4000, 600, 0.25
 USD_PER_CALL, USD_PER_GB = 10 / 1e6, 0.08  # Triton's standard RPC rate (unverified for simulateBundle)
 PACE_S, MAX_CONSEC = 0.5, 5
-EXIT_CAP, EXIT_RUNAWAY, EXIT_ERRORS = 76, 77, 78
+EXIT_CAP, EXIT_ERRORS, EXIT_LOCKED = 76, 78, 79
 CU_SETUP, CU_SWAP = 80_000, 400_000
-ACQUIRE_MIN = 100_000_000  # lamports: the exit's acquire is max(0.1 SOL, 1.5 x the journal's proceeds)
+ACQUIRE_MIN = 100_000_000  # lamports: the exit's acquire is min(max(0.1 SOL, 3 x the journal's proceeds), the payer budget)
+PAYER_BUDGET = 1_900_000_000  # lamports the acquire may use (a payer of >= 2 SOL; rent and fees from the rest)
+LATE_SLOTS = 1_500  # a row or trigger older than this behind the recorder's newest slot (~5 min) is late: no call
 SCAN_SEGMENTS = 120  # recorder segments searched back for a pool's trade row (~2 h)
 AMM, WSOL, TOKEN, ATAP, SYSTEM = pda.PUMP_AMM, pda.WSOL, pda.TOKEN, pda.ATA_PROGRAM, txwire.SYSTEM
 DEFAULT_KEY = pda.DEFAULT_KEY
@@ -109,7 +117,7 @@ def snapshot(journal_db, dst):
     src = sqlite3.connect(f"file:{journal_db}?mode=ro", uri=True)
     try:
         src.execute("PRAGMA query_only=1")
-        tmp = dst + ".tmp"
+        tmp = f"{dst}.{os.getpid()}.tmp"
         if os.path.exists(tmp):
             os.remove(tmp)
         out = sqlite3.connect(tmp)
@@ -182,6 +190,9 @@ class Recorder:
                 self.segs[seq] = (m["first_slot"], m["last_slot"], d)
         for seq in [s for s, (_, _, d) in self.segs.items() if not os.path.isdir(d)]:
             del self.segs[seq]  # removed by retention
+
+    def newest_slot(self):
+        return max((hi for _, hi, _ in self.segs.values()), default=None)
 
     def _query(self, files, pool, upto):
         files = [f for f in files if os.path.exists(f)]
@@ -399,11 +410,19 @@ class Meter:
     def _day(self):
         today = dt.datetime.fromtimestamp(self.now(), dt.timezone.utc).strftime("%Y-%m-%d")
         if self.s.get("day") != today:
+            # The hour window and the fee switch carry over the UTC day change (review: no doubled hour at midnight).
             self.s = {"day": today, "calls": 0, "calls_sim": 0, "calls_fee": 0, "req_bytes": 0, "resp_bytes": 0, "http_429": 0,
-                      "hour": [], "fee_off": self.s.get("fee_off")}
+                      "hour": [x for x in self.s.get("hour", []) if x > self.now() - 3600], "fee_off": self.s.get("fee_off")}
 
     def usd(self):
         return self.s["calls"] * USD_PER_CALL + (self.s["req_bytes"] + self.s["resp_bytes"]) * USD_PER_GB / 1e9
+
+    def hour_wait(self):
+        """Seconds until the hour window has room again (0: room now). HOUR_CAP is a throttle, not a stop: a backlog
+        drains at 600 calls an hour."""
+        t = self.now()
+        self.s["hour"] = [x for x in self.s["hour"] if x > t - 3600]
+        return 0 if len(self.s["hour"]) < HOUR_CAP else max(1.0, self.s["hour"][0] + 3600 - t)
 
     def reserve(self, kind):
         """True and counted, or False (fee calls past FEE_UNTIL or switched off); Stop at a cap."""
@@ -415,7 +434,7 @@ class Meter:
         if self.max_run is not None and self.run_calls >= self.max_run:
             raise Stop(EXIT_CAP, f"--max-calls {self.max_run} reached")
         if len(self.s["hour"]) >= HOUR_CAP:
-            raise Stop(EXIT_RUNAWAY, f"{len(self.s['hour'])} calls in the last hour")
+            raise Stop(EXIT_CAP, "the hour window is full (Rpc.call waits for it first)")
         if kind == "fee" and (self.s["calls"] >= FEE_UNTIL or self.s.get("fee_off")):
             return False
         self.s["calls"] += 1
@@ -460,19 +479,30 @@ def http_post(url, body, timeout=20):
 
 
 class Rpc:
-    def __init__(self, url, meter, post=http_post, sleep=time.sleep, log=print):
-        self.url, self.meter, self.post, self.sleep, self.log = url, meter, post, sleep, log
+    def __init__(self, url, meter, post=http_post, sleep=time.sleep, log=print, alive=lambda: True):
+        self.url, self.meter, self.post, self.sleep, self.log, self.alive = url, meter, post, sleep, log, alive
         self.consec = 0
 
-    def call(self, req, kind):
-        """The response JSON, or None when the meter declines (a fee call past FEE_UNTIL). Counted before it is sent."""
+    def call(self, req, kind, on_reserved=None):
+        """The response JSON, or None when the meter declines (a fee call past FEE_UNTIL). Counted before it is sent;
+        on_reserved runs once the meter has counted it, before the post (the row is marked seen only then: a Stop at a
+        cap never loses a row). A 429 counts as a failed call; the kill switches are checked before every attempt."""
         if req["method"] not in METHODS:
             raise ValueError(f"method {req['method']!r} is not allowed")
         body = json.dumps(req).encode()
         backoff = 10
         while True:
+            if not self.alive():
+                raise Stop(0, "stopped: the approval file is gone or the disk guard stopped lab jobs")
+            wait = self.meter.hour_wait()
+            if wait:
+                self.log(f"hour window full ({HOUR_CAP} calls): waiting {wait:.0f} s")
+                self.sleep(wait)
+                continue
             if not self.meter.reserve(kind):
                 return None
+            if on_reserved:
+                on_reserved()
             try:
                 status, rl, raw = self.post(self.url, body)
             except RuntimeError as e:
@@ -483,7 +513,8 @@ class Rpc:
             if status == 429:
                 self.meter.s["http_429"] += 1
                 self.meter.save()
-                self.log(f"429 rate limited {rl}: waiting {backoff} s")
+                self._error(f"429 rate limited {rl}")  # a persistent 429 stops after MAX_CONSEC
+                self.log(f"waiting {backoff} s")
                 self.sleep(backoff)
                 backoff = min(300, backoff * 2)
                 continue
@@ -523,7 +554,7 @@ def _fee_summary(res, t):
             "at_t": at_t, "window_max": max(win), "window_median": float(np.median(win)), "values": slots}
 
 
-def simulate_entry(e, acc, row, payer, rpc, rid):
+def simulate_entry(e, acc, row, payer, rpc, rid, mark=None, budget=PAYER_BUDGET):
     txs, user = entry_bundle(payer, acc, e["size"])
     pre = [None, [acc["pool"], acc["pool_base_token_account"], acc["pool_quote_token_account"], user["user_quote_token_account"]]]
     post = [None, [user["user_quote_token_account"], user["user_base_token_account"]]]
@@ -531,7 +562,7 @@ def simulate_entry(e, acc, row, payer, rpc, rid):
     out = {"selfcheck": selfcheck(txs, payer), "instruction": "sell", "size": e["size"], "j_tokens": e["j_tokens"]}
     if rpc is None or not out["selfcheck"]:
         return req, out
-    res = rpc.call(req, "sim")
+    res = rpc.call(req, "sim", on_reserved=mark)
     if res is None:
         return req, dict(out, cls="declined")
     cls, detail = classify(res, 1)
@@ -552,8 +583,8 @@ def simulate_entry(e, acc, row, payer, rpc, rid):
     return req, out
 
 
-def simulate_exit(x, acc, row, payer, rpc, rid):
-    acquire = max(ACQUIRE_MIN, -(-3 * x["j_sol"] // 2))
+def simulate_exit(x, acc, row, payer, rpc, rid, mark=None, budget=PAYER_BUDGET):
+    acquire = min(max(ACQUIRE_MIN, 3 * x["j_sol"]), budget)
     txs, user = exit_bundle(payer, acc, x["tokens"], acquire)
     vaults = [acc["pool"], acc["pool_base_token_account"], acc["pool_quote_token_account"]]
     pre = [None, vaults, vaults + [user["user_base_token_account"], user["user_quote_token_account"]]]
@@ -563,12 +594,17 @@ def simulate_exit(x, acc, row, payer, rpc, rid):
            "j_sol": x["j_sol"]}
     if rpc is None or not out["selfcheck"]:
         return req, out
-    res = rpc.call(req, "sim")
+    res = rpc.call(req, "sim", on_reserved=mark)
     if res is None:
         return req, dict(out, cls="declined")
     cls, detail = classify(res, 2)
     if detail and detail.get("tx") in (0, 1):
-        detail["stage"] = "setup" if detail["tx"] == 0 else "acquire"  # our own preparation: structural, never uitval
+        detail["stage"] = "setup" if detail["tx"] == 0 else "acquire"  # our own preparation: never uitval
+        if detail["tx"] == 1 and detail.get("code") in MARKET_CODES:
+            # The pool moved since the exit (drained, or the price rose past our margin): the acquire could not get the
+            # position's tokens back. Its own class: neither structural (the probe is not wrong) nor uitval (the exit
+            # itself was not tried) (review of the probe).
+            cls = "acquire_market"
     out.update(cls=cls, detail=detail)
     v = res.get("result") or {}
     out["context_slot"] = (v.get("context") or {}).get("slot")
@@ -589,34 +625,97 @@ def simulate_exit(x, acc, row, payer, rpc, rid):
     return req, out
 
 
-def run_pass(lab, state_dir, run_dir, payer, rpc, rec, log=print):
-    """One pass over the journal copy: the fee calls of new triggers, then the new entries and exits. Returns the rows
-    written. rpc None: a dry run (requests.jsonl only, nothing marked seen)."""
+def run_pass(lab, state_dir, run_dir, payer, rpc, rec, log=print, budget=PAYER_BUDGET, test_late=0):
+    """One pass over the journal copy: the new entries and exits first (simulateBundle), then the fee calls of new
+    triggers. A row or trigger more than LATE_SLOTS behind the recorder's newest slot is late: no call, a 'late' line
+    (its pool has moved on; review of the probe), except up to test_late rows for the first test (flagged, outside the
+    rule). Returns the calls made. rpc None: a dry run (requests.jsonl only, nothing marked seen)."""
     copy = snapshot(os.path.join(lab, "journal", "paper-k3", "journal", "journal.sqlite"), os.path.join(state_dir, "journal-copy.sqlite"))
     entries, exits, triggers = journal_rows(copy)
     seen_path = os.path.join(state_dir, "seen.json")
     seen = set(json.load(open(seen_path))) if os.path.exists(seen_path) else set()
     rec.refresh()
+    newest = rec.newest_slot()
     n, rid = 0, int(time.time() * 1000)
 
-    def mark(key):
-        if rpc is None:
-            return
-        seen.add(key)
-        tmp = seen_path + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump(sorted(seen), f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, seen_path)
+    def marker(key):
+        def mark():
+            if rpc is None:
+                return
+            seen.add(key)
+            tmp = seen_path + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(sorted(seen), f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, seen_path)
+        return mark
 
     def write(name, row):
         with open(os.path.join(run_dir, name), "a") as f:
             f.write(json.dumps(row, default=str) + "\n")
 
+    def late(slot):
+        # A dry run builds every row (the self-check covers them all), flagged late where a paid run would skip it.
+        return rpc is not None and (newest is None or slot < newest - LATE_SLOTS)
+
+    sims = sorted([("entry", x) for x in entries] + [("exit", x) for x in exits],
+                  key=lambda sx: sx[1]["entry_slot"] if sx[0] == "entry" else sx[1]["exit_slot"], reverse=True)
+    for side, x in sims:  # the newest first: a test run with --max-calls reaches today's rows first
+        key = f"sim|{x['family']}|{x['variant']}|{x['pool']}|{x['t']}|{side}"
+        if key in seen:
+            continue
+        base = {k: x[k] for k in ("family", "variant", "pool", "t", "day")}
+        base.update(side=side, fill_slot=x["entry_slot"] if side == "entry" else x["exit_slot"],
+                    status=x.get("status") or x.get("exit_reason"), newest_slot=newest)
+        if rpc is None:
+            base["late"] = newest is None or base["fill_slot"] < newest - LATE_SLOTS
+        if late(base["fill_slot"]):
+            if test_late <= 0:
+                if rpc is not None:
+                    write("sims.jsonl", dict(base, cls="late", why=f"fill more than {LATE_SLOTS} slots behind the recorder"))
+                    marker(key)()
+                continue
+            test_late -= 1
+            base["test_late"] = True
+        if x.get("orientation") != "reversed" or x.get("venue") != "pool":
+            if rpc is not None:
+                write("sims.jsonl", dict(base, cls="skipped", why="not a reversed pool"))
+                marker(key)()
+            continue
+        upto = x["t"] if side == "entry" else x["exit_slot"]
+        row = rec.row(x["pool"], upto)
+        acc, why = pool_accounts(row, x["pool"]) if row else (None, "no_recorder_row")
+        if acc is None:
+            if rpc is not None:
+                write("sims.jsonl", dict(base, cls="skipped", why=why))
+                marker(key)()
+            else:
+                write("selfcheck.jsonl", dict(base, selfcheck=None, why=why))
+            continue
+        rid += 1
+        t0 = time.time_ns()
+        req, out = (simulate_entry if side == "entry" else simulate_exit)(x, acc, row, payer, rpc, rid, mark=marker(key), budget=budget)
+        base.update(row_slot=row["slot"], fee_bps=[row.get(c) for c in ("lp_fee_basis_points", "protocol_fee_basis_points",
+                                                                        "coin_creator_fee_basis_points", "cashback_fee_basis_points")])
+        if rpc is None:
+            write("requests.jsonl", req)
+            write("selfcheck.jsonl", dict(base, selfcheck=out["selfcheck"]))
+            continue
+        if not out["selfcheck"]:
+            write("sims.jsonl", dict(base, cls="skipped", why="selfcheck"))
+            marker(key)()
+            continue
+        out["latency_ms"] = (time.time_ns() - t0) / 1e6
+        if out.get("context_slot") is not None:
+            out["slots_late"] = out["context_slot"] - base["fill_slot"]
+        write("sims.jsonl", dict(base, **out))
+        n += 1
     meter = rpc.meter if rpc else None
-    fee_rows = []
-    for tr in triggers:
+    for tr in sorted(triggers, key=lambda r: r["t"], reverse=True):
+        if late(tr["t"]):
+            continue  # the node keeps 150 slots: an old trigger's fees are gone (no call, no line)
+        got = {}
         for pct in PCTS:
             key = f"fee|{tr['pool']}|{tr['t']}|{pct}"
             if key in seen:
@@ -627,72 +726,36 @@ def run_pass(lab, state_dir, run_dir, payer, rpc, rec, log=print):
                 write("requests.jsonl", req)
                 continue
             if meter.s.get("fee_off") or meter.s["calls"] >= FEE_UNTIL:
-                break
-            mark(key)
+                return n
             t0 = time.time_ns()
-            res = rpc.call(req, "fee")
+            res = rpc.call(req, "fee", on_reserved=marker(key))
             if res is None:
-                break
+                return n
             row = {"pool": tr["pool"], "t": tr["t"], "pct": pct, "unix_ns": t0, "latency_ms": (time.time_ns() - t0) / 1e6,
-                   "error": res.get("error"), **_fee_summary(res, tr["t"])}
+                   "newest_slot": newest, "error": res.get("error"), **_fee_summary(res, tr["t"])}
             write("fees.jsonl", row)
-            fee_rows.append(row)
+            got[pct] = row
             n += 1
-    _percentile_guard(meter, run_dir, log)
-    for side, rows in (("entry", entries), ("exit", exits)):
-        for x in rows:
-            key = f"sim|{x['family']}|{x['variant']}|{x['pool']}|{x['t']}|{side}"
-            if key in seen:
-                continue
-            base = {k: x[k] for k in ("family", "variant", "pool", "t", "day")}
-            base.update(side=side, fill_slot=x["entry_slot"] if side == "entry" else x["exit_slot"],
-                        status=x.get("status") or x.get("exit_reason"))
-            if x.get("orientation") != "reversed" or x.get("venue") != "pool":
-                write("sims.jsonl", dict(base, cls="skipped", why="not a reversed pool"))
-                mark(key)
-                continue
-            upto = x["t"] if side == "entry" else x["exit_slot"]
-            row = rec.row(x["pool"], upto)
-            acc, why = pool_accounts(row, x["pool"]) if row else (None, "no_recorder_row")
-            if acc is None:
-                write("sims.jsonl", dict(base, cls="skipped", why=why))
-                mark(key)
-                continue
-            rid += 1
-            if rpc is not None:
-                mark(key)
-            t0 = time.time_ns()
-            req, out = (simulate_entry if side == "entry" else simulate_exit)(x, acc, row, payer, rpc, rid)
-            base.update(row_slot=row["slot"], fee_bps=[row.get(c) for c in ("lp_fee_basis_points", "protocol_fee_basis_points",
-                                                                            "coin_creator_fee_basis_points", "cashback_fee_basis_points")])
-            if rpc is None:
-                write("requests.jsonl", req)
-                write("selfcheck.jsonl", dict(base, selfcheck=out["selfcheck"]))
-                continue
-            out["latency_ms"] = (time.time_ns() - t0) / 1e6
-            if out.get("context_slot") is not None:
-                out["slots_late"] = out["context_slot"] - base["fill_slot"]
-            write("sims.jsonl", dict(base, **out))
-            n += 1
+        if len(got) == len(PCTS):
+            _percentile_guard(meter, got, log)
     return n
 
 
-def _percentile_guard(meter, run_dir, log):
-    """If the percentile is ignored, p50 and p90 are the same array: after 10 triggers with all three, stop fee calls."""
+def _percentile_guard(meter, got, log):
+    """If Triton ignores the percentile, p50 and p90 agree on every slot both calls returned. Ten triggers in a row like
+    that (each with >= 100 common slots and a non-zero fee somewhere) switch the fee calls off for the day and after."""
     if meter is None or meter.s.get("fee_off"):
         return
-    path = os.path.join(run_dir, "fees.jsonl")
-    if not os.path.exists(path):
+    a, b = dict(got[5000].get("values") or []), dict(got[9000].get("values") or [])
+    common = [s for s in a if s in b]
+    if len(common) < 100 or not any(a[s] for s in common):
         return
-    by = {}
-    for line in open(path):
-        r = json.loads(line)
-        by.setdefault((r["pool"], r["t"]), {})[r["pct"]] = [v for _, v in r.get("values") or []]
-    full = [v for v in by.values() if all(p in v for p in PCTS)]
-    if len(full) >= 10 and all(v[5000] == v[9000] for v in full[:10]):
-        meter.s["fee_off"] = "the percentile looks ignored (p50 = p90 in the first 10 triggers)"
-        meter.save()
+    same = all(a[s] == b[s] for s in common)
+    meter.s["pct_same_run"] = meter.s.get("pct_same_run", 0) + 1 if same else 0
+    if meter.s["pct_same_run"] >= 10:
+        meter.s["fee_off"] = "the percentile looks ignored (p50 = p90 on every common slot, 10 triggers in a row)"
         log(meter.s["fee_off"])
+    meter.save()
 
 
 # ----------------------------------------------------------------------------- the rule's evaluation
@@ -701,15 +764,28 @@ def _percentile_guard(meter, run_dir, log):
 def summary(lab, draws=10_000, seed=7):
     """The rule (research/simfee-probe-rule-2026-10-23.md): per side, n, the median of M with a bootstrap 95 % CI, the
     market and structural failure shares; D, slots_late and would_miss_tol beside it (report only)."""
-    rows = [json.loads(line) for p in sorted(glob.glob(os.path.join(lab, "probe", "simfee-*", "sims.jsonl"))) for line in open(p)]
+    rows, keys = [], set()
+    for p in sorted(glob.glob(os.path.join(lab, "probe", "simfee-*", "sims.jsonl"))):
+        if p.endswith("-dry/sims.jsonl"):
+            continue
+        for line in open(p):
+            x = json.loads(line)
+            k = (x.get("family"), x.get("variant"), x.get("pool"), x.get("t"), x.get("side"))
+            if k not in keys:  # one row per position side, the first (a second instance cannot double it)
+                keys.add(k)
+                rows.append(x)
     rng = np.random.default_rng(seed)
     out = {}
     for side in ("entry", "exit"):
-        r = [x for x in rows if x.get("side") == side and x.get("cls") not in (None, "skipped", "declined")]
+        every = [x for x in rows if x.get("side") == side]
+        # The rule's sample: tried swaps only; not late, skipped, declined, the first test's late rows, nor an exit whose
+        # acquire could not get the tokens back (acquire_market: the exit itself was not tried).
+        r = [x for x in every if x.get("cls") not in (None, "skipped", "declined", "late", "acquire_market") and not x.get("test_late")]
         ok = [x for x in r if x["cls"] == "ok" and x.get("M_bps") is not None]
         m = np.array([x["M_bps"] for x in ok])
         n_ok, n_mkt = sum(x["cls"] == "ok" for x in r), sum(x["cls"] == "market" for x in r)
         res = {"attempted": len(r), "ok": n_ok, "ok_with_M": len(ok),
+               "not_in_sample": {c: sum(x.get("cls") == c for x in every) for c in ("late", "skipped", "acquire_market", "declined")},
                "uitval_pct": round(100 * n_mkt / (n_ok + n_mkt), 2) if n_ok + n_mkt else None,  # market / (ok + market)
                "structural_pct": round(100 * sum(x["cls"] == "structural" for x in r) / len(r), 2) if r else None,
                "rpc_pct": round(100 * sum(x["cls"] == "rpc" for x in r) / len(r), 2) if r else None}
@@ -765,6 +841,8 @@ def main(argv=None, post=http_post):
     ap.add_argument("--follow", action="store_true")
     ap.add_argument("--interval", type=int, default=30)
     ap.add_argument("--max-calls", type=int, default=None, help="a cap for this run (e.g. 10 for the first test)")
+    ap.add_argument("--test-late", type=int, default=0, help="the first test: simulate up to N late rows (flagged, outside the rule)")
+    ap.add_argument("--payer-budget", type=int, default=PAYER_BUDGET, help="lamports an exit's acquire may use (payer >= 2 SOL)")
     ap.add_argument("--summary", action="store_true")
     a = ap.parse_args(argv)
     if a.summary:
@@ -779,6 +857,12 @@ def main(argv=None, post=http_post):
     for d in (state_dir, run_dir):
         os.makedirs(d, exist_ok=True)
         _refuse_recorder_dir(d)
+    # One instance at a time (dry or paid): the meter, seen.json and the journal copy live in state_dir (review).
+    lock = open(os.path.join(state_dir, "probe.lock"), "w")
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        raise SystemExit(EXIT_LOCKED) from None
     log_f = open(os.path.join(run_dir, "events.log"), "a")
 
     def log(m):
@@ -790,7 +874,7 @@ def main(argv=None, post=http_post):
     rec = Recorder(os.path.join(a.lab, "recorder"))
     if not a.enable:
         _dry_guard()
-        n = run_pass(a.lab, state_dir, run_dir, payer, None, rec, log)
+        n = run_pass(a.lab, state_dir, run_dir, payer, None, rec, log, budget=a.payer_budget)
         reqs = sum(1 for _ in open(os.path.join(run_dir, "requests.jsonl"))) if os.path.exists(os.path.join(run_dir, "requests.jsonl")) else 0
         log(f"DRY RUN: {reqs} requests built (requests.jsonl), {n} calls made; nothing was sent")
         return 0
@@ -800,12 +884,18 @@ def main(argv=None, post=http_post):
     code = 0
     try:
         meter = Meter(os.path.join(state_dir, "state.json"), a.max_calls)
-        rpc = Rpc(url, meter, post=post, log=log)
+
+        def alive():
+            return os.path.exists(a.approval) and not os.path.exists(os.path.join(a.lab, "locks", "disk-stopped"))
+
+        rpc = Rpc(url, meter, post=post, log=log, alive=alive)
+        test_late = a.test_late
         while True:
-            if not os.path.exists(a.approval) or os.path.exists(os.path.join(a.lab, "locks", "disk-stopped")):
+            if not alive():
                 log("stopped: the approval file is gone or the disk guard stopped lab jobs")
                 break
-            n = run_pass(a.lab, state_dir, run_dir, payer, rpc, rec, log)
+            n = run_pass(a.lab, state_dir, run_dir, payer, rpc, rec, log, budget=a.payer_budget, test_late=test_late)
+            test_late = 0
             log(f"pass: {n} rows; today {meter.s['calls']} calls (sim {meter.s['calls_sim']}, fee {meter.s['calls_fee']}), ${meter.usd():.4f}")
             if not a.follow:
                 break
