@@ -33,6 +33,7 @@ log "rehearsal CTL=$(git -C "$GIT" rev-parse "$CTL^{commit}") DEP=$(git -C "$GIT
 # The copies: the journal (read-only backup) with its files, and the recorder's segments (links).
 for side in ctl dep; do
   mkdir -p "$R/j-$side"
+  if [ "$side" = ctl ]; then  # one backup: both sides start from the same HWM (coordinator 23 Oct, rehearsal b RED on this)
   "$PY" - "$JOURNAL/journal.sqlite" "$R/j-$side/journal.sqlite" <<'EOF'
 import sqlite3, sys
 src = sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
@@ -42,11 +43,14 @@ dst.close(); src.close()
 EOF
   for f in "$JOURNAL"/wallet*.json "$JOURNAL"/creation_source.json; do [ ! -e "$f" ] || cp -a "$f" "$R/j-$side/"; done
   for d in "$JOURNAL"/20??-??-??; do [ ! -d "$d" ] || cp -a "$d" "$R/j-$side/"; done
+  else
+    cp -a "$R/j-ctl/." "$R/j-dep/"
+  fi
   (cd "$MAIN_LAB" && PYTHONPATH=. "$PY" -m paper.restart_root --root "$LAB/recorder" --out "$R/rec-$side" --from-seq 0) > "$R/rec-$side.log" 2>&1
   mkdir -p "$R/$side"
   git -C "$GIT" archive "$([ "$side" = ctl ] && echo "$CTL" || echo "$DEP")" lab | tar -x -C "$R/$side"
 done
-log "copies made: journal backup x2, recorder links x2, engine exports x2"
+log "copies made: journal backup x1 (copied for dep), recorder links x2, engine exports x2"
 # The state before the restarts, from the deploy's copy (not the live journal, which moves on).
 "$PY" - "$R/j-dep/journal.sqlite" "$R/before.json" <<'EOF'
 import json, sqlite3, sys
@@ -97,7 +101,10 @@ still_open = [k for k in open_before if k in dpos]
 print(f"2. the {len(open_before)} positions open before = {len(at_resume)} written off at the resume + {len(still_open)} still open "
       f"+ {len(lost_now)} restart_lost (+ {len(open_before) - len(at_resume) - len(still_open) - len(lost_now)} closed otherwise); "
       f"written_off_at_resume counted {n_wo}; not as specified {len(bad2)} {bad2[:2]}")
-ok2 = len(at_resume) == n_wo and not bad2 and not lost_now
+# restart_lost is allowed only for a position whose t lies before the replay's first slot (outside the 36 h window; LAB 23 Oct)
+lost_in_window = [r for r in lost_now if r["t"] >= rd["first_slot"]]
+print(f"   restart_lost of open positions: {len(lost_now)}, of them inside the window {len(lost_in_window)} (must be 0)")
+ok2 = len(at_resume) == n_wo and not bad2 and not lost_in_window
 k3 = [x for x in at_resume if x["family"] == "F7" and x["variant"] == "tp4_T600"]
 s = sum(x["pnl"] for x in k3)
 hl = hwm_state["groups"]["K3"]["day_loss"]
@@ -105,7 +112,14 @@ sig = db.execute("SELECT status, reason, t FROM signals WHERE family = 'F7' AND 
                  (rd["resumed_at"], rd["day"])).fetchone()
 print(f"3. K3: {len(k3)} written off, their P&L {s / 1e9:.3f} SOL on {rd['day']}; the HWM's K3 day loss {hl / 1e9:.3f}; together "
       f"{(hl + s) / 1e9:.3f} (limit 1 SOL); K3's first signal after the resume that day: {tuple(sig) if sig else None}")
-ok3 = all(x["day"] == rd["day"] for x in k3) and (sig is None or (hl + s) > -1e9 or (sig[0], sig[1]) == ("skipped", "daily loss limit"))
+# busy (and the farm checks) come before the risk block in the engine, so the test is: no K3 entry after the resume that day
+ent = db.execute("SELECT count(*) FROM signals WHERE family = 'F7' AND variant = 'tp4_T600' AND t > ? AND day = ? AND status = 'entered'",
+                 (rd["resumed_at"], rd["day"])).fetchone()[0]
+dl = db.execute("SELECT count(*) FROM signals WHERE family = 'F7' AND variant = 'tp4_T600' AND t > ? AND day = ? AND reason = 'daily loss limit'",
+                (rd["resumed_at"], rd["day"])).fetchone()[0]
+print(f"   K3 after the resume that day: entered {ent}, skipped by the daily loss limit {dl}"
+      + ("; the daily loss limit was not exercised (no K3 signal reached the risk block after the resume that day)" if dl == 0 else ""))
+ok3 = all(x["day"] == rd["day"] for x in k3) and ((hl + s) > -1e9 or ent == 0)
 print("rehearsal: " + ("GREEN" if ok1 and ok2 and ok3 else f"RED (check 1 {ok1}, 2 {ok2}, 3 {ok3})"))
 sys.exit(0 if ok1 and ok2 and ok3 else 1)
 EOF
