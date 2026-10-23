@@ -53,13 +53,36 @@ def test_token2022_extensions_are_decoded():
     r = M.parse_mint(TOKEN_2022, _t22(_base(), exts))
     assert r["program"] == "token2022" and r["parse_error"] is None
     assert r["extensions"] == [18, 19, 1, 12, 14, 6, 26, 9, 3, 25]
-    assert (r["transfer_fee_bps"], r["transfer_fee_max"]) == (250, 5_000_000)
+    assert (r["transfer_fee_bps"], r["transfer_fee_max"], r["transfer_fee_bps_older"]) == (250, 5_000_000, 0)
     assert r["permanent_delegate_key"] == AUTH and r["transfer_hook_program"] == HOOK and r["default_state"] == 2
     assert r["pausable_authority"] == AUTH and r["paused"] is True and r["mint_close_authority_key"] == AUTH
     f = M.flags(r)
     assert all(f[k] for k in ["transfer_fee", "transfer_hook", "permanent_delegate", "non_transferable", "default_frozen", "pausable", "paused",
                               "token2022", "mint_close_authority", "metadata_pointer", "token_metadata", "scaled_ui_amount"])
     assert not f["mint_authority"] and not f["freeze_authority"] and not f["other_extension"] and f["veto"]
+
+
+def test_older_transfer_fee_alone_flags_the_fee_and_a_failing_call_keeps_earlier_answers(tmp_path):
+    fee = b"\0" * 64 + struct.pack("<Q", 0) + struct.pack("<QQH", 1, 10, 100) + struct.pack("<QQH", 2, 0, 0)
+    r = M.parse_mint(TOKEN_2022, _t22(_base(), [_tlv(1, fee)]))
+    assert (r["transfer_fee_bps"], r["transfer_fee_bps_older"]) == (0, 100) and M.flags(r)["transfer_fee"]
+    # fetch: 101 mints = 2 calls; the second call fails, the first call's 100 answers are on disk
+    out = tmp_path / "out"
+    out.mkdir()
+    mints = [f"M{i:03d}" for i in range(101)]
+    pq.write_table(pa.table({"mint": mints, "families": [["K3"]] * 101}), out / "mints.parquet")
+    n = [0]
+
+    def flaky(url, keys):
+        n[0] += 1
+        if n[0] == 2:
+            raise RuntimeError("RPC call failed: URLError")
+        return {k: (M.SPL_TOKEN, _base()) for k in keys}
+    with pytest.raises(RuntimeError):
+        M.fetch(str(out), "http://x", 5000, call=flaky, rpc_state=str(tmp_path / "none.json"))
+    assert pq.read_table(out / "accounts.parquet").num_rows == 100 and json.load(open(out / "rpc-calls.json"))["calls"] == 2
+    assert M.fetch(str(out), "http://x", 5000, call=flaky, rpc_state=str(tmp_path / "none.json")) == 1  # only the missing one
+    assert pq.read_table(out / "accounts.parquet").num_rows == 101
 
 
 def test_token2022_pump_style_mint_is_clean():

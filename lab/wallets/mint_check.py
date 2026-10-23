@@ -10,10 +10,12 @@ Three steps, so the paid calls are counted before they are made:
          mints.parquet and prints the number of getMultipleAccounts calls (100 keys per call).
   fetch  the mint accounts through the existing token-meta RPC path (backtest.token_meta_rpc.rpc_accounts:
          Triton RPC, LAB_TRITON_RPC_URL holds the token, never printed). Only with --enable. Shares the
-         daily cap with backtest.token_meta_rpc: the recorder's rpc/state.json call count of the UTC day
-         plus the calls needed must stay <= --max-calls-per-day (5,000), else it refuses. Every call is
-         counted in <out>/rpc-calls.json before its answer is used. The raw account bytes go to
-         accounts.parquet (base64) so the parse can be redone without a call.
+         daily cap with backtest.token_meta_rpc one way: the recorder's rpc/state.json call count of the
+         UTC day plus the calls needed must stay <= --max-calls-per-day (5,000), else it refuses (the
+         side process does not read this script's count, so run it when the side process is far from its
+         cap). Every call is counted in <out>/rpc-calls.json before its answer is used, and every call's
+         raw account bytes are appended to accounts.parquet (base64) right after it, so a failure at call
+         k keeps the k-1 paid answers and the parse can be redone without a call.
   report parse the mint accounts (SPL Token or Token-2022 base state + TLV extensions) and count the
          flags per family: flags.parquet, counts.json, counts.md.
 
@@ -56,7 +58,8 @@ EXT = {0: "uninitialized", 1: "transfer_fee_config", 2: "transfer_fee_amount", 3
        18: "metadata_pointer", 19: "token_metadata", 20: "group_pointer", 21: "token_group",
        22: "group_member_pointer", 23: "token_group_member", 24: "confidential_mint_burn",
        25: "scaled_ui_amount", 26: "pausable", 27: "pausable_account", 28: "permissioned_burn"}
-# The flags the spec vetoes (§1) and the ones it only logs; counted per family, never applied.
+# The flags the spec vetoes (§1) plus pausable/paused (not in the spec; a paused mint cannot be sold, so the veto set
+# here is one wider than the spec), and the ones the spec only logs; counted per family, never applied.
 VETO_FLAGS = ["mint_authority", "freeze_authority", "transfer_fee", "transfer_hook", "permanent_delegate",
               "non_transferable", "default_frozen", "pausable", "paused"]
 INFO_FLAGS = ["token2022", "mint_close_authority", "metadata_pointer", "token_metadata", "interest_bearing",
@@ -65,7 +68,7 @@ INFO_FLAGS = ["token2022", "mint_close_authority", "metadata_pointer", "token_me
 FLAG_SCHEMA = pa.schema([("mint", pa.string()), ("found", pa.bool_()), ("program", pa.string()), ("data_len", pa.int64()),
                          ("supply", pa.uint64()), ("decimals", pa.int64()), ("mint_authority_key", pa.string()),
                          ("freeze_authority_key", pa.string()), ("extensions", pa.list_(pa.int64())),
-                         ("transfer_fee_bps", pa.int64()), ("transfer_fee_max", pa.uint64()),
+                         ("transfer_fee_bps", pa.int64()), ("transfer_fee_max", pa.uint64()), ("transfer_fee_bps_older", pa.int64()),
                          ("transfer_hook_program", pa.string()), ("permanent_delegate_key", pa.string()),
                          ("default_state", pa.int64()), ("pausable_authority", pa.string()),
                          ("mint_close_authority_key", pa.string()), ("parse_error", pa.string())]
@@ -90,7 +93,7 @@ def parse_mint(owner, data):
     """The fields of a mint account (SPL Token or Token-2022): base state and the TLV extensions."""
     r = {"found": True, "program": {SPL_TOKEN: "token", TOKEN_2022: "token2022"}.get(owner, "other:" + owner), "data_len": len(data),
          "supply": None, "decimals": None, "mint_authority_key": None, "freeze_authority_key": None, "extensions": [],
-         "transfer_fee_bps": None, "transfer_fee_max": None, "transfer_hook_program": None, "permanent_delegate_key": None,
+         "transfer_fee_bps": None, "transfer_fee_max": None, "transfer_fee_bps_older": None, "transfer_hook_program": None, "permanent_delegate_key": None,
          "default_state": None, "pausable_authority": None, "paused": None, "mint_close_authority_key": None, "parse_error": None}
     if owner not in (SPL_TOKEN, TOKEN_2022) or len(data) < 82:
         r["parse_error"] = "not a token mint"
@@ -115,8 +118,9 @@ def parse_mint(owner, data):
                 r["parse_error"] = f"truncated extension {ext}"
                 break
             r["extensions"].append(ext)
-            if ext == 1 and length >= 108:  # newer_transfer_fee: epoch u64, maximum_fee u64, bps u16 at 90
-                _, r["transfer_fee_max"], r["transfer_fee_bps"] = struct.unpack_from("<QQH", v, 90)  # newer_transfer_fee
+            if ext == 1 and length >= 108:  # older_transfer_fee at 72, newer_transfer_fee at 90: epoch u64, maximum_fee u64, bps u16
+                _, _, r["transfer_fee_bps_older"] = struct.unpack_from("<QQH", v, 72)
+                _, r["transfer_fee_max"], r["transfer_fee_bps"] = struct.unpack_from("<QQH", v, 90)
             elif ext == 3 and length >= 32:
                 r["mint_close_authority_key"] = _opt_key(v[:32])
             elif ext == 6 and length >= 1:
@@ -137,7 +141,7 @@ def flags(r):
         return {f: None for f in VETO_FLAGS + INFO_FLAGS} | {"veto": None}
     e = set(r["extensions"])
     f = {"mint_authority": r["mint_authority_key"] is not None, "freeze_authority": r["freeze_authority_key"] is not None,
-         "transfer_fee": bool(r["transfer_fee_bps"]), "transfer_hook": r["transfer_hook_program"] is not None,
+         "transfer_fee": bool(r["transfer_fee_bps"]) or bool(r["transfer_fee_bps_older"]), "transfer_hook": r["transfer_hook_program"] is not None,
          "permanent_delegate": r["permanent_delegate_key"] is not None, "non_transferable": 9 in e,
          "default_frozen": r["default_state"] == 2, "pausable": 26 in e, "paused": bool(r["paused"]),
          "token2022": r["program"] == "token2022", "mint_close_authority": r["mint_close_authority_key"] is not None,
@@ -208,7 +212,8 @@ def fetch(out, url, max_calls, call=rpc_accounts, rpc_state=RPC_STATE, log=print
     log(f"mints {len(mints)}, fetched {len(have)}, to do {len(todo)} = {need} calls; today: token_meta_rpc {shared} + this {state['calls']} of cap {max_calls}")
     if shared + state["calls"] + need > max_calls:
         raise SystemExit(f"refused: {shared + state['calls']} + {need} calls would pass the daily cap {max_calls}")
-    rows = []
+    schema = pa.schema([("mint", pa.string()), ("found", pa.bool_()), ("owner", pa.string()), ("data_b64", pa.string()), ("fetched_unix", pa.int64())])
+    written = 0
     for i in range(0, len(todo), KEYS_PER_CALL):
         keys = todo[i:i + KEYS_PER_CALL]
         state["calls"] += 1
@@ -217,17 +222,17 @@ def fetch(out, url, max_calls, call=rpc_accounts, rpc_state=RPC_STATE, log=print
             json.dump(state, f)
         os.replace(state_path + ".tmp", state_path)
         res = call(url, keys)
+        rows = []
         for k in keys:
             v = res.get(k)
             rows.append({"mint": k, "found": v is not None, "owner": v[0] if v else None,
                          "data_b64": base64.b64encode(v[1]).decode() if v else None, "fetched_unix": int(time.time())})
+        old = pq.read_table(acc_path) if os.path.exists(acc_path) else pa.Table.from_pylist([], schema=schema)
+        pq.write_table(pa.concat_tables([old, pa.Table.from_pylist(rows, schema=schema)]), acc_path + ".tmp")
+        os.replace(acc_path + ".tmp", acc_path)  # every paid answer is on disk before the next call
+        written += len(rows)
         log(f"call {state['calls']}: {len(keys)} keys, {sum(1 for k in keys if res.get(k))} found")
-    schema = pa.schema([("mint", pa.string()), ("found", pa.bool_()), ("owner", pa.string()), ("data_b64", pa.string()), ("fetched_unix", pa.int64())])
-    old = pq.read_table(acc_path) if os.path.exists(acc_path) else pa.Table.from_pylist([], schema=schema)
-    new = pa.concat_tables([old, pa.Table.from_pylist(rows, schema=schema)])
-    pq.write_table(new, acc_path + ".tmp")
-    os.replace(acc_path + ".tmp", acc_path)
-    return len(rows)
+    return written
 
 
 # ----------------------------------------------------------------------------- report
@@ -243,7 +248,7 @@ def report(out):
             r = parse_mint(a["owner"], base64.b64decode(a["data_b64"]))
         else:
             r = {"found": False, "program": None, "data_len": None, "supply": None, "decimals": None, "mint_authority_key": None,
-                 "freeze_authority_key": None, "extensions": [], "transfer_fee_bps": None, "transfer_fee_max": None,
+                 "freeze_authority_key": None, "extensions": [], "transfer_fee_bps": None, "transfer_fee_max": None, "transfer_fee_bps_older": None,
                  "transfer_hook_program": None, "permanent_delegate_key": None, "default_state": None, "pausable_authority": None,
                  "paused": None, "mint_close_authority_key": None, "parse_error": "not fetched" if a is None else "account missing"}
         per_mint[m] = {"mint": m, **r, **flags(r)}
