@@ -5,7 +5,7 @@
 | vraag | coördinator-opdracht 23 okt (eigenaarsdoel ≥ 20 SOL/dag netto; kapitaal onbekend, dus drie niveaus; eigenaar 22 okt ~22:45Z: "Die 1000 sol hoeft niet" → 10 / 25 / 100 SOL) |
 | plan | `data-old-faithful-one/lab/research/capital-ceiling-plan-2026-10-23.md`, sha256 **2a17f2d2ea9d6e8f46bee05eb69e1f6427ab38ca456c794671baf587b3110916** (buiten Git; vastgelegd vóór enig nieuw getal; geen nieuwe regels, geen afstemming) |
 | code | `lab/backtest/capital_ceiling.py` + `nas_capital_ceiling.sh` (#529, run op d15ac45; LAB review OK); de review-nits en de vastgepinde gap-regel in deze PR (rapport opnieuw gemaakt op dezelfde rijen) |
-| run | NAS-job **99zzzzz52** op d15ac45, rc 0: 769.995 posities in 168 parts, "112 cells over 20 days; parity GREEN" (tp4_T600 bij 0,5 / 1 / 2 SOL, d 2 en 3: rijen en SOL/dag gelijk aan families-v2-1033-1046 op 59ca18c). Gesynchroniseerd naar `backtests/capital-ceiling-d15ac45/`: SHA256SUMS **2719431c…**, ceiling.md d6efad83…, ceiling.json 0ede273e…. Het rapport met de nits: `ceiling-report-b149a7d/` (ceiling.json 8adfda64…, cijfers identiek aan de NAS-json: 0 verschillen over 112 cellen; ceiling.md 06a9a633…) |
+| run | NAS-job **99zzzzz52** op d15ac45, rc 0: 769.995 posities in 168 parts, "112 cells over 20 days; parity GREEN" (tp4_T600 bij 0,5 / 1 / 2 SOL, d 2 en 3: rijen en SOL/dag gelijk aan families-v2-1033-1046 op 59ca18c). Gesynchroniseerd naar `backtests/capital-ceiling-d15ac45/`: SHA256SUMS **2719431c…**, ceiling.md d6efad83…, ceiling.json 0ede273e…. Het rapport met de nits en de vastgepinde gap-regel: `ceiling-report-5d0bc80/` (SHA256SUMS: ceiling.json 6e5016e5…, ceiling.md 94a1fb95…; de json is gelijk aan die van de NAS op de gap-tekst na: 0 verschillen in de 112 cellen) |
 | data | dev2 1033–1046 (verbruikt), slots 446.256.000–452.304.000, 20 UTC-dagen (12 sep – 1 okt); C3-sleutels `wallets/paidflow-dev-vps/markout-f7rev-txdelay.parquet` (sha256 1a274ec6…; 9.308 sleutels); live vergelijking (één live dag, 22 okt): een alleen-lezen snapshot van het paper-journal (sha256 **1691ddc9**7f31b24db15c817f0164facfe62b71cedb13863d5a45e27add3022ec, 23 okt 00:04Z) in `backtests/capital-ceiling-paper-2026-10-22/`, met `reading.py` → `reading.out` (SHA256SUMS: reading.py 0cd62a17…, reading.out 7de2e600…) |
 | beschrijvend | toegevoegd na de run (§4.3 aanbod, §4.4 concentratie en helften): `backtests/capital-ceiling-d15ac45/e63/descriptives.py` → `descriptives.out` (SHA256SUMS: a6c25531… / 68eb2b01…) |
 
@@ -73,10 +73,10 @@ Een dev-plafond is niet bereikbaar zonder meer.
 
 ## 4. Waarom dit een plafond is
 
-1. **Sandwich: alleen gemarkeerd, niet gemodelleerd** (modelaanname).
+1. **Sandwich: alleen gemarkeerd, niet gemodelleerd** (modelaanname). De vlag meet blootstelling (de trade is groot genoeg om te sandwichen), niet hoe vaak het echt gebeurt. Dat werkelijke percentage is **onbekend**; een eerste, niet vastgepinde blik van de coördinator op één dev-dag wijst eerder op enkele procenten dan op alle trades. Met een krappe slippagegrens worden de kosten dan vooral mislukte instappen in plaats van verlies.
    - De vlag van `analysis.f7_candidate` §4 (grootte > fee per kant × diepte, dekking 100 %) staat aan bij 55 % van de trades van H5 en C3/hold300 bij 0,5 SOL, bij 98–100 % vanaf 1 SOL, en bij 33 % / 99,6 % voor K3.
    - De engine rekent onze eigen impact exact tegen de reserves. Een sandwich, front-running of een reactie van anderen op onze grootte zit er niet in: de andere orders liggen vast.
-   - Met 5 % slippagetolerantie kan een sandwich per kant tot ongeveer 5 % van de inzet kosten. Bij 5 SOL per trade is dat meer dan de netto marge van H5 (+4,9 %) en ongeveer de helft van C3/hold300 (+10,8 %).
+   - In het slechtste geval kost een sandwich met 5 % slippagetolerantie per kant tot ongeveer 5 % van de inzet. Bij 5 SOL per trade is dat meer dan de netto marge van H5 (+4,9 %) en ongeveer de helft van C3/hold300 (+10,8 %).
    - De cijfers boven 10 SOL kapitaal zijn daarom een bovengrens.
 2. **Op dev gekozen (in-sample).**
    - H5 (de grote take-profit, organisch; E31) en de C3-arm (E54/E56: "arm na het zien van dev gekozen") zijn gekozen nadat dev was bekeken.
