@@ -49,10 +49,16 @@ def main():
     print(f"f7_signals_sql: {len(trig)} triggers in [{lo}, {hi}) ({time.time() - t0:.0f}s)", flush=True)
     con.execute("CREATE TEMP TABLE trig (venue VARCHAR, mint VARCHAR, t BIGINT, depth BIGINT, pool VARCHAR, orientation VARCHAR, trader VARCHAR, trader_farmer BOOLEAN, flagged BOOLEAN)")
     con.executemany("INSERT INTO trig VALUES (?,?,?,?,?,?,?,?,?)", trig)
-    con.execute(f"CREATE TEMP TABLE live AS SELECT pool, t FROM read_parquet('{os.path.join(a.inputs, 'live-triggers-explore.parquet')}') WHERE orientation = 'reversed'")
-    con.execute(f"CREATE TEMP TABLE probe AS SELECT pool, t0 FROM read_parquet('{os.path.join(a.inputs, 'probe-pools-explore.parquet')}')")
+    # the inputs cover the whole explore window (into epoch 1065): window them to [lo, hi) (LAB review on #537)
+    live_all = con.execute(f"SELECT count(*) FROM read_parquet('{os.path.join(a.inputs, 'live-triggers-explore.parquet')}') WHERE orientation = 'reversed'").fetchone()[0]
+    con.execute(f"CREATE TEMP TABLE live AS SELECT pool, t FROM read_parquet('{os.path.join(a.inputs, 'live-triggers-explore.parquet')}') WHERE orientation = 'reversed' AND t >= {lo} AND t < {hi}")
+    probe_all = con.execute(f"SELECT count(*) FROM read_parquet('{os.path.join(a.inputs, 'probe-pools-explore.parquet')}')").fetchone()[0]
+    con.execute(f"CREATE TEMP TABLE probe AS SELECT pool, t0 FROM read_parquet('{os.path.join(a.inputs, 'probe-pools-explore.parquet')}') WHERE t0 < {hi}")
+    R_inputs = {"live_triggers_in_window": con.execute("SELECT count(*) FROM live").fetchone()[0], "live_triggers_total": live_all,
+                "probe_pools_t0_before_hi": con.execute("SELECT count(*) FROM probe").fetchone()[0], "probe_pools_total": probe_all}
+    print("inputs windowed to [lo, hi):", R_inputs, flush=True)
     con.execute(f"CREATE TEMP TABLE hr AS SELECT slot, date_trunc('hour', to_timestamp(block_time)) AS h FROM blocks WHERE slot >= {lo} AND slot < {hi}")
-    R = {"store": a.store, "window": [lo, hi], "ms_per_slot": meta.get("ms_per_slot"), "counts_only": True,
+    R = {"store": a.store, "window": [lo, hi], "ms_per_slot": meta.get("ms_per_slot"), "counts_only": True, "inputs": R_inputs,
          "rule": "epoch 1064 is the future forward window for H5/C3: trigger counts only, never P&L"}
     R["of1_triggers"] = con.execute("SELECT orientation, count(*), count(DISTINCT pool) FROM trig GROUP BY 1 ORDER BY 1").fetchall()
     print("OF1 triggers by orientation (n, pools):", R["of1_triggers"], flush=True)
@@ -72,9 +78,9 @@ def main():
                                FROM trig tr LEFT JOIN live l USING (pool, t) WHERE tr.orientation = 'reversed'""").fetchone()
     print("reversed (pool, t): OF1-only / both / live-only:", R["sets"], flush=True)
     R["of1_only_by_pool_class"] = con.execute("""
-        SELECT CASE WHEN pr.pool IS NOT NULL THEN 'followed (probe pool on the VPS)' ELSE 'not followed by the recorder' END AS cls,
+        SELECT CASE WHEN pr.pool IS NOT NULL THEN 'followed (probe pool on the VPS, probed at or before t)' ELSE 'not followed by the recorder at t' END AS cls,
                count(*) AS triggers, count(DISTINCT tr.pool) AS pools
-        FROM trig tr LEFT JOIN live l USING (pool, t) LEFT JOIN probe pr ON pr.pool = tr.pool
+        FROM trig tr LEFT JOIN live l USING (pool, t) LEFT JOIN probe pr ON pr.pool = tr.pool AND pr.t0 <= tr.t
         WHERE tr.orientation = 'reversed' AND l.pool IS NULL GROUP BY 1 ORDER BY 2 DESC""").fetchall()
     print("OF1-only triggers by whether the recorder followed the pool:", R["of1_only_by_pool_class"], flush=True)
     R["of1_only_pool_depth"] = con.execute("""

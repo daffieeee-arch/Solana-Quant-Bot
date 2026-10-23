@@ -26,6 +26,14 @@
 #   BIN=/lab/bin/lab-extractor-<commit7> STEP=day   LAB_PY=/lab/venv/bin/python bash lab/wallets/nas_of1_1064_triggers.sh
 #
 # Runs only after Saturday's clean runs: START_NOT_BEFORE (default 2026-10-24T12:45:00Z, after E56) is enforced.
+# extract_epochs.sh env contract (coordinator read it on the NAS, 23 Oct): EPOCHS, BIN (required), OUT (set, never its default
+# $LAB/events/v1/chunks), LOGD, THREADS (3), PAUSE; chunks of 216,000 slots -> epoch 1064 = exactly 459648000-459864000 and
+# 459864000-460080000; complete chunks are skipped on a rerun; an unpublished epoch is logged "skipped" with rc 0, which the
+# tiling check below turns RED (0 complete chunks). It starts its own proxy (:3128) and index server (:8771): never run two
+# extract jobs at the same time. THREADS=3 is fine here: the F7 reversed-pool trigger (strategies.f7_signals_sql, pool branch)
+# uses `pools` (orientation, coin_creator, mayhem from the PumpSwap events) and `mints` only as the creator fallback; PumpSwap
+# events are decoded from the logs, so nothing depends on a mint being learned from its pump create (THREADS=1 is for the
+# curve/transfer tables with MINTS_START / LAB_TRANSFERS, which this job does not use).
 # Tunables: EXTRACT (epoch | chunks), MEMORY (DuckDB for the store build, default 8GB), THREADS (3), LAB_SPILL_MAX (40GB),
 # CHUNK (27000, chunks mode), START_NOT_BEFORE, OPS (/lab/ops), INPUTS.
 set -euo pipefail
@@ -124,9 +132,10 @@ else  # the day in chunks of CHUNK slots tiling [DAY_LO, DAY_HI) exactly (the ch
   STORE_LO=$DAY_LO; STORE_HI=$DAY_HI
 fi
 # the complete chunks in $CHUNKS must tile [STORE_LO, STORE_HI) exactly (no gap, no overlap, no stray chunk): else RED before the build
-tiling=$("$PY" - "$CHUNKS" "$STORE_LO" "$STORE_HI" <<'PYEOF'
+[ "$EXTRACT" = epoch ] && EXPECTED_CHUNKS=2 || EXPECTED_CHUNKS=$(( (DAY_HI - DAY_LO + CHUNK - 1) / CHUNK ))
+tiling=$("$PY" - "$CHUNKS" "$STORE_LO" "$STORE_HI" "$EXPECTED_CHUNKS" <<'PYEOF'
 import glob, json, sys
-root, lo, hi = sys.argv[1], int(sys.argv[2]), int(sys.argv[3])
+root, lo, hi, expected = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 cs = sorted((m["slot_start"], m["slot_end_exclusive"]) for m in (json.load(open(f)) for f in glob.glob(root + "/*/_manifest.json")) if m["status"] == "complete")
 edge, bad = lo, []
 for a, b in cs:
@@ -134,6 +143,7 @@ for a, b in cs:
     if a != edge: bad.append(f"gap or overlap at {edge}: next chunk starts {a}")
     edge = b
 if edge != hi: bad.append(f"tiling ends at {edge}, not {hi}")
+if len(cs) != expected: bad.append(f"{len(cs)} complete chunks, expected {expected}")
 print(f"{len(cs)} complete chunks; " + ("tile exactly" if not bad else "RED " + "; ".join(bad)))
 sys.exit(0 if not bad else 1)
 PYEOF
