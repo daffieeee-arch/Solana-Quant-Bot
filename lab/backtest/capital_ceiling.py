@@ -59,12 +59,13 @@ CANDIDATES = (("K3", "tp4_T600", None, False), ("H5", "flow300_tp100_H6", "organ
 W8B = ("W8-B (E51; probe scripts/w8est/e1.py, 0.25 SOL, linear impact 0.25/Q, not replayed by the engine): capped net "
        "per pool d 2 +0.35 % [-0.20; +0.90], d 3 +0.05 % [-0.56; +0.64], 780 pools a day; its size curve and capital "
        "ceiling are unknown until the engine can replay it.")
-GAP = ("Dev, pre-Alpenglow, a ceiling. Live paper on 22 Oct, the first whole day after Alpenglow (exit day UTC, "
+GAP = ("Dev, pre-Alpenglow, a ceiling. One live day, for scale: live paper on 22 Oct, the first whole day after Alpenglow (exit day UTC, "
        "triggers from epoch 1064; read-only journal snapshot sha256 1691ddc9…, 23 Oct 00:04Z): K3 (F7 tp4_T600, 0.5 SOL "
        "of 10) realised +1.06 SOL over 135 exits, with 3 positions open in emptied pools marked -1.50 SOL; the N2 "
        "comparison arm (a control, not a strategy) -1.87 SOL over 317 exits; group H entered nothing (5 positions stuck "
        "open since 21 Oct, max open). Live F7 trigger supply that day: 398, 180 of them organic, against dev's "
-       "~2,040 and ~630 a day (40,737 and 12,641 over 20 days). Do not read a dev ceiling as reachable.")
+       "~2,040 and ~630 a day (the v4 run's F7 pool_reversed signal set: 40,737 and 12,641 over 20 days). Do not read a dev "
+       "ceiling as reachable.")
 
 
 class Refused(SystemExit):
