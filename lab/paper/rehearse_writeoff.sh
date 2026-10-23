@@ -23,7 +23,7 @@ LAB=${LAB:-/home/chupa/Solana-project/data-old-faithful-one/lab}
 PY=${PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
 MAIN_LAB=${MAIN_LAB:-/home/chupa/Solana-project/worktrees/lab-paper-writeoff/lab}
 CTL=${CTL:-3a9e982}
-DEP=${DEP:-deploy-writeoff-2026-10-23}
+DEP=${DEP:-deploy-writeoff-2026-10-23b}
 JOURNAL=$LAB/journal/paper-k3/journal
 R=$LAB/tmp/rehearsal-writeoff-$(date -u +%Y%m%dT%H%MZ)
 mkdir -p "$R"
@@ -92,8 +92,11 @@ bad2 = [x for x in at_resume if not (x["exit_slot"] == x["exit_decision_slot"] +
         and x["day"] == rd["day"])]
 lost = [dict(r) for r in db.execute("SELECT family, variant, key, t FROM exits WHERE exit_reason = 'restart_lost' AND t >= 459648000")]
 lost_now = [r for r in lost if (r["family"], r["variant"], r["key"], r["t"]) in open_before]
-print(f"2. written off at the resume: {len(at_resume)} (of {n_wo} counted), not as specified {len(bad2)} {bad2[:2]}; "
-      f"restart_lost of those positions now {len(lost_now)}")
+dpos = {tuple(r) for r in db.execute("SELECT family, variant, key, t FROM positions")}
+still_open = [k for k in open_before if k in dpos]
+print(f"2. the {len(open_before)} positions open before = {len(at_resume)} written off at the resume + {len(still_open)} still open "
+      f"+ {len(lost_now)} restart_lost (+ {len(open_before) - len(at_resume) - len(still_open) - len(lost_now)} closed otherwise); "
+      f"written_off_at_resume counted {n_wo}; not as specified {len(bad2)} {bad2[:2]}")
 ok2 = len(at_resume) == n_wo and not bad2 and not lost_now
 k3 = [x for x in at_resume if x["family"] == "F7" and x["variant"] == "tp4_T600"]
 s = sum(x["pnl"] for x in k3)
