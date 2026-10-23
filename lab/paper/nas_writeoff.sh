@@ -106,10 +106,27 @@ for w in W1 W2; do
   engine head "$OUT/strict-$w-head" "$win" --ignore-risk
   rc=0
   PYTHONPATH=$REPO/lab "$PY" - "$OUT/strict-$w-main" "$OUT/strict-$w-head" > "$OUT/strict-$w.log" 2>&1 <<'EOF' || rc=$?
-import sqlite3, sys
+import json, sqlite3, sys
 from paper.journal_diff import compare, writeoff_causes
 a, b = sys.argv[1:3]
+
+
+def groups(path):
+    """The journal's groups state with each risk file's path from the checkout's lab/ on (head and main sit in two
+    directories; nas_truncation.sh's rule)."""
+    db = sqlite3.connect(f"file:{path}/journal.sqlite?mode=ro", uri=True)
+    try:
+        g = json.loads(db.execute("SELECT v FROM state WHERE k = 'groups'").fetchone()[0])
+    finally:
+        db.close()
+    for v in g.values():
+        if isinstance(v, dict) and isinstance(v.get("risk"), str):
+            v["risk"] = v["risk"].rsplit("/lab/", 1)[-1]
+    return g
+
+
 r = compare(a, b, causes=writeoff_causes(a, b))
+mismatch = [k for k in r["state_mismatch"] if k != "groups"] + ([] if groups(a) == groups(b) else ["groups"])
 q = lambda p, sql: sqlite3.connect(f"file:{p}/journal.sqlite?mode=ro", uri=True).execute(sql).fetchone()[0]  # noqa: E731
 n_wo = q(b, "SELECT count(*) FROM exits WHERE exit_reason = 'written_off'")
 n_unsold = q(a, "SELECT count(*) FROM exits WHERE tokens > 0 AND exit_slot IS NULL AND proceeds = 0")
@@ -119,8 +136,8 @@ print(f"written_off in head {n_wo}; main's unsold positions (exit_slot NULL, pro
 for t, v in r["tables"].items():
     if v["unexplained"]:
         print(f"  {t}: only main {v['only_a_first'][:3]}, only head {v['only_b_first'][:3]}, different {v['different_first'][:3]}")
-ok = r["unexplained"] == 0 and not r["schema_diff"] and not r["state_mismatch"] and n_wo <= n_unsold and any(v["rows_a"] for v in r["tables"].values())
-print(f"strict: unexplained {r['unexplained']}, schema diff {bool(r['schema_diff'])}, state mismatch {r['state_mismatch']}: {'GREEN' if ok else 'RED'}")
+ok = r["unexplained"] == 0 and not r["schema_diff"] and not mismatch and n_wo <= n_unsold and any(v["rows_a"] for v in r["tables"].values())
+print(f"strict: unexplained {r['unexplained']}, schema diff {bool(r['schema_diff'])}, state mismatch {mismatch} (risk paths from lab/): {'GREEN' if ok else 'RED'}")
 sys.exit(0 if ok else 1)
 EOF
   tee -a "$OUT/job.log" < "$OUT/strict-$w.log"
