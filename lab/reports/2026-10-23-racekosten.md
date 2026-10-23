@@ -12,7 +12,7 @@ Labels: feit / reconstructie / modelaanname / onbekend. Elk bedrag is een **reco
 
 ## Kort
 
-- **Racen om als eerste in t+1 te landen ("zo snel als de snelste bot", d 0) verliest.** Met de landingskansen van de opdracht en "gemist = geen positie" kost het t.o.v. nu (d 3) **H5 −1,8 / −4,5 / −16,9** en **C3 −4,5 / −8,5 / −19,8 SOL/dag** bij 10 / 25 / 100 SOL (met limieten; alle intervallen onder 0). Zelfs met zekere landing (orakel) is eerst-in-t+1 nauwelijks beter dan midden-in-t+1 (d 1): H5 +0,07 / −0,14 / −4,46, C3 +1,0 / +2,4 / +3,3. Daarbovenop kost die snelheid ≈ $2.400–6.800 per maand per regio. **Geen colocatie-race.**
+- **Racen om als eerste in t+1 te landen ("zo snel als de snelste bot", d 0) verliest.** Met de landingskansen van de opdracht en "gemist = geen positie" kost het t.o.v. nu (d 3) **H5 −1,8 / −4,5 / −16,9** en **C3 −4,5 / −8,5 / −19,8 SOL/dag** bij 10 / 25 / 100 SOL (met limieten; alle zes intervallen onder 0, bovengrenzen −0,62 … −4,76). Zelfs met zekere landing (orakel) is eerst-in-t+1 nauwelijks beter dan midden-in-t+1 (d 1): H5 +0,07 / −0,14 / −4,46, C3 +1,0 / +2,4 / +3,3 (ongepaarde puntverschillen). Daarbovenop kost die snelheid ≈ $2.400–6.800 per maand per regio. **Geen colocatie-race.**
 - **De waarde zit in van d 3 naar d 1 ("snel"):** H5 **+1,00 [+0,25; +1,83] / +2,64 [+0,74; +4,75] / +1,60 [−4,70; +8,79]**, C3 **+0,17 [−2,34; +2,16] / +2,78 [+0,25; +5,88] / +11,19 [−2,70; +31,74]** SOL/dag (gepaarde dag-bootstrap, met limieten). Netto na de "snel"-laag (≤ $650/maand + 0,001 SOL tip per transactie): H5 ≈ +0,7 / +2,3 / +1,3, C3 ≈ −0,1 / +2,5 / +10,9.
 - **Maar d 1 is live op onze huidige stroom onbereikbaar** (feit, E67: slot t+1 is in 99,8 % van de F7-triggers al geproduceerd als wij t zien). d 1 vergt **processed-commitment** (gratis, p50 321 ms eerder) **plus een eigen verzendpad** dat in ≈ 300 ms (p50) landt; dat is nooit gemeten, want het lab verstuurt niets. Processed alleen schuift ons ≈ 1,5 slot op (van live t+3 naar ≈ t+2, in tijd dev's d 2): H5 d 2 − d 3 +0,29 / +0,34 / −2,09, C3 −0,13 / +1,66 / +12,24 (puntschattingen).
 - **Snelheid is een verbetering, geen voorwaarde.** De break-even-vertraging ligt voor beide leads bij elk kapitaal **voorbij 13 slots** (> 3,5 s op dev): ze blijven bij elke onderzochte vertraging positief, met de ondergrens van het interval boven 0 (in-sample).
@@ -29,36 +29,37 @@ Labels: feit / reconstructie / modelaanname / onbekend. Elk bedrag is een **reco
 
 ## 2. Netto SOL/dag per vertraging (base, met limieten, [95 % dag-interval])
 
-**Terugveer lang H5** (mislukte instap % = de engine's 5 %-slippagegrens, bij 10 SOL):
+**Terugveer lang H5** (mislukte instap % = de engine's 5 %-slippagegrens; posities per dag met limieten; beide bij 10 SOL):
 
-| d | 10 SOL | 25 SOL | 100 SOL | instap mislukt |
-|---|---|---|---|---|
-| 0 orakel (p_land 1, F 0) | +6,70 [+4,53; +8,86] | +15,97 [+10,70; +21,18] | +34,21 [+18,41; +50,12] | 0 % |
-| 0 met p_land, F p90, gemist = geen | +3,81 [+2,60; +5,02] | +8,95 [+6,02; +11,89] | +20,15 [+9,15; +31,41] | – |
-| 0 met p_land, F p90, gemist → d 1 | +6,38 | +15,22 | +32,43 | – |
-| 1 | +6,63 [+4,46; +8,73] | +16,11 [+10,67; +21,48] | +38,67 [+19,37; +58,16] | 3,0 % |
-| 2 (600 ms op dev) | +5,91 | +13,81 | +34,99 | 10,1 % |
-| 3 (live nu) | +5,62 [+3,66; +7,55] | +13,47 [+8,59; +18,25] | +37,08 [+20,32; +53,89] | 15,1 % |
-| 5 | +5,47 | +12,91 | +33,05 | 21,8 % |
-| 8 | +6,13 | +14,38 | +36,98 | 26,4 % |
-| 13 | +6,01 [+3,97; +8,25] | +14,11 [+9,00; +19,66] | +32,80 [+14,08; +52,34] | 30,2 % |
+| d | 10 SOL | 25 SOL | 100 SOL | instap mislukt | posities/dag |
+|---|---|---|---|---|---|
+| 0 orakel (p_land 1, F 0) | +6,70 [+4,53; +8,86] | +15,97 [+10,70; +21,18] | +34,21 [+18,41; +50,12] | 0 % | 78,8 |
+| 0 met p_land, F p90, gemist = geen | +3,81 [+2,60; +5,02] | +8,95 [+6,02; +11,89] | +20,15 [+9,15; +31,41] | – | 107,3¹ |
+| 0 met p_land, F p90, gemist → d 1 | +6,38 | +15,22 | +32,43 | – | 79,7 |
+| 1 | +6,63 [+4,46; +8,73] | +16,11 [+10,67; +21,48] | +38,67 [+19,37; +58,16] | 3,0 % | 81,1 |
+| 2 (600 ms op dev) | +5,91 | +13,81 | +34,99 | 10,1 % | 86,4 |
+| 3 (live nu) | +5,62 [+3,66; +7,55] | +13,47 [+8,59; +18,25] | +37,08 [+20,32; +53,89] | 15,1 % | 91,4 |
+| 5 | +5,47 | +12,91 | +33,05 | 21,8 % | 96,9 |
+| 8 | +6,13 | +14,38 | +36,98 | 26,4 % | 109,9 |
+| 13 | +6,01 [+3,97; +8,25] | +14,11 [+9,00; +19,66] | +32,80 [+14,08; +52,34] | 30,2 % | 109,7 |
 
 **Koopstroom-arm C3/hold300:**
 
-| d | 10 SOL | 25 SOL | 100 SOL | instap mislukt |
-|---|---|---|---|---|
-| 0 orakel | +9,06 [+4,89; +13,68] | +21,43 [+11,49; +32,48] | +51,69 [+20,75; +87,01] | 0 % |
-| 0 met p_land, F p90, gemist = geen | +3,38 [+1,71; +5,34] | +7,82 [+3,78; +12,58] | +17,34 [+4,32; +33,04] | – |
-| 0 met p_land, F p90, gemist → d 1 | +8,86 | +20,34 | +46,07 | – |
-| 1 | +8,04 [+3,96; +12,60] | +19,05 [+9,32; +29,94] | +48,35 [+19,01; +82,50] | 6,1 % |
-| 2 | +7,74 | +17,93 | +49,40 | 15,9 % |
-| 3 | +7,87 [+4,37; +11,53] | +16,27 [+8,22; +25,13] | +37,16 [+12,43; +65,47] | 22,4 % |
-| 5 | +5,94 | +14,03 | +37,54 | 28,5 % |
-| 8 | +7,28 | +15,90 | +41,37 | 32,3 % |
-| 13 | +8,94 [+4,87; +13,34] | +17,35 [+8,73; +26,77] | +36,73 [+10,06; +68,11] | 35,6 % |
+| d | 10 SOL | 25 SOL | 100 SOL | instap mislukt | posities/dag |
+|---|---|---|---|---|---|
+| 0 orakel | +9,06 [+4,89; +13,68] | +21,43 [+11,49; +32,48] | +51,69 [+20,75; +87,01] | 0 % | 89,6 |
+| 0 met p_land, F p90, gemist = geen | +3,38 [+1,71; +5,34] | +7,82 [+3,78; +12,58] | +17,34 [+4,32; +33,04] | – | 87,5¹ |
+| 0 met p_land, F p90, gemist → d 1 | +8,86 | +20,34 | +46,07 | – | 94,7 |
+| 1 | +8,04 [+3,96; +12,60] | +19,05 [+9,32; +29,94] | +48,35 [+19,01; +82,50] | 6,1 % | 88,6 |
+| 2 | +7,74 | +17,93 | +49,40 | 15,9 % | 97,1 |
+| 3 | +7,87 [+4,37; +11,53] | +16,27 [+8,22; +25,13] | +37,16 [+12,43; +65,47] | 22,4 % | 107,9 |
+| 5 | +5,94 | +14,03 | +37,54 | 28,5 % | 92,5 |
+| 8 | +7,28 | +15,90 | +41,37 | 32,3 % | 111,7 |
+| 13 | +8,94 [+4,87; +13,34] | +17,35 [+8,73; +26,77] | +36,73 [+10,06; +68,11] | 35,6 % | 125,2 |
 
+- ¹ Bij d 0 met p_land tellen de missers mee als genomen (een betaalde, mislukte transactie zonder positie).
 - d 3 reproduceert E63 exact (poort G4). Pessimistische kosten geven hetzelfde beeld, ≈ 1–2 SOL/dag lager bij 10 SOL (racing.md).
-- **Niet monotoon in d.** Na d 5 stijgt SOL/dag weer, terwijl het aandeel mislukte instappen oploopt van 15 % (d 3) naar 30–36 % (d 13). Hypothese: de 5 %-slippagegrens van de engine werkt bij grote d als filter; hij weigert vooral instappen in pools die al wegliepen. Dat is een eigenschap van het model, geen bewezen voordeel van traagheid.
+- **Niet monotoon in d.** Na d 5 stijgt SOL/dag weer, terwijl het aandeel mislukte instappen oploopt van 15 % (d 3) naar 30–36 % (d 13). Het valt samen met meer posities per dag (H5 bij 10 SOL: 81 bij d 1, 91 bij d 3, 110 bij d 8): een mislukte instap neemt geen plek in, dus komen er meer latere triggers aan bod. Hypothese: de 5 %-slippagegrens van de engine werkt bij grote d als filter; hij weigert vooral instappen in pools die al wegliepen. Dat is een eigenschap van het model, geen bewezen voordeel van traagheid: lees d 8 en d 13 niet als "trager is beter".
 - Bij 100 SOL zijn de verschillen tussen vertragingen klein tegenover de intervallen. Daar beslissen prijsimpact en limieten, niet de snelheid.
 
 ## 3. Wat snelheid waard is (gepaard, met limieten, base)
@@ -71,7 +72,7 @@ Labels: feit / reconstructie / modelaanname / onbekend. Elk bedrag is een **reco
 | **snel: d 1 − d 3** | **+1,00 [+0,25; +1,83] / +2,64 [+0,74; +4,75] / +1,60 [−4,70; +8,79]** | **+0,17 [−2,34; +2,16] / +2,78 [+0,25; +5,88] / +11,19 [−2,70; +31,74]** |
 | d 1 − d 2 | +0,72 [+0,17; +1,36] / +2,30 [+0,84; +3,93] / +3,69 [−0,83; +8,97] | +0,30 [−0,32; +0,97] / +1,12 [−0,18; +2,62] / −1,06 [−10,50; +6,48] |
 
-- **Waarom de race verliest.** Bij p_land gemiddeld 0,59 (H5) en 0,50 (C3) mist een d 0-poging 41–50 % van de triggers. Een gemiste trigger is een gemiste winstgevende positie, en de mislukte transactie wordt wel betaald. Eerst-in-t+1 levert per geslaagde positie bijna niets op boven midden-in-t+1: het orakel ligt ≈ op d 1. Daardoor wint geen enkele fee de race terug: F* (snelste − d 3) is negatief, H5 −0,026 / −0,062 / −0,159 en C3 −0,043 / −0,102 / −0,288 SOL per poging. Met terugval naar d 1 ligt F* tegen d 3 op H5 +0,010 / +0,025 / +0,086 en C3 +0,009 / +0,021 / +0,071 SOL.
+- **Waarom de race verliest.** Bij p_land gemiddeld 0,59 (H5) en 0,50 (C3) mist een d 0-poging 41–50 % van de triggers. Een gemiste trigger is een gemiste winstgevende positie, en de mislukte transactie wordt wel betaald. Eerst-in-t+1 levert per geslaagde positie bijna niets op boven midden-in-t+1: het orakel ligt ≈ op d 1 (ongepaarde puntverschillen orakel − d 1: H5 +0,07 / −0,14 / −4,46, C3 +1,0 / +2,4 / +3,3). Daardoor wint geen enkele fee de race terug: F* (snelste − d 3) is negatief, H5 −0,026 / −0,062 / −0,159 en C3 −0,043 / −0,102 / −0,288 SOL per poging. Met terugval naar d 1 ligt F* tegen d 3 op H5 +0,010 / +0,025 / +0,086 en C3 +0,009 / +0,021 / +0,071 SOL.
 - **Wat winnaars betaalden (feit, dev; ondergrens: tips aan andere relays, gevallen en mislukte transacties zie je niet).**
   - H5: de eerste t+1-koper p50 0 / p90 5.000 / p99 241.141 lamports (1.893 triggers); alle t+1-kopen p90 1.000, 5,4 % met een Jito-tip.
   - C3: p50 0 / p90 13.270 / p99 270.465 (1.766 triggers); alle t+1-kopen p90 4.820, 9,8 % met tip.
