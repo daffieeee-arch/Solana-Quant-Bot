@@ -166,11 +166,12 @@ def written_off_later_sold(bt, en, k):
 
 
 def _split(diffs, bt, en):
-    """(unexplained diffs, explained unsold_busy diffs, explained written_off diffs: written_off_row or
-    written_off_later_sold)."""
-    wo = [d for d in diffs if "diff" in d and (written_off_row(bt, en, tuple(d["key"])) or written_off_later_sold(bt, en, tuple(d["key"])))]
-    expl = [d for d in diffs if "diff" in d and d not in wo and unsold_busy(bt, en, tuple(d["key"]))]
-    return [d for d in diffs if d not in expl and d not in wo], expl, wo
+    """(unexplained diffs, explained unsold_busy diffs, explained written_off diffs, explained written_off_later_sold
+    diffs): the two write-off causes apart, so a forgone late sale shows (LAB review on #533)."""
+    wo = [d for d in diffs if "diff" in d and written_off_row(bt, en, tuple(d["key"]))]
+    later = [d for d in diffs if "diff" in d and d not in wo and written_off_later_sold(bt, en, tuple(d["key"]))]
+    expl = [d for d in diffs if "diff" in d and d not in wo and d not in later and unsold_busy(bt, en, tuple(d["key"]))]
+    return [d for d in diffs if d not in expl and d not in wo and d not in later], expl, wo, later
 
 
 def arm_parity(store, a, b, arm, journal_dir, con=None, tail=ARM_TAIL, d_ms=600, segments=("pool_reversed",)):
@@ -189,10 +190,10 @@ def arm_parity(store, a, b, arm, journal_dir, con=None, tail=ARM_TAIL, d_ms=600,
     org = {k for k in set(bt_org) | set(en) if a <= k[1] < b and (bt_org.get(k) or en.get(k)).get("farm") == "organic"}
     keys1 = sorted(k for k in org if k not in open_at_end)
     _, d1, c1 = compare({k: bt_org[k] for k in keys1 if k in bt_org}, {k: en[k] for k in keys1 if k in en}, a, b)
-    d1, e1, w1 = _split(d1, bt_org, en)
+    d1, e1, w1, s1 = _split(d1, bt_org, en)
     keys2 = sorted(k for k in keys1 if k[0] not in flagged_pools)
     _, d2, c2 = compare({k: bt_tour[k] for k in keys2 if k in bt_tour}, {k: en[k] for k in keys2 if k in en}, a, b)
-    d2, e2, w2 = _split(d2, bt_tour, en)
+    d2, e2, w2, s2 = _split(d2, bt_tour, en)
     in_flagged = [k for k in keys1 if k[0] in flagged_pools]
     _, d3, _ = compare({k: bt_tour[k] for k in in_flagged if k in bt_tour}, {k: en[k] for k in in_flagged if k in en}, a, b)
     pnl = lambda side, ks: sum((side.get(k) or {}).get("pnl") or 0 for k in ks)  # noqa: E731
@@ -201,9 +202,11 @@ def arm_parity(store, a, b, arm, journal_dir, con=None, tail=ARM_TAIL, d_ms=600,
                              "unsold_busy": len(e1), "unsold_busy_keys": [d["key"] for d in e1],
                              "unsold_busy_pnl_backtest": sum((bt_org[tuple(d["key"])] or {}).get("pnl") or 0 for d in e1),
                              "written_off": len(w1), "written_off_keys": [d["key"] for d in w1],
+                             "written_off_later_sold": len(s1), "written_off_later_sold_keys": [d["key"] for d in s1],
+                             "written_off_later_sold_pnl_backtest": sum((bt_org[tuple(d["key"])] or {}).get("pnl") or 0 for d in s1),
                              "open_at_data_end": len(open_at_end), "pnl_backtest": pnl(bt_org, keys1), "pnl_engine": pnl(en, keys1)},
             "tournament_busy": {"triggers": len(keys2), "by_status": c2, "different": len(d2), "diffs": d2[:20],
-                                "unsold_busy": len(e2), "written_off": len(w2)},
+                                "unsold_busy": len(e2), "written_off": len(w2), "written_off_later_sold": len(s2)},
             "flagged_pools": {"organic_triggers": len(in_flagged), "different_from_the_tournament": len(d3)}}
 
 
@@ -238,10 +241,13 @@ def main():
                  f"- busy over organic triggers (the engine's arm): {o['triggers']} triggers {o['by_status']}, different "
                  f"{o['different']} unexplained, {o['unsold_busy']} unsold_busy (the backtest's busy frees a pool at the trigger "
                  f"of a position that never sells; its P&L {o['unsold_busy_pnl_backtest']}), {o['written_off']} written_off (the "
-                 f"backtest's unsold position, written off by the engine at its rule's deadline); P&L backtest {o['pnl_backtest']}, "
+                 f"backtest's unsold position, written off by the engine at its rule's deadline), {o['written_off_later_sold']} "
+                 f"written_off_later_sold (the backtest sold it later: a forgone late sale; its backtest P&L "
+                 f"{o['written_off_later_sold_pnl_backtest']}); P&L backtest {o['pnl_backtest']}, "
                  f"engine {o['pnl_engine']} lamports; open at the data's end (not compared) {o['open_at_data_end']}",
                  f"- the tournament's busy, pools without a flagged trigger: {t['triggers']} triggers {t['by_status']}, different "
-                 f"{t['different']} unexplained, {t['unsold_busy']} unsold_busy, {t['written_off']} written_off",
+                 f"{t['different']} unexplained, {t['unsold_busy']} unsold_busy, {t['written_off']} written_off, "
+                 f"{t['written_off_later_sold']} written_off_later_sold",
                  f"- organic triggers in pools with a flagged trigger: {res['flagged_pools']['organic_triggers']}, different from "
                  f"the tournament {res['flagged_pools']['different_from_the_tournament']} (the documented difference, spec §2)",
                  f"- engine {res['engine_events']} events, {res['seconds']} s", ""]

@@ -247,6 +247,22 @@ def test_a_second_restart_after_a_write_off_at_the_resume_across_midnight_is_cle
     assert first["slot"] > t + 2_500
 
 
+def test_a_write_off_the_journal_neither_exits_nor_holds_is_counted(tmp_path, monkeypatch):
+    # An inconsistent journal (its NX position row gone): the replay's write-off is counted as an exit of its own.
+    case, nx = restart_case()
+    with monkeypatch.context() as m:
+        m.setattr(Engine, "_write_off_if_stuck", lambda self, o, slot: False)
+        crash(live_engine(case, str(tmp_path / "j"), crash_at=T0 + 2_500))
+    with contextlib.closing(sqlite3.connect(str(tmp_path / "j" / "journal.sqlite"))) as db:
+        db.execute("DELETE FROM positions WHERE key = ?", (nx,))
+        db.commit()
+    r = live_engine(case, str(tmp_path / "j"))
+    r.run()
+    c = json.loads(r.journal.state(RS.RESTARTS_KEY))[-1]["counts"]
+    assert c.get("replay_exits_not_in_journal") == 1 and not c.get("written_off_at_resume"), c
+    assert not r.journal.rows("exits", "key = ?", (nx,))
+
+
 # ------------------------------------------------------------------------------------------------- the tools
 
 def _journal(path, exits, fills=(), state=None):
@@ -304,10 +320,12 @@ def test_parity_explains_a_written_off_row_and_its_busy_window():
           k2: {"status": "busy"}}
     assert parity.written_off_row(bt, en, k1) and parity.unsold_busy(bt, en, k2)
     _, diffs, _ = parity.compare(bt, en, 0, 1_000)
-    unexplained, busy, wo = parity._split(diffs, bt, en)
-    assert (len(unexplained), len(busy), len(wo)) == (0, 1, 1)
-    # The backtest sold it later (a pool with liquidity again): explained too.
-    sold = {**bt, k1: {**bt[k1], "exit_slot": 900, "proceeds": 400}}
+    unexplained, busy, wo, later = parity._split(diffs, bt, en)
+    assert (len(unexplained), len(busy), len(wo), len(later)) == (0, 1, 1, 0)
+    # The backtest sold it later (a pool with liquidity again): explained too, listed apart.
+    sold = {**bt, k1: {**bt[k1], "exit_slot": 900, "proceeds": 400}, k2: {"status": "busy"}}  # held to 900: k2 busy there too
     assert parity.written_off_later_sold(sold, en, k1) and not parity.written_off_row(sold, en, k1)
+    _, diffs, _ = parity.compare(sold, en, 0, 1_000)
+    assert [len(x) for x in parity._split(diffs, sold, en)] == [0, 0, 0, 1]
     # After the write-off the engine's pool is free: a trigger past it is no unsold_busy.
     assert not parity.unsold_busy(bt, {**en, k1: {**en[k1], "exit_slot": 250}}, k2)
