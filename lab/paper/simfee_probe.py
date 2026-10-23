@@ -37,11 +37,13 @@ the blockhash is zero, and only those two read methods can be posted (METHODS).
 
 import argparse
 import base64
+import collections
 import datetime as dt
 import fcntl
 import glob
 import hashlib
 import json
+import math
 import os
 import random
 import socket
@@ -62,7 +64,7 @@ from backtest.venues import Pool, rev_buy_token, rev_sell_token
 from . import txwire
 
 RULE = "research/simfee-probe-rule-2026-10-23.md"
-RULE_SHA = "ce2717e568da0047e7936c2922abe0a93a5ed2a443cffd50084340a5cf555d9e"  # v2
+RULE_SHA = "48ac7ed3706acfe273ff5ddf721bd449355e35aa460e3cc03ffc7e56c6172cce"  # v3
 FLOOR = 459_648_000  # the first slot after the clean lock (epoch 1064, Alpenglow)
 DAY0 = "2026-10-23"
 FAMILY = "F7"
@@ -75,7 +77,8 @@ USD_PER_CALL, USD_PER_GB = 10 / 1e6, 0.08  # Triton's standard RPC rate (unverif
 PACE_S, MAX_CONSEC = 0.5, 5
 EXIT_CAP, EXIT_ERRORS, EXIT_LOCKED = 76, 78, 79
 CU_SETUP, CU_SWAP = 80_000, 400_000
-ACQUIRE_MIN = 100_000_000  # lamports: the exit's acquire is min(max(0.1 SOL, 3 x the journal's proceeds), the payer budget)
+ACQUIRE_MIN = 100_000_000  # lamports: the smallest acquire
+ACQUIRE_MARGIN = 1.5  # the acquire = 1.5 x the model's SOL for the position's tokens on the pool's newest recorded state
 PAYER_BUDGET = 1_900_000_000  # lamports the acquire may use (a payer of >= 2 SOL; rent and fees from the rest)
 LATE_SLOTS = 1_500  # a row or trigger older than this behind the recorder's newest slot (~5 min) is late: no call
 SCAN_SEGMENTS = 120  # recorder segments searched back for a pool's trade row (~2 h)
@@ -169,7 +172,8 @@ class Recorder:
     (then paper.keeper's kept copies): the pool-side accounts, the fee bps and the virtual quote reserves."""
 
     COLS = ("slot, tx_index, parent_ix_name, ix_accounts, coin_creator, lp_fee_basis_points, protocol_fee_basis_points, "
-            "coin_creator_fee_basis_points, cashback_fee_basis_points, virtual_quote_reserves")
+            "coin_creator_fee_basis_points, cashback_fee_basis_points, virtual_quote_reserves, pool_base_token_reserves, "
+            "pool_quote_token_reserves")
 
     def __init__(self, root):
         self.root = root
@@ -370,7 +374,9 @@ def bps(a, b):
 
 
 def classify(res, swap_i):
-    """(class, detail): ok, rpc, structural (setup, acquire, account or program errors) or market (MARKET_CODES on the swap)."""
+    """(class, detail): ok, rpc, structural (setup, acquire, account or program errors) or market (MARKET_CODES on the swap).
+    The failing transaction is the last of transactionResults: the Jito node stops a bundle at its first failure and
+    returns the results up to and including it (jito-solana v4.3.x runtime/src/bank.rs)."""
     if "error" in res:
         return "rpc", {"code": res["error"].get("code")}
     v = res.get("result", {}).get("value") or {}
@@ -583,15 +589,45 @@ def simulate_entry(e, acc, row, payer, rpc, rid, mark=None, budget=PAYER_BUDGET)
     return req, out
 
 
-def simulate_exit(x, acc, row, payer, rpc, rid, mark=None, budget=PAYER_BUDGET):
-    acquire = min(max(ACQUIRE_MIN, 3 * x["j_sol"]), budget)
+def acquire_plan(row_now, tokens, budget):
+    """(lamports, reason, model lamports): the exit's acquire sized from the engine's model on the pool's newest recorded
+    state (the trade row's reserves + virtual quote reserves, its fee bps): ACQUIRE_MARGIN x the smallest SOL that buys
+    `tokens`, at least ACQUIRE_MIN, capped by the payer budget (LAB review of #538: a fixed multiple of the proceeds
+    selected the exit sample). reason: model (inside the budget), budget_cap (the model needs more than the budget) or
+    no_model (no state: the budget)."""
+    try:
+        p = Pool(int(row_now["pool_base_token_reserves"]), int(row_now["pool_quote_token_reserves"]) + int(row_now.get("virtual_quote_reserves") or 0),
+                 *(int(row_now.get(c) or 0) for c in ("lp_fee_basis_points", "protocol_fee_basis_points", "coin_creator_fee_basis_points",
+                                                      "cashback_fee_basis_points")), virt=int(row_now.get("virtual_quote_reserves") or 0))
+    except (TypeError, ValueError, KeyError):
+        return budget, "no_model", None
+
+    def enough(sol):
+        f = rev_buy_token(p, sol)
+        return f is not None and f.tokens >= tokens
+
+    if not enough(budget):
+        return budget, "budget_cap", None
+    lo, hi = 1, budget  # the smallest sol with enough(sol): tokens out rise with sol
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if enough(mid):
+            hi = mid
+        else:
+            lo = mid + 1
+    want = max(ACQUIRE_MIN, math.ceil(lo * ACQUIRE_MARGIN))
+    return (want, "model", lo) if want <= budget else (budget, "budget_cap", lo)
+
+
+def simulate_exit(x, acc, row, payer, rpc, rid, mark=None, budget=PAYER_BUDGET, row_now=None):
+    acquire, reason, model = acquire_plan(row_now or row, x["tokens"], budget)
     txs, user = exit_bundle(payer, acc, x["tokens"], acquire)
     vaults = [acc["pool"], acc["pool_base_token_account"], acc["pool_quote_token_account"]]
     pre = [None, vaults, vaults + [user["user_base_token_account"], user["user_quote_token_account"]]]
     post = [None, [user["user_quote_token_account"]], [user["user_base_token_account"], user["user_quote_token_account"]]]
     req = bundle_request(txs, pre, post, rid)
     out = {"selfcheck": selfcheck(txs, payer), "instruction": "buy_exact_quote_in", "tokens": x["tokens"], "acquire": acquire,
-           "j_sol": x["j_sol"]}
+           "acquire_reason": reason, "acquire_model": model, "j_sol": x["j_sol"]}
     if rpc is None or not out["selfcheck"]:
         return req, out
     res = rpc.call(req, "sim", on_reserved=mark)
@@ -601,9 +637,9 @@ def simulate_exit(x, acc, row, payer, rpc, rid, mark=None, budget=PAYER_BUDGET):
     if detail and detail.get("tx") in (0, 1):
         detail["stage"] = "setup" if detail["tx"] == 0 else "acquire"  # our own preparation: never uitval
         if detail["tx"] == 1 and detail.get("code") in MARKET_CODES:
-            # The pool moved since the exit (drained, or the price rose past our margin): the acquire could not get the
-            # position's tokens back. Its own class: neither structural (the probe is not wrong) nor uitval (the exit
-            # itself was not tried) (review of the probe).
+            # The acquire could not get the position's tokens back: the payer budget was short (budget_cap) or the pool
+            # moved since its newest recorded state (model, no_model). Its own class: neither structural (the probe is
+            # not wrong) nor uitval (the exit itself was not tried) (review of the probe).
             cls = "acquire_market"
     out.update(cls=cls, detail=detail)
     v = res.get("result") or {}
@@ -695,12 +731,16 @@ def run_pass(lab, state_dir, run_dir, payer, rpc, rec, log=print, budget=PAYER_B
             continue
         rid += 1
         t0 = time.time_ns()
-        req, out = (simulate_entry if side == "entry" else simulate_exit)(x, acc, row, payer, rpc, rid, mark=marker(key), budget=budget)
+        if side == "entry":
+            req, out = simulate_entry(x, acc, row, payer, rpc, rid, mark=marker(key), budget=budget)
+        else:  # the acquire is sized on the pool's newest recorded state, not the state at the exit
+            now_row = rec.row(x["pool"], newest) if newest is not None else None
+            req, out = simulate_exit(x, acc, row, payer, rpc, rid, mark=marker(key), budget=budget, row_now=now_row)
         base.update(row_slot=row["slot"], fee_bps=[row.get(c) for c in ("lp_fee_basis_points", "protocol_fee_basis_points",
                                                                         "coin_creator_fee_basis_points", "cashback_fee_basis_points")])
         if rpc is None:
             write("requests.jsonl", req)
-            write("selfcheck.jsonl", dict(base, selfcheck=out["selfcheck"]))
+            write("selfcheck.jsonl", dict(base, selfcheck=out["selfcheck"], **{k: out[k] for k in ("acquire", "acquire_reason") if k in out}))
             continue
         if not out["selfcheck"]:
             write("sims.jsonl", dict(base, cls="skipped", why="selfcheck"))
@@ -786,6 +826,9 @@ def summary(lab, draws=10_000, seed=7):
         n_ok, n_mkt = sum(x["cls"] == "ok" for x in r), sum(x["cls"] == "market" for x in r)
         res = {"attempted": len(r), "ok": n_ok, "ok_with_M": len(ok),
                "not_in_sample": {c: sum(x.get("cls") == c for x in every) for c in ("late", "skipped", "acquire_market", "declined")},
+               # LAB review of #538: the sample's coverage of the journal as numbers.
+               "why": dict(sorted(collections.Counter(f"{x.get('cls')}:{x.get('why') or x.get('acquire_reason') or ''}"
+                                                      for x in every if x.get("cls") in ("skipped", "acquire_market", "late")).items())),
                "uitval_pct": round(100 * n_mkt / (n_ok + n_mkt), 2) if n_ok + n_mkt else None,  # market / (ok + market)
                "structural_pct": round(100 * sum(x["cls"] == "structural" for x in r) / len(r), 2) if r else None,
                "rpc_pct": round(100 * sum(x["cls"] == "rpc" for x in r) / len(r), 2) if r else None}
@@ -876,7 +919,12 @@ def main(argv=None, post=http_post):
         _dry_guard()
         n = run_pass(a.lab, state_dir, run_dir, payer, None, rec, log, budget=a.payer_budget)
         reqs = sum(1 for _ in open(os.path.join(run_dir, "requests.jsonl"))) if os.path.exists(os.path.join(run_dir, "requests.jsonl")) else 0
-        log(f"DRY RUN: {reqs} requests built (requests.jsonl), {n} calls made; nothing was sent")
+        sc = os.path.join(run_dir, "selfcheck.jsonl")
+        rows = [json.loads(line) for line in open(sc)] if os.path.exists(sc) else []
+        kinds = collections.Counter(f"{r['side']}:{'built' if r.get('selfcheck') else ('selfcheck_failed' if r.get('selfcheck') is False else r.get('why'))}"
+                                    for r in rows)
+        log(f"DRY RUN: {reqs} requests built (requests.jsonl), {n} calls made; nothing was sent; rows {dict(sorted(kinds.items()))}, "
+            f"late {sum(bool(r.get('late')) for r in rows)} of {len(rows)}")
         return 0
     if not os.path.exists(a.approval):
         raise SystemExit(f"no approval file {a.approval} (LAB review and the coordinator's OK first)")

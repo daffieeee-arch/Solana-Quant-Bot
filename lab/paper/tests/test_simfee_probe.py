@@ -314,7 +314,20 @@ def test_an_acquire_the_market_refuses_is_its_own_class():
     _, out = sp.simulate_exit({"tokens": 5, "j_sol": 500_000_000, "pool": pool}, acc, row, payer(), FakeRpc(res), 1)
     assert out["cls"] == "structural"
     _, out = sp.simulate_exit({"tokens": 5, "j_sol": 900_000_000, "pool": pool}, acc, row, payer(), FakeRpc(res), 1, budget=2_000_000_000)
-    assert out["acquire"] == 2_000_000_000  # 3 x 0.9 SOL, capped at the payer budget
+    assert (out["acquire"], out["acquire_reason"]) == (2_000_000_000, "no_model")
+
+
+def test_the_acquire_is_sized_from_the_model():
+    row = {"pool_base_token_reserves": 80_000_000_000, "pool_quote_token_reserves": 900_000_000_000_000, "virtual_quote_reserves": "0",
+           "lp_fee_basis_points": 25, "protocol_fee_basis_points": 5, "coin_creator_fee_basis_points": 0, "cashback_fee_basis_points": 0}
+    p = Pool(80_000_000_000, 900_000_000_000_000, 25, 5, 0, 0)
+    T = rev_buy_token(p, 500_000_000).tokens
+    lam, why, model = sp.acquire_plan(row, T, sp.PAYER_BUDGET)
+    assert why == "model" and rev_buy_token(p, model).tokens >= T > rev_buy_token(p, model - 1).tokens
+    assert lam == max(sp.ACQUIRE_MIN, -(-model * 3 // 2)) and abs(model - 500_000_000) <= 1
+    assert sp.acquire_plan(row, T, 600_000_000) == (600_000_000, "budget_cap", model)  # 1.5 x the model is past the budget
+    assert sp.acquire_plan(row, rev_buy_token(p, 3_000_000_000).tokens, 2_000_000_000) == (2_000_000_000, "budget_cap", None)
+    assert sp.acquire_plan({}, T, 2_000_000_000) == (2_000_000_000, "no_model", None)
 
 
 def test_the_percentile_guard_compares_common_slots(tmp_path):
@@ -359,7 +372,8 @@ def test_the_exit_readout_on_the_state_after_the_acquire():
     x = {"tokens": T, "j_sol": 500_000_000, "pool": pool}
     _, out = sp.simulate_exit(x, acc, row, payer(), FakeRpc(res), 1)
     assert out["cls"] == "ok" and out["sim_out"] == eng and out["M_bps"] == 0.0
-    assert out["exit_est"] == rev_sell_token(p1, T).trader_quote and out["acquire"] == 1_500_000_000  # 3 x the journal proceeds
+    assert out["exit_est"] == rev_sell_token(p1, T).trader_quote
+    assert (out["acquire"], out["acquire_reason"]) == (sp.PAYER_BUDGET, "no_model")  # the fake row has no reserves
 
 
 def make_journal(path):
@@ -419,7 +433,8 @@ def test_the_rule_evaluation(tmp_path):
     rows = [{"side": "entry", "cls": "ok", "M_bps": 30.0 + (i % 5), "D_bps": 40.0, "slots_late": 100} for i in range(40)]
     rows += [{"side": "entry", "cls": "market"}] * 2 + [{"side": "entry", "cls": "structural"}]
     rows += [{"side": "exit", "cls": "ok", "M_bps": (-1) ** i * 3.0} for i in range(40)] + [{"side": "exit", "cls": "skipped"}]
-    rows += [{"side": "exit", "cls": "acquire_market"}, {"side": "exit", "cls": "late"}, {"side": "exit", "cls": "market", "test_late": True}]
+    rows += [{"side": "exit", "cls": "acquire_market", "acquire_reason": "budget_cap"}, {"side": "exit", "cls": "late"},
+             {"side": "exit", "cls": "market", "test_late": True}, {"side": "exit", "cls": "skipped", "why": "layout_derivation"}]
     rows = [dict(r, family="F7", variant="tp4_T600", pool=f"p{i}", t=i) for i, r in enumerate(rows)]
     rows.append(dict(rows[0], M_bps=-500.0))  # the same position side twice: the first counts
     (d / "sims.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
@@ -427,5 +442,6 @@ def test_the_rule_evaluation(tmp_path):
     assert s["entry"]["systematic"] and s["entry"]["uitval_pct"] == round(100 * 2 / 42, 2) and s["entry"]["uitval"]
     assert s["entry"]["ok_with_M"] == 40 and s["entry"]["M_median"] > 25
     assert not s["exit"]["systematic"] and s["exit"]["attempted"] == 40 and not s["exit"]["uitval"]
-    assert s["exit"]["not_in_sample"] == {"late": 1, "skipped": 1, "acquire_market": 1, "declined": 0}
+    assert s["exit"]["not_in_sample"] == {"late": 1, "skipped": 2, "acquire_market": 1, "declined": 0}
+    assert s["exit"]["why"] == {"acquire_market:budget_cap": 1, "late:": 1, "skipped:": 1, "skipped:layout_derivation": 1}
     assert s["rule"]["sha256"] == sp.RULE_SHA
