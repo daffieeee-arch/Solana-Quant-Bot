@@ -40,13 +40,15 @@ systemd-run --user --scope -p MemoryMax=1500M -p CPUQuota=100% -- nice -n 10 \
 
 `lab/ops/systemd/lab-ui-web.service` runs the server from the pinned deploy worktree
 `worktrees/lab-ui-deploy`, detached on a main commit, so a working tree's branch never reaches the running
-app. After a merge, run this as one script with `COMMIT` set to the main commit to serve. A failed step then stops it
+app. After a merge, run this as one script, with the main commit to serve in `COMMIT` before it. A failed step then stops it
 before the swap (an interactive chain once moved `web` to `web.prev` after a failed build, and the front end was
 gone until it was restored).
 
 ```bash
+export COMMIT=                                      # fill in the sha of the main commit to serve
 bash -euo pipefail <<'EOF'
-COMMIT=<commit>                                     # the main commit to serve
+COMMIT=${COMMIT:?de main-commit}                    # empty: the script stops here
+[[ $COMMIT =~ ^[0-9a-f]{7,40}$ ]] || { echo "COMMIT is not a commit sha: $COMMIT" >&2; exit 2; }
 D=~/Solana-project/worktrees/lab-ui-deploy
 C=~/Solana-project/data-old-faithful-one/lab/ui-cache
 export PATH="$HOME/.local/share/solana-quant/toolchains/node-v22.23.2-linux-x64/bin:$PATH"   # vite needs node
@@ -66,6 +68,10 @@ sleep 3
 curl -sf -o /dev/null -w "%{http_code}\n" http://100.112.193.63:8501/api/paper   # 200
 EOF
 ```
+
+A non-200 at the last `curl` (or a script that stops there) means: check the service (`systemctl --user status
+lab-ui-web`, `journalctl --user -u lab-ui-web -n 50`). The front end is already the new one, so do not run the swap
+again; roll back with `web.prev` only if the new front end itself is the problem.
 
 Without a front-end change, leave out the lines from `cd` to the second `mv`: the checkout and the restart are enough.
 
