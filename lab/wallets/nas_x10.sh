@@ -20,7 +20,8 @@
 #   2. features.parquet over every window (+ the money-v2 wallet-day pin);
 #   3. model.json / model.md / cells-val.parquet / scores-*.parquet when lightgbm imports; else a note in the log;
 #   4. sha256 of every output in $OUT/SHA256SUMS.
-# Tunables (env): EPOCHS (default 1033..1046), MEMORY (DuckDB, default 12GB), THREADS (4), BOOT (10000), OUT (default
+# Tunables (env): EPOCHS (default 1033..1046), MEMORY (DuckDB, default 12GB), THREADS (4), BOOT (10000), AB_AGAINST (dir of an
+# earlier run for the labels A/B, default off), OUT (default
 # $DATA/wallets/x10-<commit7>), MONEY (default $DATA/wallets/money-v2-94f0fee), START_DEADLINE, KILL_AT, LAB_SPILL_MAX (100GB).
 set -euo pipefail
 
@@ -65,6 +66,23 @@ if [ "${1:-}" = "--pipeline" ]; then
       log "labels $tag: $(tail -1 "$LOG/labels-$tag.log" | cut -c1-300)"
     done
   done
+  # 1b. A/B of the labels against an earlier archived run (AB_AGAINST=<dir with labels-<lo>[-s2].parquet>; counts only;
+  #     the E64 recount on the mark-cap-fixed harness compares with x10-6f294dd, research/x10-hertelling-plan-2026-10-24.md)
+  if [ -n "${AB_AGAINST:-}" ]; then
+    [ -d "$AB_AGAINST" ] || red "AB_AGAINST $AB_AGAINST is not a directory"
+    mkdir -p "$OUT/ab"
+    for e in $EPOCHS; do
+      lo=$((e * 432000))
+      for size in 0.5 2; do
+        tag=$lo; [ "$size" = "0.5" ] || tag="$lo-s$size"
+        if [ ! -f "$AB_AGAINST/labels-$tag.parquet" ]; then log "ab $tag: no old labels in $AB_AGAINST, skipped"; continue; fi
+        rc=0
+        "$PY" -m wallets.x10.ab_labels --old "$AB_AGAINST/labels-$tag.parquet" --new "$OUT/labels-$tag.parquet" --out "$OUT/ab" --tag "$tag" > "$LOG/ab-$tag.log" 2>&1 || rc=$?
+        [ "$rc" = 0 ] || { tail -3 "$LOG/ab-$tag.log" | tee -a "$LOG/nas_x10.log"; red "ab $tag failed (rc $rc)"; }
+        log "ab $tag: $(head -1 "$LOG/ab-$tag.log" | cut -c1-200)"
+      done
+    done
+  fi
   # 2. stage B
   rc=0
   nice -n 10 "$PY" -u -m wallets.x10.features --labels "$OUT" --money "$MONEY" --out "$OUT" > "$LOG/features.log" 2>&1 || rc=$?
@@ -80,7 +98,7 @@ if [ "${1:-}" = "--pipeline" ]; then
     log "lightgbm not importable on this lab-py: stage C runs on the VPS on $OUT/features.parquet (plan v0.2 section 4)"
   fi
   # 4. pins
-  (cd "$OUT" && shopt -s nullglob && LC_ALL=C sha256sum *.parquet *.json *.md *.txt | LC_ALL=C sort -k2 > SHA256SUMS)
+  (cd "$OUT" && shopt -s nullglob && LC_ALL=C sha256sum *.parquet *.json *.md *.txt ab/*.json ab/*.md | LC_ALL=C sort -k2 > SHA256SUMS)
   log "pinned $(wc -l < "$OUT/SHA256SUMS") files in $OUT/SHA256SUMS"
   rm -rf "$OUT/tmp"
   log "done"
