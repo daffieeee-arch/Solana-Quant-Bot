@@ -83,11 +83,15 @@ def tx_cost(cfg_path=DEFAULTS):
         return 705_000
 
 
+def horizon(con, hi, clock):
+    """hi_ext: the mark horizon (H6_MS after the window's last slot), never into the hold-out."""
+    h6 = f"greatest(1, round({H6_MS} / ({ms_case(clock, str(hi - 1))})))::BIGINT"
+    return min(HOLDOUT_START, hi + int(con.execute(f"SELECT {h6}").fetchone()[0]) + 10)
+
+
 def setup(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
     """Tokens, legs (curve and pool, with pre- and post-states) and the moments of the window."""
-    ms = ms_case(clock, "slot")
-    h6 = f"greatest(1, round({H6_MS} / ({ms_case(clock, str(hi - 1))})))::BIGINT"
-    hi_ext = min(HOLDOUT_START, hi + int(con.execute(f"SELECT {h6}").fetchone()[0]) + 10)
+    hi_ext = horizon(con, hi, clock)
     # tokens: mints created in the window, with their first SOL pool
     con.execute(f"""CREATE OR REPLACE TEMP TABLE tok AS
         SELECT m.mint AS key, m.mint, m.create_slot, m.creator, m.mayhem, m.complete_slot, true AS has_curve,
@@ -106,6 +110,14 @@ def setup(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
             WHERE f.family = 'F7' AND f.variant = 'tp4_T600' AND f.d = 1 AND f.size_sol = 0.5 AND f.q = 0.5
               AND f.t >= {lo} AND f.t < {hi} AND f.pool NOT IN (SELECT key FROM tok)""")
     progress(f"tok {_count(con, 'tok')} (mints {lo}..{hi}, pools of F7 triggers)")
+    legs(con, lo, hi_ext)
+    moments(con, lo, hi, clock, f7_parts, m1x_triggers)
+    return hi_ext
+
+
+def legs(con, lo, hi_ext, mayhem_curve=False):
+    """cl / pl from the tok table: curve and pool legs with pre- and post-states. Mayhem curve legs only when asked
+    (wallets.probes E71, a labelled model assumption: our buy does not change the Mayhem agent's resets)."""
     # curve legs: the mint's constant vq offset from its event rows; fee tiers = the mint's modal event tiers
     # curve legs of the non-mayhem mints: the logged post-state and the pre-state (streams.py), fee tiers from the row
     con.execute(f"""CREATE OR REPLACE TEMP TABLE cl AS
@@ -118,7 +130,7 @@ def setup(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
                CASE WHEN c.is_buy THEN c.rt + c.t ELSE c.rt - c.t END::HUGEINT AS rt_pre,
                CASE WHEN c.is_buy THEN c.rq - c.q ELSE c.rq + c.q END::HUGEINT AS rq_pre,
                COALESCE(c.fee_bps, 0) AS fee_bps, COALESCE(c.creator_bps, 0) AS creator_bps
-        FROM curve c JOIN tok t ON t.mint = c.mint AND t.has_curve AND NOT COALESCE(t.mayhem, false) WHERE c.slot >= {lo} AND c.slot < {hi_ext}""")
+        FROM curve c JOIN tok t ON t.mint = c.mint AND t.has_curve AND (NOT COALESCE(t.mayhem, false) OR {str(bool(mayhem_curve)).lower()}) WHERE c.slot >= {lo} AND c.slot < {hi_ext}""")
     progress(f"curve legs {_count(con, 'cl')}")
     # pool legs: post-states as streams.pool_leg (buy / sell: b -/+ base, e + e_delta; boost: b - base, e + e_delta;
     # withdraw / deposit: vault + last virtual quote -/+ quote_user, b -/+ base); the pre-state of a trade is the row
@@ -147,6 +159,10 @@ def setup(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
                b_pre::HUGEINT AS b_pre, e_pre::HUGEINT AS e_pre, b_post::HUGEINT AS b_post, e_post::HUGEINT AS e_post, virt::HUGEINT AS virt, lp, pr, cr, cb
         FROM (SELECT * FROM trades UNION ALL SELECT * FROM others)""")
     progress(f"pool legs {_count(con, 'pl')}")
+
+
+def moments(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
+    """trades_all, moments and mom (c1 / c5 / c15 and the f7 / m1 triggers) from tok, cl and pl."""
     # the moments: c1 / c5 / c15 = the first trade (any venue) whose block time is >= create time + X min; f7 / m1 / m1e = triggers
     con.execute(f"""CREATE OR REPLACE TEMP TABLE trades_all AS
         SELECT key, ord, slot, is_buy, sol, tokens, trader, fee_payer, farmer, tx_index FROM cl
@@ -172,7 +188,6 @@ def setup(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
                greatest(1, round(60000 / ({ms_case(clock, 'm.t')})))::BIGINT AS m1s, greatest(1, round(300000 / ({ms_case(clock, 'm.t')})))::BIGINT AS m5s
         FROM moments m""")
     progress(f"moments {_count(con, 'mom')}: " + str(con.execute("SELECT moment, count(*) FROM mom GROUP BY 1 ORDER BY 1").fetchall()))
-    return hi_ext
 
 
 def _fees(x, *bps):
