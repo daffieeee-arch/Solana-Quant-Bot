@@ -86,6 +86,27 @@ FARMER_MIN_TRADES = 2
 DAY_MS = 86_400_000
 H = "::HUGEINT"
 B = "::BIGINT"
+# PumpSwap amounts are u64; the store keeps them as BIGINT (i64, POOL_SCHEMA). A pool with any amount the store casts to
+# BIGINT outside its range (a token with a raw supply above 2^63 - 1: base reserves of 9,991,111,111,970,383,772 in clean
+# epoch 1061 stopped the E20 store build on 24 Oct) is left out of every store table, decided once over all chunks
+# before pass 1 (_int64_exclusions; coordinator, 24 Oct): no NULL reaches the replay. meta.excluded_pools_int64 counts
+# them, by whether a trade row showed base_supply = 0 (reversed). With no such value the tables are unchanged.
+I64_MAX = 2 ** 63 - 1
+
+
+def _fits(*exprs):
+    """SQL: every expression (NULL passes) fits a BIGINT, checked in HUGEINT (so the check itself cannot overflow)."""
+    return " AND ".join(f"COALESCE(({e})::HUGEINT, 0) BETWEEN {-I64_MAX - 1} AND {I64_MAX}" for e in exprs)
+
+
+def _keep(exclude):
+    """SQL: the pools of the list left out ("" for none, so a build without an excluded pool runs the unchanged SQL)."""
+    return f" AND pool NOT IN ({', '.join(repr(p) for p in exclude)})" if exclude else ""
+
+
+def _where(*conds):
+    conds = [c for c in conds if c]
+    return f" WHERE {' AND '.join(conds)}" if conds else ""
 
 
 # One epoch (two chunks) before the hold-out: at least the decisions' burn-in (development.burn_in_slots,
@@ -325,9 +346,10 @@ def _curve_trades(c, mints="s.mints"):
       ORDER BY t.mint, t.slot, t.tx_index, t.outer_ix, t.inner_ix"""
 
 
-def _pool_trades(c, evidence=False):
+def _pool_trades(c, evidence=False, dropped=False, exclude=None):
     """Buy and sell rows of one chunk in pool orientation (boost-crank inner buys excluded).
-    evidence=True adds the columns used to classify pools."""
+    evidence=True adds the columns used to classify pools. dropped=True gives instead the rows with an amount the
+    store casts to BIGINT outside its range (kind, pool: _int64_exclusions); exclude is a list of pools to leave out."""
     buy, sell = c.src("pump_amm/BuyEvent"), c.src("pump_amm/SellEvent")
     vq = lambda t: c.col(t, "virtual_quote_reserves", "BIGINT")  # noqa: E731
     cb = lambda t: c.col(t, "cashback_fee_basis_points", "INTEGER")  # noqa: E731
@@ -341,31 +363,46 @@ def _pool_trades(c, evidence=False):
               f"CASE WHEN coin_creator = '{pda.DEFAULT_KEY}' THEN 0 ELSE COALESCE(coin_creator_fee_basis_points, 0) END::INTEGER "
               "AS creator_bps")
     exact_out = ",".join(f"'{d}'" for d in data.POOL_EXACT_OUT)
+    buy_quote = f"CASE WHEN parent_ix_disc IN ({exact_out}) THEN user_quote_amount_in ELSE quote_amount_in END"
+
+    def fits(t, base, e_delta, quote_user):
+        # b, vault, vq (an i128 the store's TRY_CAST would turn into 0), e = vault + vq, base, e_delta, quote_user
+        return _fits("pool_base_token_reserves", "pool_quote_token_reserves", c.col(t, "virtual_quote_reserves", "HUGEINT"),
+                     f"pool_quote_token_reserves::HUGEINT + COALESCE({vq(t)}, 0)", base, e_delta, quote_user)
+
     parts = []
     if buy:
-        parts.append(f"""
+        g = fits("pump_amm/BuyEvent", "base_amount_out", "quote_amount_in_with_lp_fee", buy_quote)
+        where = f"parent_ix_disc IS DISTINCT FROM '{data.BOOST_BUY_DISC}'"
+        parts.append(f"SELECT 'buy' AS kind, pool FROM {buy} WHERE {where} AND NOT ({g})" if dropped else f"""
           SELECT 'buy' AS kind, {common}, COALESCE({vq('pump_amm/BuyEvent')}, 0) AS vq,
                  COALESCE({cb('pump_amm/BuyEvent')}, 0) AS cashback_bps,
                  base_amount_out{B} AS base, quote_amount_in_with_lp_fee{B} AS e_delta,
-                 CASE WHEN parent_ix_disc IN ({exact_out}) THEN user_quote_amount_in ELSE quote_amount_in END{B} AS quote_user,
+                 {buy_quote}{B} AS quote_user,
                  max_quote_amount_in{H} AS limit_quote, min_base_amount_out{H} AS limit_base
-          FROM {buy} WHERE parent_ix_disc IS DISTINCT FROM '{data.BOOST_BUY_DISC}'""")
+          FROM {buy}{_where(where, _keep(exclude)[5:])}""")
     if sell:
-        parts.append(f"""
+        g = fits("pump_amm/SellEvent", "base_amount_in", "quote_amount_out_without_lp_fee", "user_quote_amount_out")
+        parts.append(f"SELECT 'sell' AS kind, pool FROM {sell} WHERE NOT ({g})" if dropped else f"""
           SELECT 'sell' AS kind, {common}, COALESCE({vq('pump_amm/SellEvent')}, 0) AS vq,
                  COALESCE({cb('pump_amm/SellEvent')}, 0) AS cashback_bps,
                  base_amount_in{B} AS base, -(quote_amount_out_without_lp_fee{B}) AS e_delta,
                  user_quote_amount_out{B} AS quote_user, min_quote_amount_out{H} AS limit_quote, NULL::HUGEINT AS limit_base
-          FROM {sell}""")
+          FROM {sell}{_where(_keep(exclude)[5:])}""")
     return " UNION ALL BY NAME ".join(parts) if parts else None
 
 
-def _pool_other(c):
-    """Boost, withdraw and deposit rows of one chunk (pre-state where the event exposes it)."""
+def _pool_other(c, dropped=False, exclude=None):
+    """Boost, withdraw and deposit rows of one chunk (pre-state where the event exposes it). dropped=True and exclude:
+    as _pool_trades."""
     parts = []
     boost = c.src("pump_amm/BoostBuyAndBurnEvent")
     if boost:
-        parts.append(f"""
+        g = _fits("base_reserves_after::HUGEINT + base_amount_burned", "real_quote_reserves_after::HUGEINT - quote_amount_in_used",
+                  "TRY_CAST(virtual_quote_reserves AS HUGEINT)",
+                  "(real_quote_reserves_after::HUGEINT - quote_amount_in_used) + COALESCE(TRY_CAST(virtual_quote_reserves AS BIGINT), 0)",
+                  "base_amount_burned", "quote_amount_in_used", "boost_vault_remaining")
+        parts.append(f"SELECT 'boost' AS kind, pool FROM {boost} WHERE NOT ({g})" if dropped else f"""
           SELECT 'boost' AS kind, pool, slot, tx_index, outer_ix, inner_ix, authority AS trader,
                  NULLIF(fee_payer, authority) AS fee_payer, outer_program,
                  priority_fee, jito_tip, tx_fee, parent_ix_disc,
@@ -374,20 +411,21 @@ def _pool_other(c):
                  COALESCE(TRY_CAST(virtual_quote_reserves AS BIGINT), 0) AS vq,
                  base_amount_burned{B} AS base, quote_amount_in_used{B} AS e_delta, quote_amount_in_used{B} AS quote_user,
                  boost_vault_remaining{B} AS boost_left
-          FROM {boost}""")
+          FROM {boost}{_where(_keep(exclude)[5:])}""")
     for kind, table, base, quote, lp in (("withdraw", "pump_amm/WithdrawEvent", "base_amount_out", "quote_amount_out",
                                           "lp_token_amount_in"),
                                          ("deposit", "pump_amm/DepositEvent", "base_amount_in", "quote_amount_in",
                                           "lp_token_amount_out")):
         src = c.src(table)
         if src:
-            parts.append(f"""
+            g = _fits("pool_base_token_reserves", "pool_quote_token_reserves", base, quote, lp, "lp_mint_supply")
+            parts.append(f"SELECT '{kind}' AS kind, pool FROM {src} WHERE NOT ({g})" if dropped else f"""
               SELECT '{kind}' AS kind, pool, slot, tx_index, outer_ix, inner_ix, "user" AS trader,
                      NULLIF(fee_payer, "user") AS fee_payer, outer_program,
                      priority_fee, jito_tip, tx_fee, parent_ix_disc,
                      pool_base_token_reserves{B} AS b, pool_quote_token_reserves{B} AS vault, NULL::BIGINT AS vq,
                      {base}{B} AS base, {quote}{B} AS quote_user, {lp}{B} AS lp_amount, lp_mint_supply{B} AS lp_supply
-              FROM {src}""")
+              FROM {src}{_where(_keep(exclude)[5:])}""")
     return " UNION ALL BY NAME ".join(parts) if parts else None
 
 
@@ -441,6 +479,8 @@ def build(period, out_path, cfg, chunks, log=print, extra_meta=None):
     con.execute("CREATE TEMP TABLE pool_day (pool VARCHAR, day DATE, n_buy BIGINT, n_sell BIGINT)")
     con.execute("CREATE TEMP TABLE pool_day_vol (pool VARCHAR, day DATE, sol_volume BIGINT, organic_sol_volume BIGINT)")
 
+    excluded, u64_pools = _int64_exclusions(con, P, chunks, log)
+
     # Pass 1: blocks and per-pool evidence, one chunk at a time.
     for ch in chunks:
         health.wait_ok(log, f"pass 1 chunk {ch[0]}")
@@ -448,7 +488,7 @@ def build(period, out_path, cfg, chunks, log=print, extra_meta=None):
         c = Chunk(ch)
         con.execute(f"INSERT INTO s.blocks SELECT slot, any_value(block_time) FROM {c.src('blocks')} "
                     "WHERE NOT skipped GROUP BY slot ORDER BY slot")
-        trades = _pool_trades(c, evidence=True)
+        trades = _pool_trades(c, evidence=True, exclude=u64_pools)
         if not trades:
             continue
         con.execute(f"""INSERT INTO pool_agg SELECT pool, min(slot), max(slot), count(*) FILTER (WHERE kind = 'buy'),
@@ -463,7 +503,7 @@ def build(period, out_path, cfg, chunks, log=print, extra_meta=None):
         log(f"pass 1 {ch[0]} ({time.time() - t0:.0f}s, chunk wrote {(_io_written() - w0) / 1e9:.2f} GB)")
         _write_check(f"pass 1 chunk {ch[0]}", _io_written() - w0, log)
 
-    _classify_pools(con, P, chunks, log)
+    _classify_pools(con, P, chunks, log, u64_pools)
     log(f"pools classified ({time.time() - t0:.0f}s): "
         + str(con.execute("SELECT quote_class, count(*) FROM s.pools GROUP BY 1 ORDER BY 1").fetchall()))
 
@@ -480,7 +520,7 @@ def build(period, out_path, cfg, chunks, log=print, extra_meta=None):
         if sql:
             con.execute(f"CREATE TABLE s.curve AS {sql}" if first else f"INSERT INTO s.curve BY NAME {sql}")
             first = False
-        trades, other = _pool_trades(c), _pool_other(c)
+        trades, other = _pool_trades(c, exclude=u64_pools), _pool_other(c, exclude=u64_pools)
         src = " UNION ALL BY NAME ".join(x for x in (trades, other) if x)
         if src:
             ms = con.execute(f"""SELECT (max(block_time) - min(block_time)) * 1000.0 / greatest(max(slot) - min(slot), 1)
@@ -527,7 +567,7 @@ def build(period, out_path, cfg, chunks, log=print, extra_meta=None):
         if sweep:
             # (A SEMI JOIN's right side cannot be filtered in the WHERE: the pool filter is a subquery.)
             con.execute(f"""INSERT INTO s.pool_sweeps SELECT pool, slot, tx_index, outer_ix, inner_ix, amount{B}, bucket::INTEGER
-                            FROM {sweep} WHERE pool IN (SELECT pool FROM s.pools WHERE quote_class IN ('sol', 'reversed'))""")
+                            FROM {sweep} WHERE pool IN (SELECT pool FROM s.pools WHERE quote_class IN ('sol', 'reversed')){_keep(u64_pools)}""")
         log(f"pass 2 {ch[0]} ({time.time() - t0:.0f}s, chunk wrote {(_io_written() - w0) / 1e9:.2f} GB, "
             f"total {_io_written() / 1e9:.1f} GB)")
         _write_check(f"pass 2 chunk {ch[0]}", _io_written() - w0, log)
@@ -560,6 +600,7 @@ def build(period, out_path, cfg, chunks, log=print, extra_meta=None):
         "ms_per_slot": {int(e): round(v, 2) for e, v in ms},
         "farmer": {"ratio": FARMER_RATIO, "min_trades": FARMER_MIN_TRADES, "window_ms": DAY_MS},
         "unhandled_event_files": unhandled,
+        "excluded_pools_int64": excluded,
         "purpose": "illustration only (forward period)" if period == "forward" else period,
         "git_commit": commit,
         **(extra_meta or {}),
@@ -571,7 +612,44 @@ def build(period, out_path, cfg, chunks, log=print, extra_meta=None):
     return meta
 
 
-def _classify_pools(con, P, chunks, log):
+def _int64_exclusions(con, P, chunks, log):
+    """(meta, pools): the pools with any amount the store casts to BIGINT outside its range (trades with their virtual
+    quote reserves, boost, withdraw, deposit, sweeps, CreatePool b0/q0) over all chunks, before pass 1, sorted; a count by whether a trade row of the pool
+    showed base_supply = 0 (reversed). Deterministic, the same rule for every pool; pool ids are not logged."""
+    con.execute("CREATE OR REPLACE TEMP TABLE u64_rows (kind VARCHAR, pool VARCHAR)")
+    for ch in chunks:
+        c = Chunk(ch)
+        gone = " UNION ALL ".join(x for x in (_pool_trades(c, dropped=True), _pool_other(c, dropped=True)) if x)
+        if gone:
+            con.execute(f"INSERT INTO u64_rows {gone}")
+        sweep = c.src("pump_amm/SweepPoolFeeEvent")
+        if sweep:
+            con.execute(f"INSERT INTO u64_rows SELECT 'sweep', pool FROM {sweep} WHERE NOT ({_fits('amount')})")
+    create = P("pump_amm/CreatePoolEvent", missing_ok=True)
+    if create:
+        con.execute(f"INSERT INTO u64_rows SELECT 'create', pool FROM {create} WHERE NOT ({_fits('pool_base_amount', 'pool_quote_amount')})")
+    pools = [r[0] for r in con.execute("SELECT DISTINCT pool FROM u64_rows ORDER BY 1").fetchall()]
+    n = len(pools)
+    out = {"pools": n, "reversed": 0, "not_reversed": 0, "no_trade_rows": n,
+           "rows_out_of_range": dict(con.execute("SELECT kind, count(*) FROM u64_rows GROUP BY 1 ORDER BY 1").fetchall())}
+    if n:
+        con.execute("CREATE OR REPLACE TEMP TABLE u64_rev (pool VARCHAR, reversed BOOLEAN)")
+        for ch in chunks:
+            c = Chunk(ch)
+            for t in ("pump_amm/BuyEvent", "pump_amm/SellEvent"):
+                src = c.src(t)
+                if src:
+                    con.execute(f"INSERT INTO u64_rev SELECT pool, bool_or(base_supply = 0) FROM {src} "
+                                f"WHERE pool IN ({', '.join(repr(p) for p in pools)}) GROUP BY pool")
+        rev = dict(con.execute("SELECT pool, bool_or(reversed) FROM u64_rev GROUP BY pool").fetchall())
+        out.update(reversed=sum(1 for v in rev.values() if v), not_reversed=sum(1 for v in rev.values() if not v),
+                   no_trade_rows=n - len(rev))
+    log(f"excluded_pools_int64: {out['pools']} pool(s) (reversed {out['reversed']}, not reversed {out['not_reversed']}, "
+        f"no trade rows {out['no_trade_rows']}); out-of-range rows by kind {out['rows_out_of_range']}")
+    return out, pools
+
+
+def _classify_pools(con, P, chunks, log, exclude=None):
     """pools + pool_stats from the per-chunk evidence; checked against every CreatePoolEvent."""
     recipients = [r[0] for r in con.execute("SELECT DISTINCT recipient FROM pool_fee").fetchall()]
     con.execute("CREATE OR REPLACE TEMP TABLE wsol_ata (recipient VARCHAR, account VARCHAR)")
@@ -579,7 +657,7 @@ def _classify_pools(con, P, chunks, log):
     create = P("pump_amm/CreatePoolEvent", missing_ok=True)
     create_sql = (f"""SELECT pool, base_mint, quote_mint, slot AS create_slot, coin_creator, is_mayhem_mode AS mayhem,
                          pool_base_amount{B} AS b0, pool_quote_amount{B} AS q0
-                      FROM {create} QUALIFY row_number() OVER (PARTITION BY pool ORDER BY slot) = 1""" if create else
+                      FROM {create}{_where(_keep(exclude)[5:])} QUALIFY row_number() OVER (PARTITION BY pool ORDER BY slot) = 1""" if create else
                   "SELECT NULL::VARCHAR AS pool, NULL::VARCHAR AS base_mint, NULL::VARCHAR AS quote_mint, NULL::UBIGINT AS create_slot, "
                   "NULL::VARCHAR AS coin_creator, NULL::BOOLEAN AS mayhem, NULL::BIGINT AS b0, NULL::BIGINT AS q0 WHERE false")
     con.execute(f"CREATE OR REPLACE TEMP TABLE cp AS {create_sql}")
