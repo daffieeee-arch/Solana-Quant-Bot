@@ -14,6 +14,16 @@ from backtest import capital_ceiling as cc
 from backtest import racing_cost as rc
 
 LO = cc.DEV[0]
+
+
+def day_of_pairs(pairs):
+    """A SlotDays from (slot, day) pairs in a fixture's own day labels (its change points)."""
+    starts, days = [], []
+    for slot, day in sorted(set(pairs)):
+        if not days or day != days[-1]:
+            starts.append(slot)
+            days.append(day)
+    return cc.SlotDays(starts, days)
 DAYS = ("2026-09-12", "2026-09-12", "2026-09-13", "2026-09-14")
 POOLS = ("A", "B", "C", "D")
 N_T1 = {"A": 0, "B": 1, "C": 2, "D": 3}  # token-buying transactions in t + 1 (the store below)
@@ -92,6 +102,10 @@ def write_store(path):
             legs.append((p, t + 1, 3, 0, -1, "buy", False, 9_999_999, 0, 5000, 20, 5, 30))  # a token sell: not a buy
             legs.append((p, t + 2, 20, 0, -1, "sell", True, 1, 0, 5000, 20, 5, 30))  # t + 2: outside the count
     con.executemany(f"INSERT INTO pool VALUES ({', '.join('?' * 13)})", legs)
+    # Block times: each trigger's slot on its DAYS day (the daily loss limit's exit days).
+    con.execute("CREATE TABLE blocks (slot UBIGINT, block_time BIGINT)")
+    con.executemany("INSERT INTO blocks VALUES (?, ?)", [(trig(i), int(np.datetime64(DAYS[i], "s").astype(np.int64)) + 3600)
+                                                         for i in range(4)])
     con.close()
     return path
 
@@ -120,10 +134,10 @@ def lab(tmp_path):
     # E63's report on run e (capital_ceiling itself).
     con = duckdb.connect()
     cc.load(con, [e], keys)
-    days, cells = cc.compute(con, False)
+    days, cells = cc.compute(con, False, day_of_pairs(con.execute("SELECT t, day FROM r").fetchall()))
     e63 = os.path.join(root, "ceiling.json")
     with open(e63, "w") as f:
-        json.dump({"cells": cells, "days": days}, f, default=str)
+        json.dump({"cells": cells, "days": days, "daily_loss_book": "exit_day"}, f, default=str)
     return {"root": root, "a": a, "b": b, "e": e, "keys": keys, "store": store, "route": route, "e63": e63}
 
 

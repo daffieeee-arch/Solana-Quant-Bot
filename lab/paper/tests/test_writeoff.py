@@ -265,13 +265,15 @@ def test_a_write_off_the_journal_neither_exits_nor_holds_is_counted(tmp_path, mo
 
 # ------------------------------------------------------------------------------------------------- the tools
 
-def _journal(path, exits, fills=(), state=None):
+def _journal(path, exits, fills=(), state=None, signals=()):
     os.makedirs(path, exist_ok=True)
     j = Journal(path)
     for r in exits:
         j.put("exits", **r)
     for r in fills:
         j.put("fills", **r)
+    for r in signals:
+        j.put("signals", **r)
     for k, v in (state or {}).items():
         j.state(k, v)
     j.commit()
@@ -291,32 +293,112 @@ def test_journal_diff_names_the_write_off_and_the_freed_pool(tmp_path):
     scn = json.dumps({"failed_tx": 505_000})
     a, b = str(tmp_path / "a"), str(tmp_path / "b")
     sell = dict(family="F7", variant="tp4_T600", key="P", t=100, side="sell", day="2026-09-22", tokens=5, quote=0)
-    _journal(a, [_exit(day="2026-09-23")], [dict(sell, slot=None)], {"cost_scenario": scn})
+    _journal(a, [_exit(day="2026-09-23")], [dict(sell, slot=None)], {"cost_scenario": scn},
+             signals=[_signal(status="skipped", reason="busy")])
     _journal(b, [_exit(exit_slot=703, exit_reason="written_off", exit_attempts=2),
                  _exit(t=900, entry_slot=902, exit_decision_slot=950, exit_slot=952, exit_reason="take_profit", proceeds=600, pnl=99)],
-             [dict(sell, slot=703)], {"cost_scenario": scn})
+             [dict(sell, slot=703)], {"cost_scenario": scn}, signals=[_signal()])
     causes = journal_diff.writeoff_causes(a, b)
     res = journal_diff.compare(a, b, causes=causes)
-    assert res["unexplained"] == 0 and res["explained"] == {"written_off": 2, "busy_freed": 1}, res["explained"]
+    assert res["unexplained"] == 0 and res["explained"] == {"written_off": 2, "busy_freed": 2}, res["explained"]  # t 900: signal, exit
     # Without the causes every difference is unexplained.
-    assert journal_diff.compare(a, b)["unexplained"] == 3
+    assert journal_diff.compare(a, b)["unexplained"] == 4
     # Main sold it later (the pool got liquidity again): written_off_later_sold, listed apart.
     d = str(tmp_path / "d")
     _journal(d, [_exit(day="2026-09-23", exit_slot=900, exit_decision_slot=898, proceeds=400, pnl=-150, exit_reason="stop_loss")],
-             [dict(sell, slot=900, quote=400)], {"cost_scenario": scn})
+             [dict(sell, slot=900, quote=400)], {"cost_scenario": scn}, signals=[_signal(status="skipped", reason="busy")])
     res = journal_diff.compare(d, b, causes=journal_diff.writeoff_causes(d, b))
-    assert res["unexplained"] == 0 and res["explained"] == {"written_off_later_sold": 2, "busy_freed": 1}, res["explained"]
+    assert res["unexplained"] == 0 and res["explained"] == {"written_off_later_sold": 2, "busy_freed": 2}, res["explained"]
     # A write-off that does not match (another entry) stays unexplained.
     c = str(tmp_path / "c")
     _journal(c, [_exit(exit_slot=703, exit_reason="written_off", entry_slot=103)], [dict(sell, slot=703)], {"cost_scenario": scn})
     assert journal_diff.compare(a, c, causes=journal_diff.writeoff_causes(a, c))["unexplained"] >= 1
 
 
+def _signal(**over):
+    row = dict(family="F7", variant="tp4_T600", key="P", t=900, day="2026-09-22", venue="pool", orientation="reversed", depth=200,
+               trigger_trader="W", status="entered", reason=None, farm="organic", block_time=1, d_ms=600.0, farm_complete=1,
+               pool_seen_slot=1, farm_window_complete=1)
+    row.update(over)
+    return row
+
+
+def test_a_freed_pool_explains_only_rows_one_side_has_and_busy_against_entered(tmp_path):
+    """Codex review #7: after B's write-off frees the pool, a row only one side has and a signal busy on one side and
+    entered on the other are explained; a later trade both sides executed must still match column for column."""
+    scn = json.dumps({"failed_tx": 505_000})
+    sell = dict(family="F7", variant="tp4_T600", key="P", t=100, side="sell", day="2026-09-22", tokens=5, quote=0)
+    later = _exit(t=1_200, entry_slot=1_202, exit_decision_slot=1_250, exit_slot=1_252, exit_reason="take_profit", proceeds=600, pnl=99)
+    base_a = dict(exits=[_exit(day="2026-09-23"), later], fills=[dict(sell, slot=None)],
+                  signals=[_signal(status="skipped", reason="busy"), _signal(t=1_200)])
+    base_b = dict(exits=[_exit(exit_slot=703, exit_reason="written_off", exit_attempts=2), later,
+                         _exit(t=900, entry_slot=902, exit_decision_slot=950, exit_slot=952, exit_reason="take_profit", proceeds=600, pnl=99)],
+                  fills=[dict(sell, slot=703)], signals=[_signal(), _signal(t=1_200)])
+
+    def run(name, a_over=None, b_over=None):
+        a, b = str(tmp_path / f"{name}-a"), str(tmp_path / f"{name}-b")
+        _journal(a, **{**base_a, **(a_over or {})}, state={"cost_scenario": scn})
+        _journal(b, **{**base_b, **(b_over or {})}, state={"cost_scenario": scn})
+        return journal_diff.compare(a, b, causes=journal_diff.writeoff_causes(a, b))
+
+    ok = run("ok")
+    assert ok["unexplained"] == 0 and ok["explained"] == {"written_off": 2, "busy_freed": 2}, ok["explained"]  # B's exit at 900, its signal
+    # The trade at t 1200 both sides executed, made wrong on B: tokens, P&L or exit slot. Each must stay unexplained.
+    for col, val in (("tokens", 6), ("pnl", 98), ("exit_slot", 1_253)):
+        res = run(f"bad-{col}", b_over={"exits": [*base_b["exits"][:1], {**later, col: val}, *base_b["exits"][2:]]})
+        assert res["unexplained"] == 1 and res["tables"]["exits"]["unexplained"] == 1, (col, res["explained"])
+    # A signal both sides have that differs by another reason than busy (farm flagged) is no freed pool: the signal and
+    # B's exit of it stay unexplained.
+    res = run("farm", a_over={"signals": [_signal(status="skipped", reason="farm flagged"), _signal(t=1_200)]})
+    assert res["unexplained"] == 2 and res["tables"]["signals"]["unexplained"] == 1 and res["tables"]["exits"]["unexplained"] == 1
+    # Both sides entered the signal at t 1200, but B lost the trade (no exit): no freed pool explains it.
+    res = run("lost", b_over={"exits": base_b["exits"][:1] + base_b["exits"][2:]})
+    assert res["unexplained"] == 1 and res["tables"]["exits"]["only_a"] == 1
+    # A signal only one side has (B at t 1300): unexplained, whatever its status.
+    res = run("one-side", b_over={"signals": base_b["signals"] + [_signal(t=1_300)]})
+    assert res["unexplained"] == 1 and res["tables"]["signals"]["only_b"] == 1
+    # Busy against entered, but another column differs too (the depth): unexplained.
+    res = run("depth", a_over={"signals": [_signal(status="skipped", reason="busy", depth=201), _signal(t=1_200)]})
+    assert res["tables"]["signals"]["unexplained"] == 1
+
+
+def test_parity_explains_a_write_off_only_with_its_farm_and_the_failed_attempts_pnl():
+    k = ("P", 100)
+    bt = {k: {"status": "filled", "exit_slot": None, "proceeds": 0, "tokens": 5, "cost": 500, "farm": "organic", "exit_attempts": 1,
+              "pnl": -1_000}}
+    en = {k: {"status": "filled", "exit_slot": 703, "proceeds": 0, "tokens": 5, "cost": 500, "farm": "organic", "exit_attempts": 3,
+              "pnl": -1_000 - 2 * 505_000, "exit_reason": "written_off", "entry_slot": 102, "cap_slots": 599, "exit_decision_slot": 701}}
+    assert parity.written_off_row(bt, en, k, 505_000)
+    # A write-off before the rule's deadline (decided at 650 < 102 + 599) is no write-off by the rule: not explained.
+    early = {k: {**en[k], "exit_decision_slot": 650, "exit_slot": 652}}
+    assert not parity.written_off_row(bt, early, k, 505_000) and not parity.written_off_later_sold(
+        {k: {**bt[k], "exit_slot": 900, "proceeds": 400}}, early, k)
+    assert not parity.written_off_row(bt, {k: {**en[k], "pnl": en[k]["pnl"] - 1}}, k, 505_000)  # a P&L the attempts do not explain
+    assert not parity.written_off_row(bt, {k: {**en[k], "farm": "flagged"}}, k, 505_000)
+    _, diffs, _ = parity.compare(bt, {k: {**en[k], "pnl": en[k]["pnl"] - 1}}, 0, 1_000)
+    assert [len(x) for x in parity._split(diffs, bt, {k: {**en[k], "pnl": en[k]["pnl"] - 1}}, 505_000)] == [1, 0, 0, 0]
+    sold = {k: {**bt[k], "exit_slot": 900, "proceeds": 400}}
+    assert parity.written_off_later_sold(sold, en, k) and not parity.written_off_later_sold(sold, {k: {**en[k], "farm": "flagged"}}, k)
+
+
+def test_parity_compares_a_key_either_side_labels_organic_and_a_backtest_sale_before_the_engines_end():
+    k = ("P", 100)
+    bt, en = {k: {"farm": "flagged", "status": "busy"}}, {k: {"farm": "organic", "status": "filled"}}
+    assert parity.organic(k, bt, en) and parity.organic(k, en, {}) and not parity.organic(k, bt, {})
+    # The engine still held k at its data's end: left out only when the backtest did not sell inside it either.
+    en = {k: {"exit_reason": "end_of_data", "exit_slot": None}}
+    for x, held in (({"exit_slot": None}, True), ({"exit_slot": 950, "exit_reason": "time"}, False),
+                    ({"exit_slot": 1_000, "exit_reason": "time"}, True), ({"exit_slot": 950, "exit_reason": "window_end"}, True)):
+        assert (k in parity.open_at_end(en, {k: x}, 1_000)) is held, x
+    assert parity.open_at_end({k: {"exit_reason": "time"}}, {}, 1_000) == set()
+
+
 def test_parity_explains_a_written_off_row_and_its_busy_window():
     k1, k2 = ("P", 100), ("P", 300)
     bt = {k1: {"status": "filled", "exit_slot": None, "proceeds": 0, "tokens": 5, "cost": 500, "exit_reason": "time"},
           k2: {"status": "filled", "exit_slot": 400, "proceeds": 600, "tokens": 5, "cost": 500}}
-    en = {k1: {"status": "filled", "exit_slot": 703, "proceeds": 0, "tokens": 5, "cost": 500, "exit_reason": "written_off"},
+    en = {k1: {"status": "filled", "exit_slot": 703, "proceeds": 0, "tokens": 5, "cost": 500, "exit_reason": "written_off",
+               "entry_slot": 102, "cap_slots": 599, "exit_decision_slot": 701},
           k2: {"status": "busy"}}
     assert parity.written_off_row(bt, en, k1) and parity.unsold_busy(bt, en, k2)
     _, diffs, _ = parity.compare(bt, en, 0, 1_000)
