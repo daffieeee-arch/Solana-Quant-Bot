@@ -30,7 +30,9 @@ Zonder capaciteit (alle 6.282 signalen, 0,5 SOL): −57,8 % in SOL, −57,1 % in
 
 **Optelbaarheid (beschrijvend):** Pearson dag-netto met H5 0,16 en met hold300 0,35 over 17 dagen; 0 van de triggers binnen 60 s op dezelfde key als een H5- of hold300-instap (andere munten). Niet relevant bij STOP.
 
-**Oordeel:** STOP — de ondergrens ligt ver onder nul in elke lezing (SOL, PUMP, met en zonder capaciteit, elke epoch, elke dieptebucket). Geen vervolg-pre-reg. 1 blik (de primaire cel; kapitaal 25/100 en de diagnose zijn beschrijvend). Lezing in één zin: PUMP-quote-curves verliezen op dev ongeveer 58 % per trade met trail30/stop, de helft van de posities is een drain.
+**Caveat (toegevoegd na E71, §3.3):** ook hier capen de marks een verkoop op de gelogde echte reserve zónder onze eigen inleg; in 25,8 % van de instappen is ons budget groter dan de reserve, en de dunne buckets (< 0,1 SOL −83 %, 0,1–0,5 −87 %) dragen die cap. Het oordeel staat op het deel waar de cap niet bindt: **≥ 2 SOL diep, 3.688 instappen (2–10 SOL 2.508 × −49 %, ≥ 10 SOL 1.180 × −21 %)**, beide ver onder nul.
+
+**Oordeel:** STOP — de ondergrens ligt ver onder nul in elke lezing (SOL, PUMP, met en zonder capaciteit, elke epoch, ook op de diepe curves waar de cap niet bindt). Geen vervolg-pre-reg. 1 blik (de primaire cel; kapitaal 25/100 en de diagnose zijn beschrijvend). Lezing in één zin: PUMP-quote-curves verliezen op dev ongeveer 58 % per trade met trail30/stop, de helft van de posities is een drain.
 
 **Wat dit niet zegt:** niets over USDC- en overige quotes (geen SOL-koers in de store, plan §5.1) en niets over Meteora DLMM (nooit geëxtraheerd, plan §6); niets over een andere instap dan e10 of een andere uitstap dan trail30/stop (één regel vooraf).
 
@@ -64,6 +66,8 @@ Per reden (0,5 SOL, alle signalen, e71_diag.out): stop 139.067 × −76,8 % (med
 | 5–20 | 4.486 | −44,8 % | −16,4 % | 35,2 % | 72,9 % | 15 |
 | ≥ 20 | 410 | −34,5 % | −14,3 % | 21,2 % | 74,1 % | 9 |
 
+De ongecapte constant-product-waarde op de gelogde toestand negeert óók onze eigen verschuiving van de virtuele reserves, maar dat is klein bij ≈ 30 SOL virtueel (daarom 0,955× op de curve van 2,4 SOL); de fout zit alleen in de cap. **Fix-spec (runners, niet hier):** cap = gelogde rq + onze netto inleg in de reserve ná de curve-fee, pool-analoog (vault + onze netto SOL), met een test op een dunne curve.
+
 **Schone lezing:** op curves ≥ 2 SOL (12.145 instappen, ≈ 580/dag, cap bindt niet: ons budget ≤ 25 % van de reserve) is de marge **−47,8 %**, agent-vrij **−17,1 %**, en elke UTC-dag negatief (dagmarges −31 … −71 %). De prijspaden van diepe curves tonen wat er gebeurt: de agent verkoopt in brokken van 0,3–0,6 SOL ná onze koop (trail), en daarnaast gewone drains (één verkoop van 2,4 SOL die een reserve van 2,8 SOL naar 0,09 brengt). Zonder de agent-legs blijft −17 % over: eigen impact + fees (≈ −4,5 % bij 2,4 SOL) en de bewegingen vóór de eerste agent-leg.
 
 **Oordeel:** **STOP** — op het schone deel (≥ 2 SOL) zijn beide cellen (primair én agent-vrij, plan §2.4) ver onder nul en is geen dag positief; de poort vraagt een ondergrens > 0 in beide. Het kopcijfer −69 % is geen marktgetal maar vooral de cap op dunne curves; de eerlijke uitspraak is: **Mayhem-curves bij e10 zijn te klein voor 0,5 SOL (79 % heeft minder reserve dan onze inleg) en op de curves die groot genoeg zijn verliest de regel ≈ 48 % per trade, zonder agent-legs ≈ 17 %.** Geen vervolg-pre-reg. 2 blikken (primair + agent-vrij); dieptebuckets en kapitaal 25/100 zijn beschrijvend.
@@ -72,11 +76,11 @@ Per reden (0,5 SOL, alle signalen, e71_diag.out): stop 139.067 × −76,8 % (med
 
 ## 4. E72 — ticker-/naamhypes: volgt
 
-NAS op commit 4457b80 (`STEP=e72`); cellen copy (primair), copy2–5, orig.
+NAS op commit 4457b80 (`STEP=e72`); cellen copy (primair), copy2–5, orig. **Leesregel (vooraf, na E71 §3.3):** de marge wordt ook per dieptebucket (echte reserve bij instap vs budget) gemeld; het oordeel staat op het deel ≥ 2 SOL waar de mark-cap niet bindt. Wijkt het oordeel op de volledige set af van dat op het ≥ 2 SOL-deel (GO vs STOP), dan NOT_JUDGED tot de herrun op het gefixte harnas.
 
 ## 5. E73 — meerdere goede wallets samen: volgt
 
-NAS op commit 4457b80 (`STEP=e73`); goede set (plandrempel 5 SOL = 5e9 lamports) ≈ 8–14,5 k wallets per dag (feit, sizing-query 24 okt, niet gepind); cellen k2n30 (primair), k3n30, k2n10, k2n120. Lezing vooraf: "hun gelijktijdige kopen volgen", niet "kopiëren".
+NAS op commit 4457b80 (`STEP=e73`); goede set (plandrempel 5 SOL = 5e9 lamports) ≈ 8–14,5 k wallets per dag (feit, sizing-query 24 okt, niet gepind); cellen k2n30 (primair), k3n30, k2n10, k2n120. Lezing vooraf: "hun gelijktijdige kopen volgen", niet "kopiëren". **Leesregel (vooraf, na E71 §3.3):** dieptebuckets als bij E72; oordeel op het ≥ 2 SOL-deel; afwijkend oordeel op de volledige set → NOT_JUDGED tot de herrun op het gefixte harnas.
 
 ## 6. Blikken
 
