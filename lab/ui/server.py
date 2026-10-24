@@ -60,6 +60,7 @@ DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-fait
 # (the owner's pause, 2026-10-20). Off: no Bediening tab, and /api/action/* answers 404 before the action layer, so
 # nothing is written (no audit line, no session) and the app is read-only as before B0.
 ACTIONS_ON = os.environ.get("LAB_UI_ACTIONS") == "1"
+ACTIONS_OFF = "bediening uit"  # the 404 body of /api/action/* while the switch is off
 ANALYTICS = os.path.join(DATA, "analytics", "analytics.duckdb")
 ALLOWED_HOSTS = {"127.0.0.1", "100.112.193.63"}
 FORBIDDEN_PORTS = {3000, 443, 8443, 8787, 8771}
@@ -685,7 +686,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         if path.startswith("/api/action/") and not ACTIONS_ON:
-            return self.send_json(HTTPStatus.NOT_FOUND, {"error": "onbekend pad"})
+            return self.send_json(HTTPStatus.NOT_FOUND, {"error": ACTIONS_OFF})
         if path not in ("/api/action/pair", "/api/action/prepare", "/api/action/commit"):
             return self.send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "alleen lezen"})
         try:
@@ -715,7 +716,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.stream()
         if url.path.startswith("/api/action/"):
             if not ACTIONS_ON:
-                return self.send_json(HTTPStatus.NOT_FOUND, {"error": "onbekend pad"})
+                return self.send_json(HTTPStatus.NOT_FOUND, {"error": ACTIONS_OFF})
             return self.action_get(url.path, parse_qs(url.query))
         if url.path.startswith("/api/"):
             fn = ROUTES.get(url.path)
