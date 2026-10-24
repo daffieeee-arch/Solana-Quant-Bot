@@ -35,8 +35,9 @@ num() { case $2 in '' | *[!0-9]*) die "$1 is not a number: $2" ;; esac; }
 DATA=${LAB_DATA_ROOT:-/home/chupa/Solana-project/data-old-faithful-one/lab}
 PY=${LAB_PY:-/lab/venv/bin/python}
 : "${NEW:?the be47fc4 checkout}" "${OLD:?the ba322be checkout}"
-NEW=$(cd "$NEW" && pwd) || die "NEW: no directory $NEW"
-OLD=$(cd "$OLD" && pwd) || die "OLD: no directory $OLD"
+[ -d "$NEW" ] && [ -d "$OLD" ] || die "NEW $NEW or OLD $OLD is no directory"
+NEW=$(cd "$NEW" && pwd) || die "NEW: cannot enter"
+OLD=$(cd "$OLD" && pwd) || die "OLD: cannot enter"
 DIAG=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)  # this repo: the comparator and the manifest reference
 NEW_SHA=be47fc425fc46942884db256e5c9d809a11d57a9
 OLD_SHA=ba322be60d25c50ddd1aa5107ed85d471cd711d7
@@ -87,7 +88,10 @@ REDS=""
 
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$OUT/job.log"; }
 logfile() { while IFS= read -r l; do log "  $l"; done < "$1"; }
-sums() { (cd "$OUT" && ls | grep -v -e '\.duckdb' -e '^SHA256SUMS$' | xargs -r sha256sum > SHA256SUMS); }
+sums() {  # SHA256SUMS only when every output is hashed (else SHA256SUMS.partial)
+  (cd "$OUT" && ls | grep -v -e '\.duckdb' -e '^SHA256SUMS' | xargs -r sha256sum > SHA256SUMS.partial \
+    && mv SHA256SUMS.partial SHA256SUMS)
+}
 clean_spill() {
   case $SPILL in "$TMP1"/?* | "$TMP2"/?*) rm -rf -- "$SPILL" ;; *) log "spill $SPILL not removed (unexpected path)" ;; esac
 }
