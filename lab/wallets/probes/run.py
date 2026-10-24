@@ -3,7 +3,7 @@
   LAB_STORE=<dev2> python -m wallets.probes.run --probe e74 --from-slot A --to-slot B --size-sol 0.5 --out DIR
 
 Writes <probe>-<A>.parquet (one row per entry with the exit) and run-<probe>-<A>.json. Dev only (the window must end
-before the hold-out). The report over all windows and sizes: wallets.probes.report.
+before the hold-out), or --forward on a released forward store (epoch 1064 on, common.forward_guard). The report over all windows and sizes: wallets.probes.report.
 """
 
 import argparse
@@ -28,7 +28,9 @@ def main(argv=None):
     ap.add_argument("--memory", default=os.environ.get("LAB_WALLETS_MEMORY"))
     ap.add_argument("--threads", type=int, default=int(os.environ.get("LAB_WALLETS_THREADS", "2")))
     ap.add_argument("--cfg", default=R.DEFAULTS)
+    ap.add_argument("--forward", action="store_true", help="a forward store from epoch 1064 on (common.forward_guard) instead of the dev-only guard")
     a = ap.parse_args(argv)
+    H.FORWARD = a.forward
     os.makedirs(a.out, exist_ok=True)  # the probes write side files (mint_peaks, copies, good-days) before H.write
     con, clock = H.open_store(a.store, a.memory, a.threads)
     cost_tx = R.tx_cost(a.cfg)

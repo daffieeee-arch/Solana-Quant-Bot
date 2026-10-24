@@ -22,7 +22,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .. import runners as R
-from ..common import HOLDOUT_START, SOL, Clock, connect, git_commit, guard
+from ..common import HOLDOUT_START, SOL, Clock, connect, git_commit, guard  # noqa: F401 (guard: window() applies it)
 from ..markout import ms_case
 
 D_SLOTS = 3
@@ -43,9 +43,13 @@ def tok_sql_for_mints(where):
         WHERE {where}"""
 
 
-def prepare(con, lo, hi, clock, tok_sql, mayhem_curve=False):
-    """tok from the probe's SQL, then the legs (runners.legs) and trades_all. Returns hi_ext."""
-    guard(hi)
+FORWARD = False  # set by probes.run --forward: the probes call prepare() without the flag
+
+
+def prepare(con, lo, hi, clock, tok_sql, mayhem_curve=False, forward=None):
+    """tok from the probe's SQL, then the legs (runners.legs) and trades_all. Returns hi_ext. The window guard (dev, or a
+    released forward store with forward=True / the module flag FORWARD) comes first."""
+    R.window(con, lo, hi, FORWARD if forward is None else forward)
     con.execute(f"CREATE OR REPLACE TEMP TABLE tok AS SELECT {TOK_COLS} FROM ({tok_sql}) q")
     hi_ext = R.horizon(con, hi, clock)
     R.legs(con, lo, hi_ext, mayhem_curve=mayhem_curve)
