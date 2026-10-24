@@ -197,3 +197,22 @@ def test_probe_run_creates_the_out_dir_before_side_files(tmp_path, monkeypatch):
         src = inspect.getsource(mod.run)
         assert src.index("os.makedirs(out_dir, exist_ok=True)") < src.index("H.write"), mod.__name__
     assert "os.makedirs(a.out, exist_ok=True)" in inspect.getsource(PR.main)
+
+
+def test_e71_run_succeeds_on_a_nonexistent_out_dir(tmp_path, monkeypatch):
+    """The real path: e71.run on the mini store (mayhem twin, SOL quote) into an out dir that does not exist yet."""
+    import duckdb
+    from wallets.probes import e71
+    rows, states = _mini(tmp_path)
+    w = duckdb.connect(str(tmp_path / "s.duckdb"))
+    w.execute("ALTER TABLE mints ADD COLUMN quote_mint VARCHAR")
+    w.execute("ALTER TABLE mints ADD COLUMN symbol VARCHAR")
+    w.execute(f"UPDATE mints SET quote_mint = '{e71.SYS}', symbol = 'TST'")
+    w.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    con, clock = H.open_store(str(tmp_path / "s.duckdb"), "500MB", 1)
+    out = tmp_path / "new" / "deeper" / "s0.5"
+    assert not out.exists()
+    path, info = e71.run(con, LO, LO + 5_000, clock, 0.5, TX, str(out))
+    assert out.exists() and (out / f"mint_peaks-{LO}.parquet").exists() and (out / f"run-e71-{LO}.json").exists()
+    assert info["rows"] == 1 and info["parity_ok"] and info["base_rates"]["mints"] == 1
