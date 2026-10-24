@@ -31,10 +31,13 @@ DATA=${LAB_DATA_ROOT:-/home/chupa/Solana-project/data-old-faithful-one/lab}
 PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
 STORE=${LAB_STORE:-$DATA/store/dev2.duckdb}
 COMMIT=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || cat "$REPO/COMMIT")
+OUT_SET=${OUT:-}
 OUT=${OUT:-$DATA/wallets/x10-${COMMIT:0:7}}
 MONEY=${MONEY:-$DATA/wallets/money-v2-94f0fee}
 LOG=$OUT/log
 EPOCHS=${EPOCHS:-$(seq 1033 1046 | tr '\n' ' ')}
+FORWARD=${FORWARD:-0}   # 1: a released forward store (epoch >= 1064; owner 2026-10-24): wallets.x10.labels --forward (common.forward_guard); needs EPOCHS, LAB_STORE and a new OUT
+FORWARD_START=459648000
 START_DEADLINE=${START_DEADLINE:-2026-10-23T22:00:00Z}
 KILL_AT=${KILL_AT:-2026-10-24T06:00:00Z}
 HOLDOUT_START=452304000
@@ -57,12 +60,12 @@ if [ "${1:-}" = "--pipeline" ]; then
   # 1. stage A per epoch, both sizes
   for e in $EPOCHS; do
     lo=$((e * 432000)); hi=$(((e + 1) * 432000))
-    [ "$hi" -le "$HOLDOUT_START" ] || red "epoch $e reaches the hold-out"
+    if [ "$FORWARD" = 1 ]; then [ "$lo" -ge "$FORWARD_START" ] || red "epoch $e lies before 1064 (FORWARD=1)"; else [ "$hi" -le "$HOLDOUT_START" ] || red "epoch $e reaches the hold-out"; fi
     for size in 0.5 2; do
       tag=$lo; [ "$size" = "0.5" ] || tag="$lo-s$size"
       if [ -f "$OUT/labels-$tag.parquet" ]; then log "labels-$tag.parquet exists, skipped"; continue; fi
       rc=0
-      nice -n 10 "$PY" -u -m wallets.x10.labels --from-slot "$lo" --to-slot "$hi" --size-sol "$size" --out "$OUT" > "$LOG/labels-$tag.log" 2>&1 || rc=$?
+      nice -n 10 "$PY" -u -m wallets.x10.labels --from-slot "$lo" --to-slot "$hi" --size-sol "$size" --out "$OUT" "${fwd[@]}" > "$LOG/labels-$tag.log" 2>&1 || rc=$?
       [ "$rc" = 0 ] || { tail -5 "$LOG/labels-$tag.log" | tee -a "$LOG/nas_x10.log"; red "labels $tag failed (rc $rc)"; }
       log "labels $tag: $(tail -1 "$LOG/labels-$tag.log" | cut -c1-300)"
     done
@@ -114,12 +117,26 @@ now=$(date -u +%s); start_by=$(date -u -d "$START_DEADLINE" +%s); kill_at=$(date
 log "start commit=$COMMIT store=$STORE epochs='$EPOCHS' out=$OUT memory=$LAB_WALLETS_MEMORY threads=$LAB_WALLETS_THREADS start_deadline=$START_DEADLINE kill_at=$KILL_AT"
 [ "$now" -le "$start_by" ] || red "start deadline $START_DEADLINE passed: the job runs after the Saturday clean runs (set START_DEADLINE for that run)"
 [ "$kill_at" -gt "$now" ] || red "KILL_AT $KILL_AT is in the past"
+fwd=(); [ "$FORWARD" = 1 ] && fwd=(--forward)
 for e in $EPOCHS; do
-  { [ "$e" -ge 1033 ] && [ "$e" -le 1046 ]; } || red "epoch $e is outside dev 1033-1046 (hold-out 1047-1051 and clean 1055-1063 are closed)"
+  if [ "$FORWARD" = 1 ]; then
+    [ "$e" -ge 1064 ] || red "epoch $e is before 1064 (FORWARD=1 reads released forward stores only)"
+  else
+    { [ "$e" -ge 1033 ] && [ "$e" -le 1046 ]; } || red "epoch $e is outside dev 1033-1046 (hold-out 1047-1051 and clean 1055-1063 are closed)"
+  fi
 done
+if [ "$FORWARD" = 1 ]; then
+  [ -n "${LAB_STORE:-}" ] || red "FORWARD=1 needs LAB_STORE (a forward store)"
+  [ -n "${OUT_SET:-}" ] || red "FORWARD=1 needs its own OUT (never the development x10 output)"
+fi
 case "$STORE" in *clean*) red "the store path names the clean store: refused";; esac
 maxslot=$("$PY" -c "import duckdb, sys; c = duckdb.connect(sys.argv[1], read_only=True); print(c.execute('SELECT max(slot) FROM blocks').fetchone()[0])" "$STORE")
-[ "$maxslot" -lt "$HOLDOUT_START" ] || red "store reaches slot $maxslot >= hold-out start $HOLDOUT_START"
+if [ "$FORWARD" = 1 ]; then
+  minslot=$("$PY" -c "import duckdb, sys; c = duckdb.connect(sys.argv[1], read_only=True); print(c.execute('SELECT min(slot) FROM blocks').fetchone()[0])" "$STORE")
+  [ "$minslot" -ge "$FORWARD_START" ] || red "store starts at slot $minslot, before epoch 1064 (FORWARD=1); the labels job checks the store meta too (forward_guard)"
+else
+  [ "$maxslot" -lt "$HOLDOUT_START" ] || red "store reaches slot $maxslot >= hold-out start $HOLDOUT_START"
+fi
 [ -d "$MONEY" ] || red "money-v2 dir $MONEY missing"
 log "guards: dev only (max block slot $maxslot), store $STORE, clean.lock untouched"
 

@@ -53,7 +53,7 @@ import os
 import sys
 import time
 
-from .common import EPOCH_SLOTS, HOLDOUT_START, OUT_ROOT, SOL, Clock, connect, git_commit, regime_label
+from .common import EPOCH_SLOTS, HOLDOUT_START, OUT_ROOT, SOL, Clock, connect, forward_guard, git_commit, guard, regime_label, store_meta
 from .markout import ms_case
 
 MOMENTS_MIN = {"c1": 1, "c5": 5, "c15": 15}
@@ -86,10 +86,31 @@ def tx_cost(cfg_path=DEFAULTS):
         return 705_000
 
 
+CAP = HOLDOUT_START  # the slot no mark horizon crosses: the hold-out start on dev, the store's end on a released forward store
+
+
+def window(con, lo, hi, forward=False):
+    """The window's guard, called first by every entry point. Dev (default): common.guard, every slot before the hold-out,
+    horizons capped at the hold-out start. forward=True (owner decision 2026-10-24, OF1 from epoch 1064 on): common.forward_guard
+    -- a forward store that starts at or after FORWARD_START with [lo, hi) inside it -- and horizons capped at the store's end.
+    Sets the module cap that horizon() and the `cut` flag read."""
+    global CAP
+    if forward:
+        meta = store_meta(con)
+        if meta.get("period") != "forward" or "slot_start" not in meta or "slot_end_exclusive" not in meta:
+            raise ValueError(f"forward=True reads forward stores only (this store's period: {meta.get('period')!r}, window fields "
+                             f"{'present' if 'slot_start' in meta else 'missing'})")
+        forward_guard(lo, hi, meta)
+        CAP = int(meta["slot_end_exclusive"])
+    else:
+        guard(hi)
+        CAP = HOLDOUT_START
+
+
 def horizon(con, hi, clock):
-    """hi_ext: the mark horizon (H6_MS after the window's last slot), never into the hold-out."""
+    """hi_ext: the mark horizon (H6_MS after the window's last slot), never past the window's cap (window())."""
     h6 = f"greatest(1, round({H6_MS} / ({ms_case(clock, str(hi - 1))})))::BIGINT"
-    return min(HOLDOUT_START, hi + int(con.execute(f"SELECT {h6}").fetchone()[0]) + 10)
+    return min(CAP, hi + int(con.execute(f"SELECT {h6}").fetchone()[0]) + 10)
 
 
 def setup(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
@@ -366,7 +387,7 @@ def assemble(con, clock, lo):
                COALESCE(a.x_tp2, a.last_net) / e.cost::DOUBLE AS x_tp2, COALESCE(a.x_tr30, a.last_net) / e.cost::DOUBLE AS x_tr30,
                COALESCE(a.x_tr50, a.last_net) / e.cost::DOUBLE AS x_tr50,
                (a.last_slot - e.entry_slot) * ({ms_case(clock, 'e.entry_slot')}) / 60000.0 AS last_min,
-               e.h6 AS h6_slots, e.entry_slot + e.h6 >= {HOLDOUT_START} AS cut,
+               e.h6 AS h6_slots, e.entry_slot + e.h6 >= {CAP} AS cut,
                fa.* EXCLUDE (key, moment, t), fe.* EXCLUDE (key, moment, t), fr.* EXCLUDE (key, moment, t), fh.payer_hub, ft.top5_share, ft.holders
         FROM ent e JOIN tok t ON t.key = e.key JOIN blocks b ON b.slot = e.entry_slot JOIN agg a ON a.key = e.key AND a.moment = e.moment AND a.t = e.t
         LEFT JOIN fe_all fa ON fa.key = e.key AND fa.moment = e.moment AND fa.t = e.t LEFT JOIN fe ON fe.key = e.key AND fe.moment = e.moment AND fe.t = e.t
@@ -375,12 +396,13 @@ def assemble(con, clock, lo):
     return _count(con, "out")
 
 
-def run(lo, hi, out_dir, f7_parts=None, m1x_triggers=None, cfg=DEFAULTS, store=None, memory=None, threads=None):
-    if hi > HOLDOUT_START:
-        raise ValueError(f"slot {hi} reaches into the hold-out (starts at {HOLDOUT_START})")
+def run(lo, hi, out_dir, f7_parts=None, m1x_triggers=None, cfg=DEFAULTS, store=None, memory=None, threads=None, forward=False):
+    if not forward:
+        guard(hi)   # before anything is opened; window() repeats it on the connection
     t0 = time.time()
     con = connect(store or os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"),
                   memory or os.environ.get("LAB_WALLETS_MEMORY", "1GB"), int(threads or os.environ.get("LAB_WALLETS_THREADS", "2")))
+    window(con, lo, hi, forward)
     clock = Clock.from_store(con)
     cost = tx_cost(cfg)
     hi_ext = setup(con, lo, hi, clock, f7_parts, m1x_triggers)
@@ -394,6 +416,7 @@ def run(lo, hi, out_dir, f7_parts=None, m1x_triggers=None, cfg=DEFAULTS, store=N
             "curve_excluded": {"mayhem": con.execute("SELECT count(*) FROM tok WHERE has_curve AND COALESCE(mayhem, false)").fetchone()[0]},
             "curve_rows_without_fee_tiers": con.execute("SELECT count(*) FROM cl WHERE fee_bps = 0").fetchone()[0],
             "tx_cost_lamports": cost, "size_lamports": SIZE, "commit": git_commit(), "seconds": round(time.time() - t0, 1),
+            "forward": forward, "store_period": store_meta(con).get("period"), "cap": CAP,
             "per_moment": {m: c for m, c in con.execute("SELECT moment, count(*) FROM out GROUP BY 1").fetchall()}}
     with open(f"{out_dir}/run-runners-{lo}.json", "w") as f:
         json.dump(info, f, indent=1, default=str)
@@ -409,8 +432,11 @@ def main(argv=None):
     ap.add_argument("--m1x-triggers")
     ap.add_argument("--cfg", default=DEFAULTS)
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "runners-v1"))
+    ap.add_argument("--forward", action="store_true", help="a forward store from epoch 1064 on (common.forward_guard) instead of the dev-only guard; needs its own --out")
     a = ap.parse_args(argv)
-    info = run(a.from_slot, a.to_slot, a.out, a.f7_parts, a.m1x_triggers, a.cfg)
+    if a.forward and a.out == ap.get_default("out"):
+        ap.error("--forward writes into its own --out, never the development runners-v1")
+    info = run(a.from_slot, a.to_slot, a.out, a.f7_parts, a.m1x_triggers, a.cfg, forward=a.forward)
     print(json.dumps({k: v for k, v in info.items() if k != "per_moment"}, default=str))
 
 
