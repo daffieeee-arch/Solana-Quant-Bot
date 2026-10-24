@@ -17,7 +17,7 @@ import duckdb
 
 HITS = ("hit_2_24", "hit_5_24", "hit_10_24", "hit_2_72", "hit_5_72", "hit_10_72", "stop_first_24", "stop_first_72")
 MEANS = ("x_tp2_24", "x_trail30_24", "x_tp5_24", "peak_24", "end_24")
-TIE_TOL = 0.0015  # one fee-tier step (5-10 bps on the gross) on a peak mark, as a relative drop of the net peak; plan v0.5
+TIE_TOL = 0.0015  # one fee-tier step is at most 10 bps of the gross sale; the net peak is below the gross, so its relative drop stays under 0.15 %; plan v0.5
 
 
 def compare(old, new):
