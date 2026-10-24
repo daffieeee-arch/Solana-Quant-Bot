@@ -16,6 +16,7 @@ import urllib.request
 
 SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server.py")
 HOLDOUT_START = 452_304_000
+HOLDOUT_END = 454_464_000  # exclusive: the hold-out is epochs 1047-1051; live paper (epoch 1064 on) is past it
 
 
 def free_port():
@@ -25,6 +26,8 @@ def free_port():
 
 
 class Api(unittest.TestCase):
+    ACTIONS = "1"  # the interactive UI on (LAB_UI_ACTIONS=1), as B0 built it; ActionsOff below is the default
+
     @classmethod
     def setUpClass(cls):
         cls.static = tempfile.TemporaryDirectory()
@@ -32,7 +35,8 @@ class Api(unittest.TestCase):
             f.write("<!doctype html><title>t</title>")
         cls.port = free_port()
         cls.control = tempfile.TemporaryDirectory()  # the action layer's control and state: never the real ones here
-        env = dict(os.environ, LAB_CONTROL=os.path.join(cls.control.name, "control"), LAB_UI_STATE=os.path.join(cls.control.name, "state"))
+        env = dict(os.environ, LAB_CONTROL=os.path.join(cls.control.name, "control"), LAB_UI_STATE=os.path.join(cls.control.name, "state"),
+                   LAB_UI_ACTIONS=cls.ACTIONS)
         cls.proc = subprocess.Popen([sys.executable, SERVER, "--port", str(cls.port), "--static", cls.static.name],
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env)
         for _ in range(50):
@@ -71,6 +75,7 @@ class Api(unittest.TestCase):
         origin = f"http://127.0.0.1:{self.port}"
         good = {"Content-Type": "application/json", "X-Lab-Action": "1", "Origin": origin}
         self.assertEqual(self.post("/api/paper")[0], 405)
+        self.assertEqual(self.req("/api/paper", method="PUT")[0], 405)
         self.assertEqual(self.post("/api/action/other", headers=good)[0], 405)
         self.assertEqual(self.post("/api/action/prepare", b"a=1", dict(good, **{"Content-Type": "application/x-www-form-urlencoded"}))[0], 415)
         self.assertEqual(self.post("/api/action/prepare", headers={k: v for k, v in good.items() if k != "X-Lab-Action"})[0], 403)
@@ -190,7 +195,7 @@ class Api(unittest.TestCase):
         if not p["journal"]:
             self.skipTest("no paper journal")
         self.assertIn("paper", self.get("/api/meta")["tabs"])
-        self.assertTrue(all(not (HOLDOUT_START <= r["entry_slot"] < 454_464_000) for r in p["journal"]["positions"]))
+        self.assertTrue(all(not (HOLDOUT_START <= r["entry_slot"] < HOLDOUT_END) for r in p["journal"]["positions"]))
         self.assertIn(p["journal"]["stop_rule"]["verdict"], ("GO", "ADJUST", "STOP", "too few trades", "too few days"))
 
     def test_paper_chart_markers_and_candles(self):
@@ -200,7 +205,8 @@ class Api(unittest.TestCase):
         pos = p["journal"]["positions"]
         c = self.get(f"/api/paper_chart?key={pos[0]['key']}")
         self.assertTrue(c["trades"])
-        self.assertTrue(all(t["slot"] < HOLDOUT_START and t["time"] for t in c["trades"]))
+        # no hold-out slot (live trades since Alpenglow are past it, so "before the hold-out" no longer holds)
+        self.assertTrue(all(not (HOLDOUT_START <= t["slot"] < HOLDOUT_END) and t["time"] for t in c["trades"]))
         self.assertTrue(all(x["time"] for x in c["candles"]))
         rev = next((x for x in pos if x.get("orientation") == "reversed"), None)
         if rev:  # no pump.fun history: price candles from the store's pool trades
@@ -240,6 +246,36 @@ class Api(unittest.TestCase):
         _, h, _ = self.req("/api/meta")
         self.assertIn("default-src 'self'", h["Content-Security-Policy"])
         self.assertEqual(h["X-Content-Type-Options"], "nosniff")
+
+
+class ActionsOff(Api):
+    """The default (LAB_UI_ACTIONS unset): no Bediening tab, /api/action/* is 404 before the action layer (nothing is
+    written: no audit line, no state), every other write method is 405. Only these tests run on this server."""
+    ACTIONS = ""
+
+    def test_actions_are_closed_without_pairing_and_csrf(self):
+        origin = f"http://127.0.0.1:{self.port}"
+        good = {"Content-Type": "application/json", "X-Lab-Action": "1", "Origin": origin}
+        for path in ("/api/action/pair", "/api/action/prepare", "/api/action/commit", "/api/action/other"):
+            status, headers, body = self.post(path, b'{"code": "X"}', good)
+            self.assertEqual((status, json.loads(body)), (404, {"error": "bediening uit"}), path)
+            self.assertNotIn("Set-Cookie", headers)
+        for path in ("/api/action/session", "/api/action/log", "/api/action/notes?day=2026-10-24", "/api/action/result?id=x"):
+            status, _, body = self.req(path)
+            self.assertEqual((status, json.loads(body)), (404, {"error": "bediening uit"}), path)
+        self.assertEqual(self.post("/api/paper")[0], 405)
+        for method in ("PUT", "DELETE", "PATCH"):
+            self.assertEqual(self.req("/api/paper", method=method)[0], 405, method)
+        self.assertEqual(os.listdir(self.control.name), [])  # no audit line, no state directory: nothing written
+
+    def test_meta_lists_only_tabs_with_data(self):
+        tabs = self.get("/api/meta")["tabs"]
+        self.assertIn("overview", tabs)
+        self.assertNotIn("control", tabs)
+
+
+for _name in [n for n in dir(Api) if n.startswith("test_") and n not in vars(ActionsOff)]:
+    setattr(ActionsOff, _name, None)  # the rest of Api's tests run once, on the actions-on server
 
 
 class CasesGuards(unittest.TestCase):
