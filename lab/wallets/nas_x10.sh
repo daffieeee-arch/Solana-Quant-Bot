@@ -22,7 +22,7 @@
 #   4. sha256 of every output in $OUT/SHA256SUMS.
 # Tunables (env): EPOCHS (default 1033..1046), MEMORY (DuckDB, default 12GB), THREADS (4), BOOT (10000), AB_AGAINST (dir of an
 # earlier run for the labels A/B, default off; RED when an epoch x size has no old file unless AB_ALLOW_MISSING=1, and RED when
-# ab_labels exits 1: entries not identical / rows differ / a peak_24 down), OUT (default
+# ab_labels exits 1: entries not identical / rows differ / a peak_24 down; AB_ALLOW_TIER_TIE=1 passes --allow-tier-tie-drops, plan v0.5), OUT (default
 # $DATA/wallets/x10-<commit7>), MONEY (default $DATA/wallets/money-v2-94f0fee), START_DEADLINE, KILL_AT, LAB_SPILL_MAX (100GB).
 set -euo pipefail
 
@@ -74,6 +74,10 @@ if [ "${1:-}" = "--pipeline" ]; then
   #     the E64 recount on the mark-cap-fixed harness compares with x10-6f294dd, research/x10-hertelling-plan-2026-10-24.md)
   if [ -n "${AB_AGAINST:-}" ]; then
     [ -d "$AB_AGAINST" ] || red "AB_AGAINST $AB_AGAINST is not a directory"
+    # AB_ALLOW_TIER_TIE=1 (x10-hertelling-plan v0.5): tolerate peak_24 drops of at most one fee-tier step on boost / withdraw / deposit
+    # peaks in mixed-tier slots (the pre-2026-10-24 slot-ASOF tie of the baseline), listed in ab/; everything else stays RED
+    abtol=(); [ "${AB_ALLOW_TIER_TIE:-0}" = 1 ] && abtol=(--allow-tier-tie-drops)
+    log "ab: against $AB_AGAINST, tier-tie tolerance ${AB_ALLOW_TIER_TIE:-0}"
     mkdir -p "$OUT/ab"
     for e in $EPOCHS; do
       lo=$((e * 432000))
@@ -84,7 +88,7 @@ if [ "${1:-}" = "--pipeline" ]; then
           log "ab $tag: no old labels in $AB_AGAINST, skipped (AB_ALLOW_MISSING=1)"; continue
         fi
         rc=0
-        "$PY" -m wallets.x10.ab_labels --old "$AB_AGAINST/labels-$tag.parquet" --new "$OUT/labels-$tag.parquet" --out "$OUT/ab" --tag "$tag" > "$LOG/ab-$tag.log" 2>&1 || rc=$?
+        "$PY" -m wallets.x10.ab_labels --old "$AB_AGAINST/labels-$tag.parquet" --new "$OUT/labels-$tag.parquet" --out "$OUT/ab" --tag "$tag" "${abtol[@]}" > "$LOG/ab-$tag.log" 2>&1 || rc=$?
         [ "$rc" = 0 ] || { tail -3 "$LOG/ab-$tag.log" | tee -a "$LOG/nas_x10.log"; red "ab $tag RED or failed (rc $rc): entries not identical, rows differ or a peak_24 went down"; }
         log "ab $tag: $(head -1 "$LOG/ab-$tag.log" | cut -c1-200)"
       done
