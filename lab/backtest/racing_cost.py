@@ -43,7 +43,7 @@ import duckdb
 import numpy as np
 
 from .capital_ceiling import (COOLDOWN_MS, DAILY_LOSS, DEV, MAX_OPEN, SCENARIOS, Refused, boot_days, capital_days,
-                              check_run, ci, exit_of, flag_share, fmt, limited, unlimited)
+                              check_run, ci, exit_of, flag_share, fmt, limited, unlimited, slot_days, require_exit_day)
 from .costs import Scenario, settle_sql
 from .store import load_defaults
 
@@ -226,9 +226,10 @@ def trades_of(rows):
     return t
 
 
-def run_days(trades, days, capital, size):
+def run_days(trades, days, capital, size, day_of):
     """capital_days on sorted trades at C (limited()'s call): the SOL per day series, the 12-tuple and the extras."""
-    out, extra = capital_days(trades, capital * 1e9, MAX_OPEN, DAILY_LOSS * capital * 1e9, COOLDOWN_MS, size=int(round(size * 1e9)))
+    out, extra = capital_days(trades, capital * 1e9, MAX_OPEN, DAILY_LOSS * capital * 1e9, COOLDOWN_MS, size=int(round(size * 1e9)),
+                              day_of=day_of)
     return [extra["day_pnl"].get(x, 0.0) / 1e9 for x in days], out, extra
 
 
@@ -267,8 +268,8 @@ def expected(rows0, ns, F, alt_of, failed_tx, days):
 def draw_job(job):
     """With limits over the paired draws, for every (F, miss) of one lead, size and scenario: the day series averaged
     over the draws and per draw its SOL/day, ruin and entries taken."""
-    rows0, ns, us, alts, fs, failed_tx, days, capital, size = (job[k] for k in
-                                                             ("rows0", "ns", "us", "alts", "fs", "failed_tx", "days", "capital", "size"))
+    rows0, ns, us, alts, fs, failed_tx, days, capital, size, day_of = (job[k] for k in (
+        "rows0", "ns", "us", "alts", "fs", "failed_tx", "days", "capital", "size", "day_of"))
     ps = np.array([p_land(n) for n in ns])
     out = {}
     for fkey, F in fs:
@@ -279,7 +280,7 @@ def draw_job(job):
                 hit = us[:, j] < ps
                 rows = [(r[:5] + ((r[5] or 0) - F,) + r[6:]) if h else miss_row(r, alts[i] if miss == "d1" else None, F, failed_tx)
                         for i, (r, h) in enumerate(zip(rows0, hit))]
-                vals, o, _ = run_days(trades_of(rows), days, capital, size)
+                vals, o, _ = run_days(trades_of(rows), days, capital, size, day_of)
                 acc += vals
                 per_draw.append(float(np.mean(vals)))
                 ruined += o[6] < size
@@ -445,6 +446,7 @@ def fee_stats(con, keys_sql):
 
 
 def compute(con, draws, workers):
+    day_of = slot_days(con)  # the daily loss limit's day: each exit slot's UTC day (the attached store's blocks)
     cfg = load_defaults()
     scn = {s: Scenario.from_cfg(s, cfg) for s in SCENARIOS}
     days = [r[0] for r in con.execute("SELECT DISTINCT day FROM r ORDER BY 1").fetchall()]
@@ -467,10 +469,10 @@ def compute(con, draws, workers):
                     rows = cell_rows(con, variant, farm, arm, size, d, sc)
                     if not rows:
                         continue
-                    u, x = unlimited(rows, days), limited(rows, days, capital, size, "deadline")
+                    u, x = unlimited(rows, days), limited(rows, days, capital, size, "deadline", day_of)
                     if d in (2, 3):
                         g4[(name, size, d, sc)] = (u, x)
-                    series[d] = run_days(trades_of(rows), days, capital, size)[0]
+                    series[d] = run_days(trades_of(rows), days, capital, size, day_of)[0]
                     useries[d] = day_sums(rows, days)
                     cells[d] = {"unlimited": u, "limited": x, "sandwich_flagged_pct": flag_share(con, variant, farm, arm, size, d)[0]}
                     if d == 0:
@@ -489,7 +491,7 @@ def compute(con, draws, workers):
                         us = np.vstack([draws_u(r[8], r[0], draws) for r in rows])
                         jobs.append({"key": (name, size, sc), "rows0": rows, "ns": ns, "us": us,
                                      "alts": [rows1.get((r[8], r[0])) for r in rows], "fs": fgrid, "failed_tx": scn[sc].failed_tx,
-                                     "days": days, "capital": capital, "size": size})
+                                     "days": days, "capital": capital, "size": size, "day_of": day_of})
                 S["scenarios"][sc] = {"cells": cells, "_series": series, "_useries": useries}
             L["sizes"][size] = S
         leads[name] = L
@@ -638,6 +640,7 @@ def report(a):
     tmp = os.environ.get("LAB_SPILL_DIR")
     if tmp:
         con.execute(f"SET temp_directory = '{tmp}'")
+    require_exit_day(a.e63_json)
     grid = grid_check(a.parts)
     info = load(con, a.parts, a.c3_keys, a.store)
     con.execute(f"CREATE TABLE race AS SELECT * FROM read_parquet('{os.path.join(a.race, 'race.parquet')}')")

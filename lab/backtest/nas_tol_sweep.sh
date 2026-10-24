@@ -11,7 +11,8 @@
 # 2026-10-24T08:00:00Z) and its process group is killed at KILL_AT (default 2026-10-24T09:45:00Z: the NAS is the
 # Saturday clean runs' from 10:00Z); its own spill dir under /lab/tmp/ or $DATA/tmp/, removed on every exit path.
 # Needs, copied from the VPS where missing (each pinned): E63's run $E63 (default $DATA/backtests/capital-ceiling-d15ac45:
-# parts/ and config.json c5fcd78e...), its report $E63_JSON (default $E63/ceiling-report-b149a7d/ceiling.json, 8adfda64...)
+# parts/ and config.json c5fcd78e...), its report $E63_JSON (default $E63/ceiling-report-b149a7d/ceiling.json, 8adfda64...;
+# since Codex review #5 refused: pass the exit-day report of nas_capital_exitday.sh with E63_JSON_SHA)
 # and the C3 keys $C3_KEYS (default $DATA/wallets/paidflow-dev-vps/markout-f7rev-txdelay.parquet, 1a274ec6...).
 # Overrides: WORKERS (4), MEMORY (DuckDB, 8GB), START_DEADLINE, KILL_AT, RANGE (a dry run's lo:hi for the three tournament
 # runs: never evidence; every run dir gets -dry).
@@ -89,8 +90,8 @@ EOF
   PARTS=("$DATA/backtests/tolsweep-t002-$SFX" "$DATA/backtests/tolsweep-t010-$SFX" "$DATA/backtests/tolsweep-t015-$SFX" "$E63")
   rm -rf "$OUT/report"
   rc=0
-  nice -n 10 "$PY" -m backtest.tol_sweep --parts "${PARTS[@]}" --e63-json "$E63_JSON" --c3-keys "$C3_KEYS" --out "$OUT/report" \
-    --memory "${MEMORY:-8GB}" --threads 4 > "$OUT/report.log" 2>&1 || rc=$?
+  nice -n 10 "$PY" -m backtest.tol_sweep --parts "${PARTS[@]}" --e63-json "$E63_JSON" --c3-keys "$C3_KEYS" --store "$STORE" \
+    --out "$OUT/report" --memory "${MEMORY:-8GB}" --threads 4 > "$OUT/report.log" 2>&1 || rc=$?
   tail -1 "$OUT/report.log" | tee -a "$OUT/job.log"
   [ -f "$OUT/report/tol.md" ] || red "report rc $rc and no tol.md (report.log)"
   (cd "$OUT" && sha256sum report/tol.json report/tol.md "../tolsweep-t002-$SFX/config.json" "../tolsweep-t010-$SFX/config.json" \
@@ -125,7 +126,12 @@ pin() {  # file sha256 what
   [ "$(sha256sum "$1" | cut -d' ' -f1)" = "$2" ] || red "$3 at $1 is not sha256 $2"
 }
 pin "$E63/config.json" c5fcd78ef083b67fe0bb326bee4b546fe11d937354f83ed7b18dfa6607e246be "E63's run config"
-pin "$E63_JSON" 8adfda647cf914c4c6c04537418726ea8a36280862777f120fea2cefa1de0c6e "E63's report (ceiling-report-b149a7d)"
+pin "$E63_JSON" "${E63_JSON_SHA:-8adfda647cf914c4c6c04537418726ea8a36280862777f120fea2cefa1de0c6e}" "E63's report"
+# Since Codex review #5 the gate reference must be an E63 report with the daily loss on the exit day: the original
+# ceiling-report-b149a7d (8adfda64) is refused here, before any run; pass nas_capital_exitday.sh's e63/ceiling.json.
+"$PY" -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])).get("daily_loss_book") != "exit_day")' "$E63_JSON" \
+  || red "E63_JSON $E63_JSON predates the daily loss on the exit day: E63_JSON=<capital-exitday-*/e63/ceiling.json> E63_JSON_SHA=<its sha256>"
+
 pin "$C3_KEYS" 1a274ec60a5610f8abf22b70aed23266feaad8559fd79df77f35d8862fb10a23 "the C3 keys"
 ls "$E63"/parts/*.parquet > /dev/null 2>&1 || red "no parts in $E63"
 # T0 (LAB review of the plan): the engine files and the cost defaults are E63's (d15ac45), byte for byte, before any run.
