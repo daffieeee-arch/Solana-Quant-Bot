@@ -35,7 +35,7 @@ def good_days(con, out_dir):
     where = f"WHERE hash(wallet) % {sample} = 0" if sample > 0 else ""
     con.execute(f"""CREATE OR REPLACE TEMP TABLE wd AS
         SELECT wallet, day::DATE AS d, cash - fees AS realised, buy_sol FROM read_parquet({files!r}) {where}
-        QUALIFY count(*) OVER (PARTITION BY wallet) >= 5""")  -- pos7 >= 5 needs at least 5 wallet-days: the rest never qualifies
+        QUALIFY count(*) OVER (PARTITION BY wallet) >= 5""")  # pos7 >= 5 needs at least 5 wallet-days: the rest never qualifies
     # exact recomputation per (wallet, D): the window D-7 .. D-1 over the calendar
     con.execute(f"""CREATE OR REPLACE TEMP TABLE good AS
         WITH days AS (SELECT DISTINCT d FROM wd WHERE d >= DATE '{FIRST_DAY}'),
