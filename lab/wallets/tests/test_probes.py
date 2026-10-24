@@ -164,3 +164,26 @@ def test_e73_triggers_k_distinct_wallets_and_cooldown():
     # k2n10 (40 slots): W2 at +40 is exactly 40 slots after W1 -> counts (>= a.slot - 40)
     assert ("k2n10", "A", lo + 40) in t
     assert not any(k == "B" for _, k, _ in t)
+
+
+def test_e73_good_set_threshold_is_5_sol_in_lamports(tmp_path):
+    import duckdb
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from wallets.probes import e73
+    # two wallets, 7 positive days each before 2026-09-19: A sums to 4.9 SOL (out), B to 5.1 SOL (in); C has only 4 days (out)
+    rows = []
+    for i in range(7):
+        day = f"2026-09-{12 + i:02d}"
+        rows.append(("A", day, 0.7 * 10**9, 0, 10**8))
+        rows.append(("B", day, int(5.1 * 10**9 / 7) + 1, 0, 10**8))
+        if i < 4:
+            rows.append(("C", day, 10**10, 0, 10**8))
+    rows.append(("Z", "2026-09-19", 10**9, 0, 10**8))   # the measured day exists in the data (Z itself has no history)
+    pq.write_table(pa.table({"wallet": [r[0] for r in rows], "day": [r[1] for r in rows], "cash": [float(r[2]) for r in rows],
+                             "fees": [float(r[3]) for r in rows], "buy_sol": [float(r[4]) for r in rows]}), tmp_path / "wallet-day-0.parquet")
+    con = duckdb.connect()
+    e73.good_days(con, str(tmp_path / "out"), money=str(tmp_path)) if (tmp_path / "out").mkdir() is None else None
+    good = con.execute("SELECT wallet, day FROM good ORDER BY 1, 2").fetchall()
+    assert ("B", "2026-09-19") in good and not any(w == "A" for w, _ in good) and not any(w == "C" for w, _ in good)
+    assert all(d >= "2026-09-19" for _, d in good)

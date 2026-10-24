@@ -1,4 +1,5 @@
-"""E72: ticker / name hypes, S6 (plan v0.2 section 3). key = lower(symbol) without anything but a-z0-9; at a create with
+"""E72: ticker / name hypes, S6 (plan v0.2 section 3). key = lower(symbol) without anything but a-z0-9 (a symbol of only
+emoji or other symbols gives an empty key and is left out); at a create with
 key k on slot s, n_prev60 = earlier creates with key k in the preceding 60 min (slots of the create's clock); the create
 is a copy of rank r = n_prev60 + 1 when 1 <= n_prev60 <= 4. Generic-name filter, point-in-time: keys with >= 20 creates in
 the preceding 24 h do not count. SOL quote, not Mayhem.

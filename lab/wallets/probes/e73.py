@@ -1,5 +1,6 @@
 """E73: several good wallets buying together (plan v0.2 section 4). Good set per UTC day D from money-v2 wallet-days
-(realised = cash - fees): realised > 0 on >= 5 of the calendar days D-7 .. D-1, sum over those days >= 5 SOL, buy_sol > 0
+(cash, fees and buy_sol are in lamports; realised = cash - fees): realised > 0 on >= 5 of the calendar days D-7 .. D-1,
+sum over those days >= 5 SOL (5e9 lamports), buy_sol > 0
 on >= 5 of them; only days < D. Wallet identity = the trader of the leg on both sides. Trigger: the k-th distinct good
 wallet buying the same key (curve mint, normal-pool mint, or reversed pool) within N seconds of the first, t = that buy's
 slot, then 60 min cooldown per key. SOL quote / reversed, not Mayhem. Cells: k2n30 (primary), k3n30, k2n10, k2n120.
@@ -22,28 +23,34 @@ COOLDOWN_MS = 3_600_000
 FIRST_DAY = "2026-09-19"
 
 
-def good_days(con, out_dir):
-    """(wallet, day) rows of the good set per measured day, from the wallet-day files; cached as parquet."""
+MIN_SUM_LAMPORTS = 5 * 10**9   # plan 4.1: sum of realised over D-7 .. D-1 >= 5 SOL
+
+
+def good_days(con, out_dir, money=None):
+    """(wallet, day) rows of the good set per measured day, from the wallet-day files (lamports); cached as parquet."""
     cached = os.environ.get("LAB_E73_GOOD") or os.path.join(out_dir, "good-days.parquet")
     if os.path.exists(cached):
         con.execute(f"CREATE OR REPLACE TEMP TABLE good AS SELECT wallet, day FROM read_parquet('{cached}')")
         return cached
-    files = sorted(glob.glob(os.path.join(MONEY, "wallet-day-*.parquet")))
+    files = sorted(glob.glob(os.path.join(money or MONEY, "wallet-day-*.parquet")))
     if not files:
-        raise SystemExit(f"E73: no money-v2 wallet-day files under {MONEY}")
+        raise SystemExit(f"E73: no money-v2 wallet-day files under {money or MONEY}")
     sample = int(os.environ.get("LAB_E73_SAMPLE", "0") or 0)
     where = f"WHERE hash(wallet) % {sample} = 0" if sample > 0 else ""
     con.execute(f"""CREATE OR REPLACE TEMP TABLE wd AS
         SELECT wallet, day::DATE AS d, cash - fees AS realised, buy_sol FROM read_parquet({files!r}) {where}
         QUALIFY count(*) OVER (PARTITION BY wallet) >= 5""")  # pos7 >= 5 needs at least 5 wallet-days: the rest never qualifies
     # exact recomputation per (wallet, D): the window D-7 .. D-1 over the calendar
+    # the measured days: every UTC day in the data from FIRST_DAY on (before the >= 5 rows prefilter of wd)
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE days AS SELECT DISTINCT day::DATE AS d FROM read_parquet({files!r}) {where} WHERE day::DATE >= DATE '{FIRST_DAY}'"""
+                .replace(f"{where} WHERE", f"{where} AND" if where else "WHERE"))
     con.execute(f"""CREATE OR REPLACE TEMP TABLE good AS
-        WITH days AS (SELECT DISTINCT d FROM wd WHERE d >= DATE '{FIRST_DAY}'),
+        WITH
         cand AS (SELECT DISTINCT w.wallet, days.d FROM wd w JOIN days ON w.d < days.d AND w.d >= days.d - INTERVAL 7 DAY),
         st AS (
             SELECT c.wallet, c.d, sum(w.realised) AS s7, count(*) FILTER (WHERE w.realised > 0) AS pos7, count(*) FILTER (WHERE w.buy_sol > 0) AS buy7
             FROM cand c JOIN wd w ON w.wallet = c.wallet AND w.d < c.d AND w.d >= c.d - INTERVAL 7 DAY GROUP BY 1, 2)
-        SELECT wallet, strftime(d, '%Y-%m-%d') AS day FROM st WHERE pos7 >= 5 AND s7 >= 5 AND buy7 >= 5""")
+        SELECT wallet, strftime(d, '%Y-%m-%d') AS day FROM st WHERE pos7 >= 5 AND s7 >= {MIN_SUM_LAMPORTS} AND buy7 >= 5""")
     con.execute(f"COPY good TO '{cached}' (FORMAT PARQUET)")
     return cached
 

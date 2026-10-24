@@ -77,6 +77,8 @@ def simulate(con, cost_tx, hi_ext, clock, extra_exit_sql=None):
     """runners.entries, then the marks and the exit rule in two stages with the same result as one pass over H6: first
     every entry with the mark horizon at 1 h (most exits trigger within minutes), then only the entries still without a
     trigger at 1 h with the full 6 h horizon. Keeps the marks table small on busy keys (E73). -> TEMP TABLE ex.
+    exit_net / reason / exit_slot are identical to one pass over 6 h; n_marks / max_net of the entries settled in stage 1
+    cover the first hour only (the report does not use them; max_net_1h is exact either way).
 
     extra_exit_sql: optional query (key, moment, t, ord_cut) with an earlier forced exit per entry (E71's agent-free
     cell: the sell at the last mark before ord_cut); applied as a second column set, the primary exit stays."""
