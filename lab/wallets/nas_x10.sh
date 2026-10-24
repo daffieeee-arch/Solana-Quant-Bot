@@ -21,7 +21,8 @@
 #   3. model.json / model.md / cells-val.parquet / scores-*.parquet when lightgbm imports; else a note in the log;
 #   4. sha256 of every output in $OUT/SHA256SUMS.
 # Tunables (env): EPOCHS (default 1033..1046), MEMORY (DuckDB, default 12GB), THREADS (4), BOOT (10000), AB_AGAINST (dir of an
-# earlier run for the labels A/B, default off), OUT (default
+# earlier run for the labels A/B, default off; RED when an epoch x size has no old file unless AB_ALLOW_MISSING=1, and RED when
+# ab_labels exits 1: entries not identical / rows differ / a peak_24 down), OUT (default
 # $DATA/wallets/x10-<commit7>), MONEY (default $DATA/wallets/money-v2-94f0fee), START_DEADLINE, KILL_AT, LAB_SPILL_MAX (100GB).
 set -euo pipefail
 
@@ -75,10 +76,13 @@ if [ "${1:-}" = "--pipeline" ]; then
       lo=$((e * 432000))
       for size in 0.5 2; do
         tag=$lo; [ "$size" = "0.5" ] || tag="$lo-s$size"
-        if [ ! -f "$AB_AGAINST/labels-$tag.parquet" ]; then log "ab $tag: no old labels in $AB_AGAINST, skipped"; continue; fi
+        if [ ! -f "$AB_AGAINST/labels-$tag.parquet" ]; then
+          [ "${AB_ALLOW_MISSING:-0}" = 1 ] || red "ab $tag: no old labels in $AB_AGAINST (every epoch x size must be compared; AB_ALLOW_MISSING=1 to skip)"
+          log "ab $tag: no old labels in $AB_AGAINST, skipped (AB_ALLOW_MISSING=1)"; continue
+        fi
         rc=0
         "$PY" -m wallets.x10.ab_labels --old "$AB_AGAINST/labels-$tag.parquet" --new "$OUT/labels-$tag.parquet" --out "$OUT/ab" --tag "$tag" > "$LOG/ab-$tag.log" 2>&1 || rc=$?
-        [ "$rc" = 0 ] || { tail -3 "$LOG/ab-$tag.log" | tee -a "$LOG/nas_x10.log"; red "ab $tag failed (rc $rc)"; }
+        [ "$rc" = 0 ] || { tail -3 "$LOG/ab-$tag.log" | tee -a "$LOG/nas_x10.log"; red "ab $tag RED or failed (rc $rc): entries not identical, rows differ or a peak_24 went down"; }
         log "ab $tag: $(head -1 "$LOG/ab-$tag.log" | cut -c1-200)"
       done
     done
