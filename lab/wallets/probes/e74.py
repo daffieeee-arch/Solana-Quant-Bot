@@ -26,7 +26,8 @@ def run(con, lo, hi, clock, size_sol, cost_tx, out_dir):
     hi_ext = H.prepare(con, lo, hi, clock, tok)
     # the reference price: lamports per PUMP unit at every pool trade (normal pool: e = SOL side incl. virtual, b = PUMP side)
     con.execute(f"""CREATE OR REPLACE TEMP TABLE ref AS
-        SELECT slot, slot * 1000000000 + tx_index * 100000 + outer_ix * 1000 + inner_ix AS ord, (e - COALESCE(vq, 0))::DOUBLE / b AS price
+        SELECT slot, slot * 1000000000 + tx_index * 100000 + outer_ix * 1000 + inner_ix AS ord, (e - COALESCE(vq, 0))::DOUBLE / b AS price,
+               (e - COALESCE(vq, 0))::DOUBLE / 1e9 AS depth_sol
         FROM pool WHERE pool = '{REF_POOL}' AND kind IN ('buy', 'sell') AND b > 0 AND slot < {hi_ext}""")
     med = con.execute(f"SELECT median(price) FROM ref WHERE slot >= {lo} AND slot < {hi}").fetchone()[0]
     if med is None:
@@ -43,14 +44,19 @@ def run(con, lo, hi, clock, size_sol, cost_tx, out_dir):
         R.SIZE = saved
     # SOL conversion at the entry and the exit (ASOF: the last reference trade at or before the slot)
     con.execute(f"""CREATE OR REPLACE TEMP TABLE ex AS
-        WITH r AS (SELECT slot, arg_max(price, ord) AS price FROM ref GROUP BY slot)
-        SELECT e.*, re.price AS price_entry, rx.price AS price_exit, {med} AS price_median, {budget_pump} AS budget_pump,
+        WITH r AS (SELECT slot, arg_max(price, ord) AS price, arg_max(depth_sol, ord) AS depth_sol FROM ref GROUP BY slot)
+        SELECT e.*, COALESCE(re.price, {med}) AS price_entry, COALESCE(rx.price, {med}) AS price_exit, {med} AS price_median, {budget_pump} AS budget_pump,
+               re.price IS NULL AS price_entry_fallback, rx.price IS NULL AS price_exit_fallback,
+               e.entry_slot - re.slot AS ref_age_entry_slots, e.exit_slot - rx.slot AS ref_age_exit_slots, re.depth_sol AS ref_depth_sol_entry,
                e.cost AS cost_pump, e.exit_net AS exit_pump,
-               (e.cost * re.price * (1 + {SWAP}) + 2 * {cost_tx})::HUGEINT AS cost_sol,
-               (e.exit_net * rx.price * (1 - {SWAP}) - 2 * {cost_tx})::HUGEINT AS exit_sol
+               (e.cost * COALESCE(re.price, {med}) * (1 + {SWAP}) + 2 * {cost_tx})::HUGEINT AS cost_sol,
+               (e.exit_net * COALESCE(rx.price, {med}) * (1 - {SWAP}) - 2 * {cost_tx})::HUGEINT AS exit_sol
         FROM ex e
         ASOF LEFT JOIN r re ON e.entry_slot >= re.slot
         ASOF LEFT JOIN r rx ON e.exit_slot >= rx.slot""")
+    nfb = con.execute("SELECT sum(price_entry_fallback::INT), sum(price_exit_fallback::INT), count(*) FROM ex").fetchone()
+    R.progress(f"E74 reference price fallback to the window median: entry {nfb[0]} / exit {nfb[1]} of {nfb[2]} rows")
     # the harness columns cost / exit_net are in PUMP for this probe: the report reads cost_sol / exit_sol instead
     return H.write(con, out_dir, "e74", lo, size_sol, "e74", {"budget_pump": budget_pump, "price_median_lamports_per_unit": med,
-                                                                 "swap_per_side": SWAP, "ref_pool": REF_POOL, "units": "cost/exit_net in PUMP; cost_sol/exit_sol in lamports"})
+                                                                 "swap_per_side": SWAP, "ref_pool": REF_POOL, "n_price_fallback_entry": nfb[0], "n_price_fallback_exit": nfb[1],
+                                                                 "units": "cost/exit_net in PUMP; cost_sol/exit_sol in lamports"})

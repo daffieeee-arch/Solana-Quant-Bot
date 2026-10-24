@@ -93,7 +93,9 @@ log "guards: dev only (max block slot $maxslot), store $STORE, clean.lock untouc
 setsid bash "$0" --pipeline &
 PG=$!
 (
-  sleep $((kill_at - now))
+  trap 'exit 0' TERM
+  sleep $((kill_at - now)) &
+  wait $! || exit 0
   log "KILL_AT $KILL_AT reached: killing process group $PG"
   kill -TERM -- "-$PG" 2>/dev/null || true
   sleep 30
