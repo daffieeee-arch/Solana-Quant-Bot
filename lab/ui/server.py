@@ -521,7 +521,8 @@ def api_ui_jobs(q):
 
 def api_paper_trades(q):
     """The paper bot's entries and exits on one token, for its token page: the mint itself (curve trades) and
-    every pool of that mint in the development store (pool trades)."""
+    every pool of that mint in the development store, the paper journal's learned pools and the paper run's store
+    (pool trades; a live position's pool is in neither store of the development data)."""
     mint = (q.get("mint", [""])[0] or "").strip()
     if not (32 <= len(mint) <= 44 and mint.isalnum()):
         raise ValueError("unknown mint")
@@ -529,6 +530,7 @@ def api_paper_trades(q):
         return {"trades": []}
     con = connect(with_dev=True)
     keys = [mint] + [r[0] for r in con.execute("SELECT pool FROM dev.pools WHERE mint = ?", [mint]).fetchall()]
+    keys = list(dict.fromkeys(keys + paper.mint_pools(mint)))
     trades = []
     for k in keys:
         t = paper.key_trades(k)

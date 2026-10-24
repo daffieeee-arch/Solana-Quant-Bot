@@ -16,6 +16,7 @@ import urllib.request
 
 SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server.py")
 HOLDOUT_START = 452_304_000
+HOLDOUT_END = 454_464_000  # exclusive: the hold-out is epochs 1047-1051; live paper (epoch 1064 on) is past it
 
 
 def free_port():
@@ -190,7 +191,7 @@ class Api(unittest.TestCase):
         if not p["journal"]:
             self.skipTest("no paper journal")
         self.assertIn("paper", self.get("/api/meta")["tabs"])
-        self.assertTrue(all(not (HOLDOUT_START <= r["entry_slot"] < 454_464_000) for r in p["journal"]["positions"]))
+        self.assertTrue(all(not (HOLDOUT_START <= r["entry_slot"] < HOLDOUT_END) for r in p["journal"]["positions"]))
         self.assertIn(p["journal"]["stop_rule"]["verdict"], ("GO", "ADJUST", "STOP", "too few trades", "too few days"))
 
     def test_paper_chart_markers_and_candles(self):
@@ -200,7 +201,8 @@ class Api(unittest.TestCase):
         pos = p["journal"]["positions"]
         c = self.get(f"/api/paper_chart?key={pos[0]['key']}")
         self.assertTrue(c["trades"])
-        self.assertTrue(all(t["slot"] < HOLDOUT_START and t["time"] for t in c["trades"]))
+        # no hold-out slot (live trades since Alpenglow are past it, so "before the hold-out" no longer holds)
+        self.assertTrue(all(not (HOLDOUT_START <= t["slot"] < HOLDOUT_END) and t["time"] for t in c["trades"]))
         self.assertTrue(all(x["time"] for x in c["candles"]))
         rev = next((x for x in pos if x.get("orientation") == "reversed"), None)
         if rev:  # no pump.fun history: price candles from the store's pool trades

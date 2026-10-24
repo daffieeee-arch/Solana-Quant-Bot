@@ -411,6 +411,10 @@ class TokenNames(unittest.TestCase):
             db.execute("INSERT INTO state VALUES ('farmer_seed', ?)", [json.dumps({"store": store})])
             db.execute("INSERT INTO learned VALUES ('pool', 'PoolLearned', 3, 1, ?)",
                        [json.dumps(["sol", "normal", "PoolLearned", "MintLive", "normal", "sol", False, "c", 1])])
+            db.execute("INSERT INTO learned VALUES ('token', 'MintLive', 4, 2, ?)",  # graduated: its canonical pool
+                       [json.dumps(["MintLive", 1, "c", False, "11111111111111111111111111111111", 2, "PoolGrad"])])
+            db.execute("INSERT INTO learned VALUES ('pool', 'PoolOther', 5, 3, ?)",  # names MintLive, but not as its mint
+                       [json.dumps(["sol", "normal", "PoolOther", "MintElse", "normal", "sol", False, "MintLive", 3])])
             db.commit()
             db.close()
             root = os.path.join(d, "recorder")
@@ -446,6 +450,10 @@ class TokenNames(unittest.TestCase):
                 paper._name_miss["PoolGap"] = (0, paper._name_miss["PoolGap"][1])
                 self.assertEqual(paper.token_names(["PoolGap"])["PoolGap"]["symbol"], "GAP")
                 self.assertEqual(paper._name_seq.get("Unknown1111"), 1)  # searched up to segment 1
+                # A token page's paper trades: the pools the paper run knows, not only the dev store's
+                self.assertEqual(paper.mint_pools("MintLive"), ["PoolGrad", "PoolLearned"])
+                self.assertEqual(paper.mint_pools("MintStore"), ["PoolStore"])
+                self.assertEqual(paper.mint_pools("Unknown1111"), [])
             finally:
                 paper._dev_names = dev
                 for k in env:
