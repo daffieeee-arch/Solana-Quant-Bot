@@ -2,6 +2,7 @@
 delayed exits (the sell at the first mark >= trigger slot + d), the per-mint peak and early-buyer tables and the extra
 features, all recomputed in Python from the same engine states the runners test uses."""
 import duckdb
+import pytest
 
 from backtest import venues as V
 from wallets import runners
@@ -244,3 +245,32 @@ def test_ab_labels_is_fail_closed(tmp_path):
         res = json.load(open(tmp_path / "out" / f"ab-{name}.json"))
         assert rc == 1 and any(reason in r for r in res["red"]), (name, res["red"])
         assert open(tmp_path / "out" / f"ab-{name}.md").read().strip().splitlines()[-1].startswith("RED")
+
+
+def test_labels_forward_flag_is_wired_through_runners_window(tmp_path, monkeypatch):
+    """LAB nit on #574: the same wiring assert for x10.labels.run(forward=True) as for runners.run -- the window guard runs
+    (forward_guard: forward store only, window inside), the cap is the store's end and the run records forward/cap; without the
+    flag a forward store that would reach the hold-out is refused; a dev store with the flag is refused."""
+    import json
+    from wallets import common
+    trades = [(S, True, 2 * 10**9, True), (S + 300, True, 3 * 10**9, False), (S + 400, True, 10**9, True), (S + 900, True, 2 * 10**9, True)]
+    rows, states = _curve_rows(trades)
+    _store(tmp_path / "f.duckdb", rows, [])
+    w = duckdb.connect(str(tmp_path / "f.duckdb"))
+    w.execute("ALTER TABLE mints ADD COLUMN create_tx UBIGINT")
+    w.execute("UPDATE meta SET json = ?", [json.dumps({"ms_per_slot": {str(LO // 432_000): MS}, "period": "forward", "slot_start": LO, "slot_end_exclusive": LO + 60_000})])
+    w.close()
+    _store(tmp_path / "d.duckdb", rows, [])
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    with pytest.raises(ValueError):   # no flag: the dev guard refuses a window into the hold-out, forward store or not
+        X.run(LO, common.HOLDOUT_START + 1, str(tmp_path / "o0"), store=str(tmp_path / "f.duckdb"), cfg="/nonexistent.yaml")
+    with pytest.raises(ValueError):   # the flag on real slots: the store starts before epoch 1064
+        X.run(LO, LO + 5_000, str(tmp_path / "o1"), store=str(tmp_path / "f.duckdb"), cfg="/nonexistent.yaml", forward=True)
+    monkeypatch.setattr(common, "FORWARD_START", LO)
+    with pytest.raises(ValueError):   # a dev store with the flag
+        X.run(LO, LO + 5_000, str(tmp_path / "o2"), store=str(tmp_path / "d.duckdb"), cfg="/nonexistent.yaml", forward=True)
+    info = X.run(LO, LO + 5_000, str(tmp_path / "o3"), store=str(tmp_path / "f.duckdb"), cfg="/nonexistent.yaml", forward=True)
+    assert info["forward"] is True and info["cap"] == LO + 60_000 and info["hi_ext"] <= LO + 60_000 and info["entries"] >= 1
+    assert runners.CAP == LO + 60_000
+    runners.window(duckdb.connect(str(tmp_path / "d.duckdb")), LO, LO + 5_000)   # back to the dev cap for other tests
+    assert runners.CAP == common.HOLDOUT_START
