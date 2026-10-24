@@ -35,7 +35,8 @@ lp_legs.parquet (every LP deposit / withdraw leg of a SOL-priced pool with the S
 the report's LP-drain section) and venue_flows.parquet (per venue kind: venue fees that left in SOL, network fees, the traders' net cash, SOL in
 the venues at the start and the end, and the SOL that entered from outside the trades (LP deposits minus
 withdrawals; a pool's opening deposit is the pre-depth of its first trade); network fees are not split per
-venue (they are per transaction and already summed per wallet x day); the zero-sum identity is cash_all + venue_fees + (sol_end - sol_start) - external_in = 0). Slots stay before the hold-out. Heavy: NAS.
+venue (they are per transaction and already summed per wallet x day); the zero-sum identity is cash_all + venue_fees + (sol_end - sol_start) - external_in = 0). Slots stay before the hold-out; --forward instead reads a
+forward store from epoch 1064 on (common.forward_guard; owner, 2026-10-24). Heavy: NAS.
 """
 
 import argparse
@@ -44,7 +45,7 @@ import os
 import sys
 import time
 
-from .common import OUT_ROOT, SOL, Clock, connect, git_commit, guard, regime_label
+from .common import OUT_ROOT, SOL, Clock, connect, forward_guard, git_commit, guard, regime_label, store_meta
 
 SNIPE_SLOTS = 3
 EXIT_SHARE = 0.10
@@ -299,11 +300,14 @@ def build_side_tables(con, lo, hi):
       LEFT JOIN ext e ON e.venue = f.venue""")
 
 
-def run(lo, hi, out_dir, buckets=8, store=None):
+def run(lo, hi, out_dir, buckets=8, store=None, forward=False):
     t0 = time.time()
-    guard(hi)
+    if not forward:
+        guard(hi)
     mem = os.environ.get("LAB_WALLETS_MEMORY", "1GB")
     con = connect(store, memory=mem) if store else connect(memory=mem)
+    if forward:
+        forward_guard(lo, hi, store_meta(con))
     os.makedirs(out_dir, exist_ok=True)
     day_bounds(con)
     days = period_days(con, lo, hi)
@@ -324,7 +328,7 @@ def run(lo, hi, out_dir, buckets=8, store=None):
     info = {"slots": [lo, hi], "buckets": buckets, "marks": n_marks, "mark_ranges": mark_ranges, "days": days,
             "wallet_days": sum(c[0] for c in counts),
             "wallets": sum(c[1] for c in counts), "dust_lamports": DUST, "snipe_slots": SNIPE_SLOTS, "exit_share": EXIT_SHARE,
-            "commit": git_commit(), "seconds": round(time.time() - t0, 1)}
+            "forward": forward, "commit": git_commit(), "seconds": round(time.time() - t0, 1)}
     with open(os.path.join(out_dir, "run-money.json"), "w") as f:
         json.dump(info, f, indent=1)
     return info
@@ -336,8 +340,12 @@ def main():
     ap.add_argument("--to-slot", type=int, required=True)
     ap.add_argument("--buckets", type=int, default=8)
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "money-v1"))
+    ap.add_argument("--forward", action="store_true",
+                    help="a forward store from epoch 1064 on, slots inside it (common.forward_guard), instead of the dev-only guard")
     a = ap.parse_args()
-    print(json.dumps(run(a.from_slot, a.to_slot, a.out, a.buckets)), file=sys.stderr)
+    if a.forward and a.out == ap.get_default("out"):
+        ap.error("--forward writes into its own --out, never the development money-v1")
+    print(json.dumps(run(a.from_slot, a.to_slot, a.out, a.buckets, forward=a.forward)), file=sys.stderr)
 
 
 if __name__ == "__main__":

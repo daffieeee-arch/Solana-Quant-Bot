@@ -13,27 +13,28 @@ S0 = 1033 * 432_000
 BT0 = 1789084800  # 2026-09-11 00:00 UTC
 
 
-def _store(path):
+def _store(path, s0=S0, period=None):
     con = duckdb.connect(str(path))
     con.execute("CREATE TABLE meta (json VARCHAR)")
-    con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"slot_start": S0, "slot_end_exclusive": S0 + 432_000, "ms_per_slot": {str(S0 // 432_000): 400.0}})])
-    con.execute(f"CREATE TABLE blocks AS SELECT {S0} + i AS slot, ({BT0} + i * 0.4)::BIGINT AS block_time FROM range(0, 30000) t(i)")  # 9000 slots per hour at 400 ms
+    con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"slot_start": s0, "slot_end_exclusive": s0 + 432_000, "ms_per_slot": {str(s0 // 432_000): 400.0},
+                                                      **({"period": period} if period else {})})])
+    con.execute(f"CREATE TABLE blocks AS SELECT {s0} + i AS slot, ({BT0} + i * 0.4)::BIGINT AS block_time FROM range(0, 30000) t(i)")  # 9000 slots per hour at 400 ms
     con.execute("CREATE TABLE pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR, quote_mint VARCHAR, mint VARCHAR, create_slot BIGINT)")
-    con.execute("INSERT INTO pools VALUES ('N', 'sol', 'normal', 'So1', 'MN', ?), ('R', 'reversed', 'reversed', NULL, 'MR', ?), ('O', 'other', 'normal', 'USDC', 'MO', ?)", [S0, S0, S0])
+    con.execute("INSERT INTO pools VALUES ('N', 'sol', 'normal', 'So1', 'MN', ?), ('R', 'reversed', 'reversed', NULL, 'MR', ?), ('O', 'other', 'normal', 'USDC', 'MO', ?)", [s0, s0, s0])
     con.execute("CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, token_buy BOOLEAN, sol_amount BIGINT, farmer BOOLEAN, "
                 "b BIGINT, e BIGINT, vault BIGINT, vq BIGINT, base BIGINT, e_delta BIGINT, quote_user BIGINT, lp_bps INTEGER, protocol_bps INTEGER, creator_bps INTEGER, cashback_bps INTEGER)")
     H = 9000
     rows = [
         # N, hour 0: a buy (post e 101, b 0.99e12, vq 1 SOL -> depth 100 SOL real, price 101e9/0.99e12), then a sell later in the hour (post e 100, b 1e12)
-        ("buy", "N", S0 + 10, 1, 0, 0, True, 1 * SOL, False, 10**12, 100 * SOL, 99 * SOL, 1 * SOL, 10**10, 1 * SOL, 1 * SOL),
-        ("sell", "N", S0 + 20, 1, 0, 0, False, 1 * SOL, True, 99 * 10**10, 101 * SOL, 100 * SOL, 1 * SOL, 10**10, -1 * SOL, 1 * SOL),
+        ("buy", "N", s0 + 10, 1, 0, 0, True, 1 * SOL, False, 10**12, 100 * SOL, 99 * SOL, 1 * SOL, 10**10, 1 * SOL, 1 * SOL),
+        ("sell", "N", s0 + 20, 1, 0, 0, False, 1 * SOL, True, 99 * 10**10, 101 * SOL, 100 * SOL, 1 * SOL, 10**10, -1 * SOL, 1 * SOL),
         # N, hour 1: one trade then an LP withdraw of 50 SOL: close from the trade, depth from the withdraw (vault 101 - 50 = 51)
-        ("buy", "N", S0 + H + 5, 1, 0, 0, True, 2 * SOL, False, 10**12, 100 * SOL, 99 * SOL, 1 * SOL, 2 * 10**10, 2 * SOL, 2 * SOL),
-        ("withdraw", "N", S0 + H + 9, 1, 0, 0, None, 0, None, 98 * 10**10, 102 * SOL, 101 * SOL, None, 10**11, None, 50 * SOL),
+        ("buy", "N", s0 + H + 5, 1, 0, 0, True, 2 * SOL, False, 10**12, 100 * SOL, 99 * SOL, 1 * SOL, 2 * 10**10, 2 * SOL, 2 * SOL),
+        ("withdraw", "N", s0 + H + 9, 1, 0, 0, None, 0, None, 98 * 10**10, 102 * SOL, 101 * SOL, None, 10**11, None, 50 * SOL),
         # R, hour 2: a token buy = pool sell of WSOL (post b 110, e 0.9e15 -> price 110e9/0.9e15, depth 110 SOL)
-        ("sell", "R", S0 + 2 * H + 1, 1, 0, 0, True, 10 * SOL, False, 100 * SOL, 10**15, 10**15, 0, 10 * SOL, -10**14, 10 * SOL),
+        ("sell", "R", s0 + 2 * H + 1, 1, 0, 0, True, 10 * SOL, False, 100 * SOL, 10**15, 10**15, 0, 10 * SOL, -10**14, 10 * SOL),
         # O (USDC quote), hour 0: a buy with the quote in USDC units (6 decimals): post e 1,010 USDC, b 0.99e12
-        ("buy", "O", S0 + 30, 1, 0, 0, True, 10 * 10**6, False, 10**12, 1000 * 10**6, 1000 * 10**6, 0, 10**10, 10 * 10**6, 10 * 10**6),
+        ("buy", "O", s0 + 30, 1, 0, 0, True, 10 * 10**6, False, 10**12, 1000 * 10**6, 1000 * 10**6, 0, 10**10, 10 * 10**6, 10 * 10**6),
     ]
     con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 20, 5, 0, NULL)", [r for r in rows if r[0] != "withdraw"])
     con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL)", [r for r in rows if r[0] == "withdraw"])
@@ -63,3 +64,32 @@ def test_hours_on_the_mini_store(tmp_path, monkeypatch, capfd):
     assert pools["O"]["quote_class"] == "other" and pools["O"]["quote_mint"] == "USDC" and len(pools) == 3
     info = json.load(open(out / "run-runner-hours.json"))
     assert info["rows"] == 4 and info["pools"] == 3 and info["hours"] == 4 and "hours in blocks" in capfd.readouterr().err
+
+
+def test_forward_reads_forward_stores_from_1064_only(tmp_path, monkeypatch):
+    """--forward (owner, 2026-10-24): the mini store moved to epoch 1064 as a forward store gives the same hours; without
+    --forward the dev guard refuses it, and --forward refuses a dev store and a forward store that starts before 1064."""
+    from wallets.common import FORWARD_START
+
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    monkeypatch.setenv("LAB_MARKOUT_BUCKETS", "2")
+    _store(tmp_path / "dev.duckdb")
+    _store(tmp_path / "fwd.duckdb", s0=FORWARD_START, period="forward")
+    _store(tmp_path / "fwd1053.duckdb", s0=454_896_000, period="forward")
+
+    def run(store, *args):
+        monkeypatch.setattr(rh, "STORE", str(tmp_path / store))
+        rh.main([str(tmp_path / store.replace(".duckdb", "-" + "-".join(a.strip("-") for a in args))), *args])
+
+    for store, args, match in (("fwd.duckdb", (), "reaches into the hold-out"), ("dev.duckdb", ("--forward",), "forward stores only"),
+                               ("fwd1053.duckdb", ("--forward",), "before epoch 1064")):
+        with pytest.raises(ValueError, match=match):
+            run(store, *args)
+    assert {p.name for p in tmp_path.iterdir()} - {"spill"} == {"dev.duckdb", "fwd.duckdb", "fwd1053.duckdb"}  # nothing written
+    run("dev.duckdb")
+    run("fwd.duckdb", "--forward")
+    con = duckdb.connect()
+    hours = lambda d: con.execute(f"SELECT * EXCLUDE (last_slot) FROM '{tmp_path / d / 'hours.parquet'}' ORDER BY ALL").fetchall()  # noqa: E731
+    assert len(hours("fwd-forward")) == 4 and hours("fwd-forward") == hours("dev-")
+    j = json.load(open(tmp_path / "fwd-forward" / "run-runner-hours.json"))
+    assert (j["period"], j["forward"], j["slot_end_exclusive"]) == ("forward", True, FORWARD_START + 432_000)
