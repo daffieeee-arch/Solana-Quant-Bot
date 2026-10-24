@@ -59,8 +59,11 @@ log = logging.getLogger("paper.live")
 # them to BIGINT, so one row outside its range (a token with a raw supply above 2^63 - 1: E20's base reserves of
 # 9,991,111,111,970,383,772 in epoch 1061) raised there, and lab-paper would exit on the same segment at every restart.
 # A pool with such a row is left out from that segment on, inside the table scan (before any cast): its rows give no
-# event and no history, it is counted (int64_pools, int64_pool_rows) and logged. Not kept across a restart: the 36 h
-# replay finds the pool again only while the row is inside it.
+# event and no history, it is counted (int64_pools; int64_pool_rows: all its rows a chunk leaves out) and logged. Not
+# kept across a restart: the 36 h replay finds the pool again only while the row is inside it. Also as #555's store:
+# virtual quote reserves of 2^63 or more (which _pool_trades' TRY_CAST turned into 0, the pool trading on) leave the pool
+# out, and so does a boost whose quote amount exceeds the reserves after it (the vault's UBIGINT subtraction would
+# raise). The curve tables need no guard: _curve_trades casts to HUGEINT (a pump token's supply is fixed at 1e15).
 I64_MAX = 2 ** 63 - 1
 POOL_TABLES = ("pump_amm/BuyEvent", "pump_amm/SellEvent", "pump_amm/BoostBuyAndBurnEvent", "pump_amm/WithdrawEvent",
                "pump_amm/DepositEvent")
@@ -129,6 +132,8 @@ def int64_select(c):
                   "TRY_CAST(virtual_quote_reserves AS HUGEINT)",
                   "(real_quote_reserves_after::HUGEINT - quote_amount_in_used) + COALESCE(TRY_CAST(virtual_quote_reserves AS BIGINT), 0)",
                   "base_amount_burned", "quote_amount_in_used", "boost_vault_remaining")
+        # the vault is a UBIGINT difference: below 0 it raises before any cast
+        g += " AND COALESCE(real_quote_reserves_after >= quote_amount_in_used, true)"
         parts.append(f"SELECT 'boost' AS kind, pool FROM {boost} WHERE NOT ({g})")
     for kind, t, base, quote, lp in (("withdraw", "pump_amm/WithdrawEvent", "base_amount_out", "quote_amount_out", "lp_token_amount_in"),
                                      ("deposit", "pump_amm/DepositEvent", "base_amount_in", "quote_amount_in", "lp_token_amount_out")):
@@ -617,7 +622,8 @@ class LiveFeed(Feed):
                             self.pool_class.get(pool, ("not known",))[0], n, kinds, self.stats["int64_pools"])
 
     def _int64_rows(self, c):
-        """Rows of the guard's pools this chunk leaves out (every pool table, the boost crank's inner buys aside)."""
+        """All rows of the guard's pools this chunk leaves out, in range or not (every pool table, the boost crank's
+        inner buys aside)."""
         n = 0
         for t in POOL_TABLES if self.int64_pools else ():
             src = c.src(t)

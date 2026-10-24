@@ -4,6 +4,7 @@ same segment at every restart. Three synthetic segments built from the repo's sm
 the guard leaves such a pool out from its first such row on (events, backfill history), counts and logs it, and every
 other pool's events and history equal a run in which those rows never existed. No store, no recorder data."""
 
+import inspect
 import json
 import os
 
@@ -12,6 +13,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from backtest import store
 from backtest.store import Chunk
 from paper import live
 from paper.live import LiveFeed, int64_select, pool_select, segment_dirs
@@ -143,9 +145,10 @@ def test_int64_select_flags_each_cast_class(tmp_path):
         os.makedirs(tmp_path / "pump_amm" / t)
         con.execute(f"COPY ({' UNION ALL '.join(parts)}) TO '{tmp_path / 'pump_amm' / t / 'part-0.parquet'}' (FORMAT parquet)")
     u = lambda xs: pa.array(xs, pa.uint64())  # noqa: E731
-    boost = {"slot": u([1, 1, 1]), "pool": ["o0", "o1", "o2"], "base_reserves_after": u([5, HUGE, 5]), "base_amount_burned": u([1, 1, 1]),
-             "real_quote_reserves_after": u([9, 9, 9]), "quote_amount_in_used": u([2, 2, 2]), "virtual_quote_reserves": ["7", "7", "7"],
-             "boost_vault_remaining": u([3, 3, HUGE])}
+    # o3: quote used above the reserves after it (the vault's UBIGINT difference would raise); o4: equal, a vault of 0
+    boost = {"slot": u([1] * 5), "pool": ["o0", "o1", "o2", "o3", "o4"], "base_reserves_after": u([5, HUGE, 5, 5, 5]),
+             "base_amount_burned": u([1] * 5), "real_quote_reserves_after": u([9, 9, 9, 5, 7]), "quote_amount_in_used": u([2, 2, 2, 7, 7]),
+             "virtual_quote_reserves": ["7"] * 5, "boost_vault_remaining": u([3, 3, HUGE, 3, 3])}
     os.makedirs(tmp_path / "pump_amm" / "BoostBuyAndBurnEvent")
     pq.write_table(pa.table(boost), str(tmp_path / "pump_amm" / "BoostBuyAndBurnEvent" / "part-0.parquet"))
     for t, kind, base, quote, lp in (("WithdrawEvent", "w", "base_amount_out", "quote_amount_out", "lp_token_amount_in"),
@@ -157,5 +160,11 @@ def test_int64_select_flags_each_cast_class(tmp_path):
         pq.write_table(pa.table(tab), str(tmp_path / "pump_amm" / t / "part-0.parquet"))
     c = Chunk((0, 10 ** 12, str(tmp_path)))
     got = sorted(duckdb.connect().execute(f"SELECT pool FROM ({int64_select(c)})").fetchall())
-    assert [p for (p,) in got] == ["b1", "b2", "b3", "b5", "b6", "d1", "d2", "d3", "d4", "d5", "d6", "o1", "o2",
+    assert [p for (p,) in got] == ["b1", "b2", "b3", "b5", "b6", "d1", "d2", "d3", "d4", "d5", "d6", "o1", "o2", "o3",
                                    "s1", "s2", "s3", "s4", "w1", "w2", "w3", "w4", "w5", "w6"]
+    # _pool_other's boost vault, (real_quote_reserves_after - quote_amount_in_used)::BIGINT, raises on o3 and not on o4.
+    vault = f"SELECT (real_quote_reserves_after - quote_amount_in_used)::BIGINT FROM {c.src('pump_amm/BoostBuyAndBurnEvent')} WHERE pool = "
+    assert "(real_quote_reserves_after - quote_amount_in_used){B} AS vault" in inspect.getsource(store._pool_other)
+    assert con.execute(vault + "'o4'").fetchall() == [(0,)]
+    with pytest.raises(duckdb.OutOfRangeException, match="Overflow in subtraction of UINT64"):
+        con.execute(vault + "'o3'").fetchall()
