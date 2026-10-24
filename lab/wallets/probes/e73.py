@@ -74,7 +74,10 @@ def triggers(con, clock):
             if key not in last or slot >= last[key] + cool_slots:
                 trig.append((key, cell, slot))
                 last[key] = slot
-        con.execute(f"CREATE OR REPLACE TEMP TABLE trig_{cell} AS SELECT * FROM (VALUES " + (", ".join(f"('{a}', '{b}', {c})" for a, b, c in trig) if trig else "(NULL, NULL, NULL)") + ") v(key, moment, t)" + ("" if trig else " WHERE key IS NOT NULL"))
+        # typed on both paths: an untyped (NULL, NULL, NULL) made trig_all's key an INTEGER when every cell was empty, and the
+        # harness's "m.mint IN (SELECT key FROM trig_all)" failed to bind (E73 window 446256000 before the first good day, 2026-10-24)
+        values = ", ".join(f"('{a}'::VARCHAR, '{b}'::VARCHAR, {c}::UBIGINT)" for a, b, c in trig) if trig else "(NULL::VARCHAR, NULL::VARCHAR, NULL::UBIGINT)"
+        con.execute(f"CREATE OR REPLACE TEMP TABLE trig_{cell} AS SELECT * FROM (VALUES {values}) v(key, moment, t)" + ("" if trig else " WHERE key IS NOT NULL"))
         parts.append(f"SELECT key, moment, t FROM trig_{cell}")
         R.progress(f"E73 {cell}: candidates {len(rows)}, triggers after cooldown {len(trig)}")
     con.execute("CREATE OR REPLACE TEMP TABLE trig_all AS " + " UNION ALL ".join(parts))

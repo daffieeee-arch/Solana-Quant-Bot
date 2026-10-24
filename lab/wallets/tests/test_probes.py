@@ -283,3 +283,47 @@ def test_probes_run_forward_flag_is_wired_through_the_harness(tmp_path, monkeypa
         assert H.FORWARD is False and R.CAP == common.HOLDOUT_START
     finally:
         H.FORWARD = False
+
+
+def test_e73_empty_window_writes_an_empty_result_instead_of_crashing(tmp_path, monkeypatch):
+    """E73 on the NAS (99zzzzz79) crashed in window 446256000: the good set's days (19 Sep on) lie after the window, so every
+    cell had 0 candidates and the untyped empty VALUES made trig_all.key an INTEGER -> BinderException in the harness's
+    m.mint IN (SELECT key FROM trig_all). An empty window must give an empty result file with rows 0 and typed triggers."""
+    import json
+    import duckdb
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from wallets.probes import e73
+    rows, states = _mini(tmp_path)
+    w = duckdb.connect(str(tmp_path / "s.duckdb"))
+    w.execute("ALTER TABLE mints ADD COLUMN quote_mint VARCHAR")
+    w.execute(f"UPDATE mints SET quote_mint = '{e73.SYS}'")
+    w.close()
+    good = tmp_path / "good-days.parquet"   # a good set whose only day lies years after the fixture window: no good buy in it
+    pq.write_table(pa.table({"wallet": ["W0", "W1"], "day": ["2030-01-01", "2030-01-01"]}), good)
+    monkeypatch.setenv("LAB_E73_GOOD", str(good))
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    con, clock = H.open_store(str(tmp_path / "s.duckdb"), "500MB", 1)
+    out = tmp_path / "out"
+    path, info = e73.run(con, LO, LO + 5_000, clock, 0.5, TX, str(out))
+    assert info["rows"] == 0 and info["good_buys"] == 0 and info["good_wallet_days"] == 2
+    assert con.execute("SELECT count(*) FROM trig_all").fetchone()[0] == 0
+    assert [t[1] for t in con.execute("DESCRIBE trig_all").fetchall()] == ["VARCHAR", "VARCHAR", "UBIGINT"]
+    assert con.execute(f"SELECT count(*) FROM read_parquet('{path}')").fetchone()[0] == 0
+    assert json.load(open(out / f"run-e73-{LO}.json"))["rows"] == 0
+
+
+def test_e73_triggers_keep_their_types_when_some_cells_are_empty():
+    """One cell with a trigger, the others empty: the UNION ALL stays VARCHAR / VARCHAR / UBIGINT (no INTEGER key)."""
+    import duckdb
+    from wallets.common import Clock
+    from wallets.probes import e73
+    con = duckdb.connect()
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("INSERT INTO meta VALUES (?)", ['{"ms_per_slot": {"1040": 250.0}}'])
+    lo = 1040 * 432_000
+    con.execute("CREATE TABLE gb (key VARCHAR, slot UBIGINT, ord UBIGINT, trader VARCHAR)")
+    con.executemany("INSERT INTO gb VALUES (?, ?, ?, ?)", [("A", lo, lo * 1000, "W1"), ("A", lo + 400, (lo + 400) * 1000, "W2")])   # 100 s apart: only k2n120
+    e73.triggers(con, Clock.from_store(con))
+    assert con.execute("SELECT key, moment, t FROM trig_all").fetchall() == [("A", "k2n120", lo + 400)]
+    assert [t[1] for t in con.execute("DESCRIBE trig_all").fetchall()] == ["VARCHAR", "VARCHAR", "UBIGINT"]
