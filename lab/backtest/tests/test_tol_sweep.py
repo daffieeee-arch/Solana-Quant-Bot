@@ -72,7 +72,7 @@ def test_the_sweep_and_its_gates(lab):
     out = os.path.join(lab["root"], "out")
     assert ts.main(["--parts", *lab["parts"], "--e63-json", lab["e63_json"], "--c3-keys", lab["keys"], "--out", out, "--memory", "1GB"]) == 0
     res = json.load(open(os.path.join(out, "tol.json")))
-    assert {k: v["status"] for k, v in res["gates"].items()} == {"T1": "GREEN", "T2": "GREEN", "T3": "GREEN"}
+    assert {k: v["status"] for k, v in res["gates"].items()} == {"T0": "GREEN", "T1": "GREEN", "T2": "GREEN", "T3": "GREEN"}
     assert res["gates"]["T1"]["cells"] == 2 * 2 * 2  # 2 leads x 2 sizes x 2 scenarios
     h5 = {(c["tol"], c["size"], c["scenario"]): c for c in res["leads"]["H5"]["cells"]}
     # H5 is organic: A, B, D (C is flagged); D drains (proceeds 5 % of cost); A's exit was retried.
@@ -104,3 +104,30 @@ def test_a_differing_e63_cell_is_red(lab):
     json.dump(e63, open(lab["e63_json"], "w"))
     out = os.path.join(lab["root"], "out2")
     assert ts.main(["--parts", *lab["parts"], "--e63-json", lab["e63_json"], "--c3-keys", lab["keys"], "--out", out, "--memory", "1GB"]) == 1
+
+
+def test_t0_pins_the_engine_and_the_cost_defaults(tmp_path):
+    assert ts.engine_check()["status"] == "GREEN"  # this checkout's engine is E63's (d15ac45)
+    here = os.path.dirname(ts.__file__)
+    copy = tmp_path / "backtest"
+    copy.mkdir()
+    for n in ts.ENGINE_SHA256:
+        (copy / n).write_bytes(open(os.path.join(here, n), "rb").read())
+    (copy / "venues.py").write_bytes((copy / "venues.py").read_bytes() + b"\n# changed\n")
+    res = ts.engine_check(here=str(copy))
+    assert res["status"] == "RED" and list(res["differ"]) == ["venues.py"]
+    other = tmp_path / "defaults.yaml"
+    other.write_text("costs: {}\n")
+    assert "week2-defaults.yaml" in ts.engine_check(defaults=str(other))["differ"]
+
+
+def test_the_split_by_leg_adds_up():
+    def row(pool, t, pnl, proceeds, failed=False, cost=100):
+        return (t, t + 5, t + 4, 3, cost, pnl, failed, "2026-09-12", pool, proceeds, 270.0)
+    ref = [row("A", 1, 10, 110), row("B", 2, -5, 95), row("C", 3, 0, 0, failed=True), row("D", 4, -95, 5)]
+    tol = [row("A", 1, 12, 112), row("B", 2, 0, 0, failed=True), row("C", 3, 20, 120), row("E", 9, -99, 1)]
+    x = ts.split(tol, ref, 1)
+    assert (x["new"]["n"], x["lost"]["n"], x["common"]["n"]) == (2, 2, 1)  # new C, E; lost B, D; common A
+    assert x["new"]["drain_pct"] == 50.0 and x["lost"]["drain_pct"] == 50.0
+    assert x["common"]["d_sol_day"] == 2 / 1e9 and x["common"]["entry_cost_differs"] == 0
+    assert abs(x["new"]["sol_day"] - x["lost"]["sol_day"] + x["common"]["d_sol_day"] + x["failed_fees_d_sol_day"] - x["total_d_sol_day"]) < 1e-12

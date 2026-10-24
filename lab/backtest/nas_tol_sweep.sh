@@ -6,7 +6,7 @@
 #
 #   LAB_PY=/lab/venv/bin/python bash lab/backtest/nas_tol_sweep.sh
 #
-# Safeguards (as nas_racing_cost.sh): dev only (the store's meta window and max block slot, a clean store path refused,
+# Safeguards (as nas_racing_cost.sh, plus T0: the engine files and week2-defaults.yaml equal E63's d15ac45): dev only (the store's meta window and max block slot, a clean store path refused,
 # check_run on every run); the inputs sha256-pinned; the job starts only at or before START_DEADLINE (default Sat
 # 2026-10-24T08:00:00Z) and its process group is killed at KILL_AT (default 2026-10-24T09:45:00Z: the NAS is the
 # Saturday clean runs' from 10:00Z); its own spill dir under /lab/tmp/ or $DATA/tmp/, removed on every exit path.
@@ -128,7 +128,11 @@ pin "$E63/config.json" c5fcd78ef083b67fe0bb326bee4b546fe11d937354f83ed7b18dfa660
 pin "$E63_JSON" 8adfda647cf914c4c6c04537418726ea8a36280862777f120fea2cefa1de0c6e "E63's report (ceiling-report-b149a7d)"
 pin "$C3_KEYS" 1a274ec60a5610f8abf22b70aed23266feaad8559fd79df77f35d8862fb10a23 "the C3 keys"
 ls "$E63"/parts/*.parquet > /dev/null 2>&1 || red "no parts in $E63"
-log "guards: dev2 only, inputs pinned, E63 $(ls "$E63"/parts/*.parquet | wc -l) parts"
+# T0 (LAB review of the plan): the engine files and the cost defaults are E63's (d15ac45), byte for byte, before any run.
+rc=0
+(cd "$REPO/lab" && "$PY" -m backtest.tol_sweep --check-engine) >> "$OUT/job.log" 2>&1 || rc=$?
+[ "$rc" = 0 ] || red "T0: the engine or the cost defaults differ from E63's d15ac45 (job.log): rerun tol 0.05 instead of reusing it"
+log "guards: dev2 only, inputs pinned, T0 GREEN, E63 $(ls "$E63"/parts/*.parquet | wc -l) parts"
 
 setsid bash "$0" --pipeline &
 PG=$!
