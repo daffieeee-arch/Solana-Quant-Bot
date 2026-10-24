@@ -81,6 +81,7 @@ def triggers(con, clock):
 
 
 def run(con, lo, hi, clock, size_sol, cost_tx, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
     cached = good_days(con, out_dir)
     R.progress(f"E73 good set: {R._count(con, 'good')} wallet-days from {cached}: " + str(con.execute("SELECT day, count(*) FROM good GROUP BY 1 ORDER BY 1").fetchall()))
     # buys by good wallets in the window, with the day of the buy; key = curve mint / normal-pool mint / reversed pool
