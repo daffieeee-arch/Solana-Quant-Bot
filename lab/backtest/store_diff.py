@@ -18,8 +18,11 @@ negative BIGINT hashes apart from the same HUGEINT; both numeric: DECIMAL(38,10)
 apart. Where the hashes differ, a keyed diff counts the rows only in A, only in B and per column the paired rows that
 differ, with a few keys each. Columns that do not repeat between two builds of the same input are compared apart,
 keyed, informational: arg_max over a tie in the last slot (pools.coin_creator; pool_stats.last_b, last_vault,
-coin_creator), any_value (mints.pool; pools.mint where mint_source IS NULL, i.e. more than one link) and pools.part
-(ntile over each store's own pool set: dev2 used LAB_POOL_PARTS=16, the clean build 4).
+coin_creator), any_value (mints.pool; pools.mint where mint_source IS NULL, i.e. more than one link; pools.mint_source's
+link event, any_value over the link rows of a pool without a create event whose one mint more than one event table
+names: only its class, create_pool, link or NULL, is hashed) and pools.part (ntile over each store's own pool set: dev2
+used LAB_POOL_PARTS=16, the clean build 4). The two stores are never the same file (a link included): a store compared
+with itself is always equal.
 
 GREEN rule, pinned before any run (the map's C1, C2 and C4 with its checker's corrections):
   Every check: A's meta.excluded_pools_int64.pools = 0 (be47fc4 leaves out a pool with a u64 amount outside BIGINT,
@@ -73,7 +76,9 @@ KEYS = {"blocks": ("slot",), "mints": ("mint",), "curve": ("mint", "slot", "tx_i
         "pool_sweeps": ("pool", "slot", "tx_index", "outer_ix", "inner_ix"),
         "pool_class_daily": ("day", "quote_class", "mayhem")}
 APART = {"pools": ("coin_creator", "part"), "pool_stats": ("last_b", "last_vault", "coin_creator"), "mints": ("pool",)}
-MASK = {("pools", "mint"): 'CASE WHEN "mint_source" IS NULL THEN NULL ELSE "mint" END'}  # any_value over links: apart
+MASK = {("pools", "mint"): 'CASE WHEN "mint_source" IS NULL THEN NULL ELSE "mint" END',  # any_value over links: apart
+        ("pools", "mint_source"):  # the link event is any_value over the links: only the class is hashed, the event apart
+        """CASE WHEN "mint_source" IS NULL OR "mint_source" = 'create_pool' THEN "mint_source" ELSE 'link' END"""}
 EMPTY_OK = ("pool_sweeps",)
 INTS = ("TINYINT", "SMALLINT", "INTEGER", "BIGINT", "HUGEINT", "UTINYINT", "USMALLINT", "UINTEGER", "UBIGINT")
 POOL_COLS = ("quote_class", "orientation", "quote_mint", "mint", "mint_source", "mayhem", "mayhem_source", "create_slot",
@@ -116,14 +121,21 @@ def _guard_window(lo, hi):
 
 def connect(stores, spill, memory="1GB", threads=2):
     """(con, metas): an in-memory connection with each store of {name: path} ATTACHed READ_ONLY under its name, and
-    their metas (guarded: dev stores only). Spill goes to `spill`, never beside a store: a bare read-only connect
-    spills to <store>.tmp (store/dev2.duckdb.tmp)."""
+    their metas (guarded: dev stores only; no two names the same file, a symlink or hard link included: DuckDB attaches
+    one file twice READ_ONLY and the comparison is then equal by construction). Spill goes to `spill`, never beside a
+    store: a bare read-only connect spills to <store>.tmp (store/dev2.duckdb.tmp)."""
     if not re.fullmatch(r"\d+(\.\d+)?\s*[KMGT]i?B", memory):
         raise SystemExit(f"memory {memory!r}: e.g. 1GB")
     if not spill:
         raise SystemExit("pass --spill (or set LAB_SPILL_DIR)")
     spill = os.path.realpath(spill)
     reals = {name: _guard_path(p) for name, p in stores.items()}
+    names = list(reals)
+    for i, x in enumerate(names):
+        for y in names[i + 1:]:
+            if os.path.samefile(reals[x], reals[y]):
+                raise SystemExit(f"{stores[x]} and {stores[y]} are the same store file: a store compared with itself "
+                                 "is always equal")
     for real in reals.values():
         d = os.path.dirname(real)
         if spill == d or spill.startswith(d + os.sep):
@@ -229,6 +241,9 @@ def _apart(con, table, src_a, src_b):
         out["mint (mint_source NULL)"] = con.execute(
             f"SELECT count(*) FROM {src_a} x JOIN {src_b} y ON {on} WHERE (x.mint_source IS NULL OR y.mint_source IS NULL) "
             "AND x.mint IS DISTINCT FROM y.mint").fetchone()[0]
+        out["mint_source (link event)"] = con.execute(  # a link on both sides (<> on a NULL is NULL: left out)
+            f"SELECT count(*) FROM {src_a} x JOIN {src_b} y ON {on} WHERE x.mint_source <> 'create_pool' "
+            "AND y.mint_source <> 'create_pool' AND x.mint_source <> y.mint_source").fetchone()[0]
     return out
 
 

@@ -24,15 +24,19 @@
 #                                                          of the first 24 h; read the categories)
 # Output: $DATA/backtests/store-warmup-diag-<diag7>-<EPOCH>[-<OUT_TAG>]/ (new): job.log, build and report logs, the
 # inputs/c1/c2/c4 JSON reports, c4-triggers.csv, chunks.json, SHA256SUMS. The stores are deleted after a GREEN run
-# (KEEP_S1=1 keeps S1) and kept after a RED one. Any RED: rc 1 with the reason in job.log.
-set -euo pipefail
+# (KEEP_S1=1 keeps S1) and kept after a RED one. Any RED: rc 1 with the reason in job.log (before the output directory
+# exists: on stderr), a failure inside a helper function included (set -E: the ERR trap runs in functions; in a subshell
+# or command substitution it does nothing, the caller sees the status).
+set -Eeuo pipefail
 export LC_ALL=C
 die() { echo "RED: $*" >&2; exit 1; }
+trap '[ "$BASHPID" != "$$" ] || die "unexpected failure before the output directory (line $LINENO)"' ERR
 num() { case $2 in '' | *[!0-9]*) die "$1 is not a number: $2" ;; esac; }
 DATA=${LAB_DATA_ROOT:-/home/chupa/Solana-project/data-old-faithful-one/lab}
 PY=${LAB_PY:-/lab/venv/bin/python}
 : "${NEW:?the be47fc4 checkout}" "${OLD:?the ba322be checkout}"
-NEW=$(cd "$NEW" && pwd) OLD=$(cd "$OLD" && pwd)
+NEW=$(cd "$NEW" && pwd) || die "NEW: no directory $NEW"
+OLD=$(cd "$OLD" && pwd) || die "OLD: no directory $OLD"
 DIAG=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)  # this repo: the comparator and the manifest reference
 NEW_SHA=be47fc425fc46942884db256e5c9d809a11d57a9
 OLD_SHA=ba322be60d25c50ddd1aa5107ed85d471cd711d7
@@ -87,16 +91,17 @@ sums() { (cd "$OUT" && ls | grep -v -e '\.duckdb' -e '^SHA256SUMS$' | xargs -r s
 clean_spill() {
   case $SPILL in "$TMP1"/?* | "$TMP2"/?*) rm -rf -- "$SPILL" ;; *) log "spill $SPILL not removed (unexpected path)" ;; esac
 }
-red() {  # the reason; partial stores go, finished ones stay for a follow-up diff
+red() {  # the reason; partial stores go, finished ones stay for a follow-up diff; every step runs, then rc 1
   trap - ERR
-  log "RED: $*"
+  set +e
+  log "RED: $*" || echo "RED: $*" >&2
   rm -f -- "$OUT/s0.duckdb.building" "$OUT/s0.duckdb.building.wal" "$OUT/s1.duckdb.building" "$OUT/s1.duckdb.building.wal"
   for s in "$OUT/s0.duckdb" "$OUT/s1.duckdb"; do [ ! -e "$s" ] || log "kept for follow-up: $s ($(stat -c %s "$s") bytes)"; done
-  clean_spill
-  sums
+  clean_spill || log "spill $SPILL not removed"
+  sums || log "SHA256SUMS not written"
   exit 1
 }
-trap 'red "unexpected failure (line $LINENO)"' ERR
+trap '[ "$BASHPID" != "$$" ] || red "unexpected failure (line $LINENO)"' ERR
 sha16() { sha256sum "$1" | cut -c1-16; }
 run_diff() {  # report name, store_diff.py arguments; run from the be47fc4 tree (C4 imports its strategies.py)
   local name=$1
@@ -280,6 +285,6 @@ if [ "$KEEP_S1" = 1 ]; then
 else
   rm -f -- "$OUT/s1.duckdb" "$OUT/s1.duckdb.wal"
 fi
-clean_spill
+clean_spill || red "the spill $SPILL was not removed"
 log "done: GREEN"
-sums  # after job.log's last line
+sums || red "SHA256SUMS not written"  # after job.log's last line

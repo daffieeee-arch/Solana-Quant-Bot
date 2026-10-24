@@ -1,13 +1,16 @@
 """backtest/store_diff.py on tiny synthetic stores (tests/store_diff_fixture.py): C1 equal, a changed row, a tie
-column, an any_value mint, type drift, an empty table and the u64 gate; C2's window rules (rows outside the window,
-the curve remainder, the mints look-ahead, pools as categories) and its RED cases; C4's trigger sets with the pinned
-f7_signals_sql (main's, the same SQL as be47fc4's) on in-store, older and unexplained differences; the guards (no clean
-or hold-out store, no spill beside a store), the manifest check and the CLI. No real store is opened."""
+column, an any_value mint and mint_source link event, type drift, a column on one side only, an empty table and the u64
+gate; C2's window rules (rows outside the window, the curve remainder, the mints look-ahead, pools as categories), its
+RED cases and its u64 gate; C4's trigger sets with the pinned f7_signals_sql (main's, the same SQL as be47fc4's) on
+in-store, older and unexplained differences (a column no pool attribute explains next to one that is explained) and its
+u64 gate; the guards (no clean or hold-out store, no store compared with itself, no spill beside a store, whole dev
+chunks only), the manifest check and the CLI. No real store is opened."""
 
 import hashlib
 import json
 import os
 
+import duckdb
 import pytest
 import store_diff_fixture as F
 
@@ -42,6 +45,12 @@ def triggers(tmp_path, a, b):
 
 def row(store, table, **match):
     return next(r for r in store[table] if all(r[k] == v for k, v in match.items()))
+
+
+def alter(path, sql):
+    con = duckdb.connect(path)
+    con.execute(sql)
+    con.close()
 
 
 # ----------------------------------------------------------------------------- C1
@@ -87,9 +96,27 @@ def test_c1_tie_columns_are_compared_apart_never_red(tmp_path):
     row(s0, "mints", mint="M_A")["pool"] = "P_ANY"  # any_value over two migrations
     r = full(tmp_path, a, s0)
     assert r["green"], r["red"]
-    assert r["tables"]["pools"]["apart"] == {"coin_creator": 1, "part": 1, "mint (mint_source NULL)": 1}
+    assert r["tables"]["pools"]["apart"] == {"coin_creator": 1, "part": 1, "mint (mint_source NULL)": 1,
+                                             "mint_source (link event)": 0}
     assert r["tables"]["pool_stats"]["apart"] == {"last_b": 1, "last_vault": 1, "coin_creator": 1}
     assert r["tables"]["mints"]["apart"] == {"pool": 1}
+
+
+def test_c1_the_link_event_of_mint_source_is_apart_its_class_is_compared(tmp_path):
+    # be47fc4 (and ba322be): mint_source = any_value(src) over the link rows of a pool without a create event whose one
+    # mint more than one event table names (synthetic on P_OLD)
+    a, _ = F.scenario()
+    row(a, "pools", pool="P_OLD").update(mint="M_L", mint_source="BoostBuyAndBurnEvent")
+    s0 = F.s0_like(a)
+    row(s0, "pools", pool="P_OLD")["mint_source"] = "InitBoostEvent"
+    r = full(tmp_path / "link", a, s0)
+    assert r["green"], r["red"]
+    assert r["tables"]["pools"]["apart"]["mint_source (link event)"] == 1
+    for other, cols in (("create_pool", ["mint_source"]), (None, ["mint", "mint_source"])):  # deterministic: compared
+        s0 = F.s0_like(a)
+        row(s0, "pools", pool="P_OLD")["mint_source"] = other
+        r = full(tmp_path / str(other), a, s0)
+        assert r["red"] == ["pools differs"] and sorted(r["tables"]["pools"]["diff"]["columns"]) == cols
 
 
 def test_c1_a_mint_from_the_create_event_is_not_a_tie(tmp_path):
@@ -111,6 +138,19 @@ def test_c1_type_drift_is_listed_and_the_values_still_compared(tmp_path):
     row(s0, "pool", pool="P_OLD", slot=F.LO + 2000)["e_delta"] = -11 * SOL
     r = full(tmp_path / "x", a, s0, types_b={("pool", "e_delta"): "HUGEINT"})
     assert r["red"] == ["pool differs"] and list(r["tables"]["pool"]["diff"]["columns"]) == ["e_delta"]
+
+
+def test_c1_a_column_on_one_side_only_is_red_though_it_is_never_hashed(tmp_path):
+    a, _ = F.scenario()
+    for i, (sql, one_side) in enumerate((("ALTER TABLE pools ADD COLUMN extra INTEGER", ["extra", "b"]),
+                                         ("ALTER TABLE pools DROP COLUMN can_boost", ["can_boost", "a"]))):
+        pa, pb = _paths(tmp_path / str(i), a, F.s0_like(a))
+        alter(pb, sql)
+        con, metas = D.connect({"a": pa, "b": pb}, str(tmp_path / "spill"))
+        r = D.full(con, metas)
+        t = r["tables"]["pools"]
+        assert t["hash_a"] == t["hash_b"] and t["one_side"] == [one_side]  # only the one-side gate sees it
+        assert r["red"] == ["pools differs"] and not t["equal"]
 
 
 def test_c1_an_empty_table_a_missing_table_and_the_u64_gate_are_red(tmp_path):
@@ -208,6 +248,18 @@ def test_c2_an_empty_window_is_red_not_vacuously_green(tmp_path):
     assert window(tmp_path, a, b)["red"] == ["pool has no rows in A's window"]
 
 
+def test_c2_and_c4_need_a_without_u64_exclusions(tmp_path):
+    # the OUT_TAG runs (s2, s4, s1w0) have no C1: these are their only u64 gates; an excluded pool with no rows in the
+    # window leaves no trace in the compared tables
+    a, b = F.scenario()
+    a["meta"]["excluded_pools_int64"]["pools"] = 1
+    want = [f"a: meta.excluded_pools_int64 is {a['meta']['excluded_pools_int64']!r}, not 0 pools"]
+    assert window(tmp_path / "w", a, b)["red"] == want
+    assert triggers(tmp_path / "t", a, b)["red"] == want
+    del a["meta"]["excluded_pools_int64"]
+    assert not window(tmp_path / "w2", a, b)["green"] and not triggers(tmp_path / "t2", a, b)["green"]
+
+
 def test_c2_needs_a_window_that_ends_with_a(tmp_path):
     a, b = F.scenario()
     a["meta"]["window"] = [F.LO + 216_000, F.HI]
@@ -263,6 +315,17 @@ def test_c4_a_difference_no_pool_attribute_explains_is_red(tmp_path):
     assert r["segments"]["pool_reversed"]["only_a"] == 1
 
 
+def test_c4_a_differing_column_no_pool_attribute_explains_is_red_next_to_an_explained_one(tmp_path):
+    a, b = F.scenario()
+    row(b, "pool", pool="P_OLD", slot=F.LO + 2000)["farmer"] = True  # P_OLD's mint differs (explained), its farmer too
+    r = triggers(tmp_path, a, b)
+    assert r["red"] == ["1 pool_reversed difference(s) unexplained by a pool attribute"]
+    rev = r["segments"]["pool_reversed"]
+    assert (rev["differ"], rev["in_store"], rev["explained"], rev["unexplained"]) == (1, 0, {}, 1)
+    ex = rev["examples"][0]
+    assert (ex["a"][1], ex["b"][1], ex["a"][7], ex["b"][7]) == ("P_OLD", "M_X", "False", "True")  # mint, trigger_farmer
+
+
 def test_c4_without_a_pool_reversed_trigger_in_a_is_red(tmp_path):
     a, b = F.scenario()
     for s in (a, b):
@@ -295,6 +358,40 @@ def test_guards_refuse_clean_and_holdout_stores_and_a_spill_beside_a_store(tmp_p
     ok = F.write(str(d / "a.duckdb"), a)
     with pytest.raises(SystemExit, match="lies in the store directory"):
         D.connect({"a": ok}, str(d / "spill"))
+
+
+def test_a_store_is_never_compared_with_itself(tmp_path):
+    a, _ = F.scenario()
+    d = tmp_path / "s"
+    d.mkdir()
+    x = F.write(str(d / "x.duckdb"), a)
+    os.link(x, d / "hard.duckdb")
+    os.symlink(x, d / "sym.duckdb")
+    spill = str(tmp_path / "spill")
+    for other in (x, str(d / "hard.duckdb"), str(d / "sym.duckdb")):
+        with pytest.raises(SystemExit, match="the same store file"):
+            D.connect({"a": x, "b": other}, spill)
+    with pytest.raises(SystemExit, match="the same store file"):
+        D.main(["full", x, str(d / "hard.duckdb"), "--spill", spill])
+    with pytest.raises(SystemExit, match="the same store file"):
+        D.triggers({"a": x, "b": str(d / "sym.duckdb")}, strategies, F.LO, F.HI, spill)
+
+
+@pytest.mark.parametrize("lo, hi", [(F.LO + 1, F.HI), (F.LO, F.HI - 1), (D.DEV_FIRST - 216_000, F.HI), (F.HI, F.LO),
+                                    (D.HOLDOUT_START - 216_000, D.HOLDOUT_START + 216_000)])
+def test_a_window_not_of_whole_dev_chunks_is_refused_before_anything_is_read(tmp_path, lo, hi):
+    root = tmp_path / "chunks"
+    os.makedirs(root / f"{D.HOLDOUT_START}-{D.HOLDOUT_START + 216_000}")  # a hold-out chunk dir: never opened
+    (tmp_path / "ref.json").write_text(json.dumps({"chunks": {}}))
+    with pytest.raises(SystemExit, match="must be whole dev chunks"):
+        D.inputs(str(tmp_path / "ref.json"), str(root), lo, hi)
+    a, b = F.scenario()
+    pa, pb = _paths(tmp_path, a, b)
+    con, metas = D.connect({"a": pa, "b": pb}, str(tmp_path / "spill"))
+    with pytest.raises(SystemExit, match="must be whole dev chunks"):
+        D.window(con, metas, lo, hi)
+    with pytest.raises(SystemExit, match="must be whole dev chunks"):
+        D.triggers({"a": pa, "b": pb}, strategies, lo, hi, str(tmp_path / "spill"))
 
 
 def _manifest(root, lo, hi, threads=6, rows=None, status="complete"):
