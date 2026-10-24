@@ -32,6 +32,27 @@ def guard(hi):
         raise ValueError(f"slot {hi} reaches into the hold-out (starts at {HOLDOUT_START})")
 
 
+# OF1 from epoch 1064 (Alpenglow) on is released for exploratory research (owner, 2026-10-24, ops/nas/QUEUE.md 834); the
+# hold-out (1047-1051) and the clean epochs (1055-1062, the clean root up to 1063) stay consumed. = backtest.store CLEAN's end.
+FORWARD_START = 459_648_000  # epoch 1064's first slot
+
+
+def store_meta(con):
+    return json.loads(con.execute("SELECT json FROM meta").fetchone()[0])
+
+
+def forward_guard(lo, hi, meta):
+    """--forward: instead of guard, a forward store (backtest.store's period 'forward') that starts at or after
+    FORWARD_START, and a slot range inside it. Never a dev, hold-out, clean or paper store, never a slot before 1064."""
+    period, s0, s1 = meta.get("period"), int(meta["slot_start"]), int(meta["slot_end_exclusive"])
+    if period != "forward":
+        raise ValueError(f"--forward reads forward stores only (this store's period: {period!r})")
+    if s0 < FORWARD_START:
+        raise ValueError(f"the forward store starts at {s0}, before epoch 1064 ({FORWARD_START})")
+    if not s0 <= lo < hi <= s1:
+        raise ValueError(f"slots [{lo}, {hi}) lie outside the store's [{s0}, {s1})")
+
+
 def connect(store=STORE, memory="1GB", threads=2):
     """Read-only store connection with bounded memory; spill goes to disk (never /dev/shm = RAM), at most 1 GB."""
     con = duckdb.connect(store, read_only=True)
