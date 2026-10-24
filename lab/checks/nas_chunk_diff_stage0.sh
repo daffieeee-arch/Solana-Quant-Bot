@@ -15,7 +15,8 @@
 # chunk_diff tests -> dev2's meta lists every old chunk with its manifest's extractor (read-only; INFO without dev2) ->
 # chunk_diff with the old chunks matched to the VPS footprints (lab/checks/ref/, taken 2026-10-24 on the VPS from
 # events/v1 with `python -m checks.chunk_diff footprint`, footer reads only) and the new manifests asserted
-# (extractor 5092ffa4, threads 6) -> SHA256SUMS. RED = rc 1, the reason last in job.log.
+# (extractor 5092ffa4, threads 6) -> SHA256SUMS. RED = rc 1, the reason last in job.log; a chunk_diff failure (its rc 3,
+# a kill, or rc 0/1 without that verdict in out/summary.json) is a RED that says "tool failure, not a data finding".
 # Writes $DATA/reports/diag-chunkdiff-stage0-<commit7>/: job.log, pytest.log, dev2-meta.log, chunk_diff.log, out/
 # (summary.json, report.md, diffs/, footprints.json, SHA256SUMS of its own), SHA256SUMS over all of these.
 # Overrides: LAB_DATA_ROOT, LAB_SPILL_ROOT (/lab/tmp), MEMORY (12GB), THREADS (6), BUCKETS (8), EXTRAS ("tx_ctx"; add
@@ -117,10 +118,14 @@ case "$SPILL" in  # the rm -rf target asserted first: this job's own spill direc
   /?*/diag-chunkdiff-stage0-[0-9a-f]*) rm -rf -- "$SPILL";;
   *) red "refusing to remove the spill path $SPILL";;
 esac
+verdict() { grep -q "\"verdict\": \"$1\"" "$RUN/out/summary.json" 2>/dev/null; }
 case $rc in
-  0) log "done: GREEN (out/report.md)";;
-  1) red "chunk_diff found unexpected differences (out/report.md, out/summary.json)";;
+  0) verdict GREEN || red "chunk_diff rc 0 without a GREEN out/summary.json: a tool failure (chunk_diff.log)"
+     log "done: GREEN (out/report.md)";;
+  1) verdict RED || red "chunk_diff rc 1 without a RED out/summary.json: a tool failure (an import error?), not a data finding (chunk_diff.log)"
+     red "chunk_diff found unexpected differences (out/report.md, out/summary.json)";;
   2) red "chunk_diff refused its inputs (chunk_diff.log)";;
-  *) red "chunk_diff failed with rc $rc (chunk_diff.log)";;
+  3) red "chunk_diff failed: a tool or resource failure (DuckDB memory or spill cap, an unreadable file), not a data finding (chunk_diff.log)";;
+  *) red "chunk_diff failed with rc $rc (killed? out of memory?): a tool failure, not a data finding (chunk_diff.log)";;
 esac
 sums  # after job.log's last line

@@ -29,12 +29,15 @@ A table is a directory of *.parquet below the chunk (blocks, failed_txs, pump/<E
   do not explain is unexpected (also a new value the rule would have nulled). Without the flag nothing is
   normalised; on an old side already written with fca8c80 semantics the rules change no value.
 Manifests: status complete, slot range = the directory name, coverage.missing_slots 0, the SAME_COUNTERS both
-  sides have equal, idl_sha256 equal, per side sum(blocks.executed_tx_count) = counters.txs_seen (the new side must
-  have the counter), manifest rows = parquet rows per table. --expect-new / --expect-old FIELD=VALUE assert manifest
+  sides have equal, idl_sha256 equal, a blocks table on each side (every extractor chunk writes one: a chunk without
+  it compares nothing), per side sum(blocks.executed_tx_count) = counters.txs_seen (the new side must have the
+  counter), manifest rows = parquet rows per table. --expect-new / --expect-old FIELD=VALUE assert manifest
   fields (dotted paths; VALUE compared as text or as JSON). --old-footprint FILE: the old chunk must match a
   footprint taken elsewhere (the VPS copy dev2 was built from).
 Refusals (exit 2, nothing written): a path containing "clean", "holdout" or "hold-out" (as given or resolved), an
-  output or spill path under events/ or store/, an existing --out, a chunk name or manifest reaching slot
+  output or spill path under events/ or store/, an existing --out, an empty or repeated --chunks entry, an old (or
+  --extra) chunk that resolves to the new chunk or lies inside it or around it (a chunk compared with itself is
+  trivially equal), a chunk name or manifest reaching slot
   452,304,000 (the hold-out start), a file whose slot statistics reach it (files without statistics: a scan of the
   slot column first). Rows outside the chunk's own range are unexpected.
 Memory: one DuckDB connection (--memory, --threads; spill in a new directory under --spill, capped by --spill-max
@@ -43,7 +46,9 @@ Memory: one DuckDB connection (--memory, --threads; spill in a new directory und
   the keys whose normalised row hashes differ (64-bit hashes: a collision hiding a differing row has a chance of about
   1e-12 in a 30M-row table).
 Output (--out, must not exist): summary.json, report.md, diffs/<chunk>/<table>.<category>.parquet (at most --samples
-  rows each), footprints.json, SHA256SUMS. Exit 0 = GREEN (no unexpected finding anywhere), 1 = RED, 2 = refused.
+  rows each), footprints.json, SHA256SUMS. Exit 0 = GREEN (no unexpected finding anywhere), 1 = RED, 2 = refused,
+  3 = failed: any other exception (DuckDB out of memory or over --spill-max, an unreadable parquet file) is a tool or
+  resource failure, never a data finding; it writes no summary.json and its last stderr line starts with FAILED.
 """
 
 import argparse
@@ -56,6 +61,7 @@ import shutil
 import sys
 import tempfile
 import time
+import traceback
 
 import duckdb
 
@@ -95,6 +101,12 @@ def refuse_path(path, output=False):
             raise Refused(f"{path}: a clean or hold-out path")
         if output and any(seg in ("events", "store") for seg in p.split(os.sep)):
             raise Refused(f"{path}: an output under events/ or store/")
+
+
+def nested(a, b):
+    """True when a and b resolve to the same directory or one lies inside the other."""
+    ra, rb = os.path.realpath(a).rstrip(os.sep) + os.sep, os.path.realpath(b).rstrip(os.sep) + os.sep
+    return ra.startswith(rb) or rb.startswith(ra)
 
 
 def chunk_range(name):
@@ -423,9 +435,10 @@ def manifest_checks(rng, old_m, new_m, extra_m, expect_old, expect_new):
 
 
 def row_checks(con, label, m, tabs, only=None):
-    """Manifest rows = parquet rows per table; sum(blocks.executed_tx_count) = counters.txs_seen (every transaction
-    of every delivered block was seen; the new side must have the counter)."""
-    bad = []
+    """Manifest rows = parquet rows per table; a blocks table, and sum(blocks.executed_tx_count) = counters.txs_seen
+    (every transaction of every delivered block was seen; the new side must have the counter). `only`: an --extra
+    root's tables, which need no blocks."""
+    bad = [] if only is not None or "blocks" in tabs else [f"{label}: no blocks table"]
     rows = (m or {}).get("rows") or {}
     for tb in sorted((set(rows) | set(tabs)) & (only or (set(rows) | set(tabs)))):
         n = con.execute(f"SELECT count(*) FROM read_parquet({lit(tabs[tb])}, union_by_name = true)").fetchone()[0] if tb in tabs else 0
@@ -454,12 +467,15 @@ def run(a, argv=()):
     else:
         if not (a.old_root and a.new_root and a.chunks):
             raise Refused("either --old and --new, or --old-root, --new-root and --chunks")
-        pairs = [(n, os.path.join(a.old_root, n), os.path.join(a.new_root, n)) for n in a.chunks.split(",") if n]
+        names = a.chunks.split(",")
+        if any(not n for n in names) or len(set(names)) < len(names):
+            raise Refused(f"--chunks {a.chunks!r}: an empty or repeated entry")
+        pairs = [(n, os.path.join(a.old_root, n), os.path.join(a.new_root, n)) for n in names]
     extras = {}
     for e in a.extra:
         tb, _, root = e.partition("=")
-        if not tb or not root:
-            raise Refused(f"--extra {e!r}: TABLE=ROOT")
+        if not tb or not root or tb in extras:
+            raise Refused(f"--extra {e!r}: TABLE=ROOT, one per table")
         extras[tb] = root
     for p in [p for p in (a.old, a.new, a.old_root, a.new_root, a.old_footprint) if p] + list(extras.values()):
         refuse_path(p)
@@ -472,6 +488,9 @@ def run(a, argv=()):
         for d in [o, nw] + [os.path.join(r, n) for r in extras.values()]:
             if not os.path.isdir(d):
                 raise Refused(f"no chunk directory {d}")
+        for label, d in [("--old", o)] + [(f"--extra {tb}", os.path.join(r, n)) for tb, r in extras.items()]:
+            if nested(d, nw):
+                raise Refused(f"{label} {d} and --new {nw} are one directory or nested (a chunk compared with itself)")
     mans = {n: (load_manifest(o), load_manifest(nw), {tb: load_manifest(os.path.join(r, n)) for tb, r in extras.items()})
             for n, o, nw in pairs}
     ref = None
@@ -639,6 +658,11 @@ def main(argv=None):
     except Refused as e:
         print(f"REFUSED: {e}", file=sys.stderr)
         return 2
+    except Exception as e:  # not 1: an out-of-memory or unreadable file must not read as "the chunks differ"
+        traceback.print_exc()
+        print(f"FAILED: {type(e).__name__}: {(str(e).splitlines() or [''])[0]} (a tool or resource failure, not a data finding)",
+              file=sys.stderr)
+        return 3
     print(f"{s['verdict']}: {s['unexpected']} unexpected over {len(s['chunks'])} chunk(s); {os.path.join(a.out, 'report.md')}")
     return 0 if s["verdict"] == "GREEN" else 1
 

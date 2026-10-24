@@ -6,10 +6,15 @@
 # checks.chunk_diff against the original with --normalize fca8c80 (0cfc4db2 predates fca8c80). Diagnostics only: no
 # clean verdict changes on its result and nothing is re-tuned.
 #
-#   LAB_PY=/lab/venv/bin/python bash /lab/code/repo-<sha7>/lab/checks/nas_reextract_diag.sh
+#   TRIES=1 LAB_PY=/lab/venv/bin/python bash /lab/code/repo-<sha7>/lab/checks/nas_reextract_diag.sh   # OK for ~0.35-0.45 TB
+#   TRIES=3 LAB_PY=/lab/venv/bin/python bash /lab/code/repo-<sha7>/lab/checks/nas_reextract_diag.sh   # OK for ~1.05-1.35 TB
 #
-# DOWNLOAD: ~0.35-0.45 TB from Old Faithful over the owner's line: needs the owner's explicit OK (earlier approvals named
-# epochs 1055-1063). Queue /lab/jobs-extract (xrunner, python:3.13-trixie, 7 CPU / 12G; f5dd11df needs glibc >= 2.38).
+# DOWNLOAD: ~0.35-0.45 TB from Old Faithful over the owner's line PER TRY, and TRIES (required, 1-3) tries at most: a
+# try that fails (exit 76 on a stuck slot, 3 on incomplete coverage) is not resumed, the next try downloads the whole
+# chunk again (smoke_extract.sh empties OUT with rm -rf; the extractor refuses a non-empty --out). Worst case TRIES x
+# ~0.35-0.45 TB: TRIES=3 up to ~1.05-1.35 TB. Needs the owner's explicit OK for that worst case (earlier approvals named
+# epochs 1055-1063); set TRIES to what was approved. Queue /lab/jobs-extract (xrunner, python:3.13-trixie, 7 CPU / 12G;
+# f5dd11df needs glibc >= 2.38).
 # Est. 2-3 h extraction (CPU-bound at threads 1, ~370-400 Mbit/s, proxy cap 800 Mbit/s) plus OF1 429 waits, then
 # ~15-40 min chunk_diff (DuckDB 6 GB, 4 threads). Disk: ~11-13 GB chunk + up to 40 GB spill; >= 60 GB free is checked.
 # Only while no other OF1 extraction runs anywhere on the NAS (/lab/jobs too): they share the home line, the OF1
@@ -18,10 +23,12 @@
 #
 # Steps: guards (outputs new; never under events/v1, store/ or a clean or hold-out path; the chunk only under
 # events/diag-*) -> sha256 of BIN, MINTS and /lab/ops/smoke_extract.sh -> the old chunk: complete, extractor 0cfc4db2, its
-# footprint = the VPS one (lab/checks/ref/), listed in dev2's meta -> the chunk_diff tests -> up to 3 tries of
+# footprint = the VPS one (lab/checks/ref/), listed in dev2's meta -> the chunk_diff tests -> up to TRIES tries of
 # smoke_extract.sh (threads 1 hard-coded; rm -rf of OUT inside it, OUT asserted here), 15 min apart, until the manifest
 # says complete -> chunk_diff, the new manifest asserted (extractor f5dd11df, threads 1, jetstreamer 1f9d306, the IDL
-# sha256s, ix_accounts_json, rewards_unknown_type_skipped 0, the mint list file and its count) -> SHA256SUMS.
+# sha256s, ix_accounts_json, rewards_unknown_type_skipped 0, the mint list file and its count) -> SHA256SUMS. Its rc 0
+# (GREEN) and 1 (RED) count only with that verdict in out/summary.json; its rc 3 (an exception), a kill or a missing
+# summary is a RED that says "tool or resource failure, not a data finding".
 # Writes $DATA/events/diag-f5dd11df-t1/chunks/450576000-450792000 (its token tables come from a list with later mints:
 # never research; its _learned_mints.txt never feeds a clean-v1 carry-over), /lab/runs/diag-reextract-1043a-<commit7>/
 # (try<n>/: smoke.log, proxy.log, extract.log) and $DATA/reports/diag-reextract-1043a-<commit7>/ (job.log, pytest.log,
@@ -30,7 +37,8 @@
 # came from events/v1 extracted by fada8c3 (sha 142dfe95, threads 3); dev2's 1044-1046 chunks (3b8b45ff) have no
 # parent_ix_args, so their arg_* columns are null in dev2 and the replay falls back to q + fee; a transaction callback
 # dropped inside a delivered block by both builds would not show (sum(executed_tx_count) = txs_seen is checked per side).
-# COMPARE_ONLY=1: no extraction; an existing complete diag chunk is compared again into a new report dir (-compare-<utc>).
+# COMPARE_ONLY=1: no extraction and no TRIES; an existing complete diag chunk is compared again into a new report dir
+# (-compare-<utc>).
 # DRY_RUN=1 (a local rehearsal, never evidence): DRY_BIN, DRY_MINTS, DRY_SMOKE, DRY_RUNS, DRY_REF, DRY_BIN_SHA,
 # DRY_MINTS_SHA, DRY_SMOKE_SHA, DRY_RETRY_SLEEP and DRY_MIN_FREE_GB replace the constants; every output name ends in -dry.
 set -euo pipefail
@@ -69,6 +77,13 @@ if [ "${COMPARE_ONLY:-0}" = 1 ]; then
 fi
 
 refuse() { echo "$(date -u +%FT%TZ) RED: $*" >&2; exit 1; }
+if [ "${COMPARE_ONLY:-0}" != 1 ]; then  # before anything is written: the download cap the owner approved
+  case "${TRIES:-}" in
+    1|2|3) ;;
+    *) refuse "TRIES=1, 2 or 3 is required (now: ${TRIES:-unset}): each try downloads the whole chunk again," \
+              "~0.35-0.45 TB; set it to the worst case the owner approved";;
+  esac
+fi
 bad_path() {  # 0 when the path is under events/v1 or store/, or a clean or hold-out path
   case "${1,,}" in */events/v1|*/events/v1/*|*/store|*/store/*|*clean*|*holdout*|*hold-out*) return 0;; esac
   return 1
@@ -94,7 +109,7 @@ log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$RUN/job.log"; }
 sums() { (cd "$RUN" && find . -type f ! -path ./SHA256SUMS | sort | xargs sha256sum > SHA256SUMS); }
 red() { log "RED: $*"; sums; exit 1; }
 log "start commit=$COMMIT head=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || echo "export (COMMIT file)") chunk=$CH out=$OUT run=$RUN"
-log "command: $0 $* (DRY_RUN=${DRY_RUN:-0} COMPARE_ONLY=${COMPARE_ONLY:-0} py=$PY bin=$BIN mints=$MINTS smoke=$SMOKE)"
+log "command: $0 $* (DRY_RUN=${DRY_RUN:-0} COMPARE_ONLY=${COMPARE_ONLY:-0} TRIES=${TRIES:-none} py=$PY bin=$BIN mints=$MINTS smoke=$SMOKE)"
 [ -z "$SUFFIX" ] || log "DRY RUN: not evidence"
 
 free_gb() { df -Pk "$1" | awk 'NR == 2 {print int($4 / 1048576)}'; }
@@ -156,16 +171,17 @@ grep -Eq "skipped|no tests ran" "$RUN/pytest.log" && red "a chunk_diff test was 
 if [ "${COMPARE_ONLY:-0}" != 1 ]; then
   mkdir -p "$OUTROOT/chunks" "$LOGS"
   done_=0
-  for try in 1 2 3; do
-    log "extract try $try: $SMOKE SLOTS=${CH/-/:} threads 1 (hard-coded) LAB_TRANSFERS=1 PROXY_LIMIT_MBPS=800 D=$LOGS/try$try"
+  for try in $(seq 1 "$TRIES"); do
+    log "extract try $try of $TRIES (a whole-chunk download, ~0.35-0.45 TB): $SMOKE SLOTS=${CH/-/:} threads 1 (hard-coded)" \
+        "LAB_TRANSFERS=1 PROXY_LIMIT_MBPS=800 D=$LOGS/try$try"
     rc=0
     LAB_TRANSFERS=1 LAB_PUMP_MINTS=$MINTS PROXY_LIMIT_MBPS=800 BIN=$BIN SLOTS=${CH/-/:} D=$LOGS/try$try OUT=$OUT \
       bash "$SMOKE" > "$LOGS/try$try.out" 2>&1 || rc=$?
     log "try $try: smoke_extract rc=$rc; $(grep 'extract exit=' "$LOGS/try$try/smoke.log" 2>/dev/null | tail -1 | cut -c1-200 || echo 'no smoke.log')"
     if grep -q '"status": "complete"' "$OUT/_manifest.json" 2>/dev/null; then done_=1; break; fi
-    [ "$try" = 3 ] || { log "not complete; waiting ${RETRY_SLEEP}s (OF1 limiter)"; sleep "$RETRY_SLEEP"; }
+    [ "$try" = "$TRIES" ] || { log "not complete; waiting ${RETRY_SLEEP}s (OF1 limiter)"; sleep "$RETRY_SLEEP"; }
   done
-  [ "$done_" = 1 ] || red "no complete chunk after 3 tries ($LOGS)"
+  [ "$done_" = 1 ] || red "no complete chunk after $TRIES tries ($LOGS)"
   log "extracted: $(du -sh "$OUT" | cut -f1) in $OUT"
 fi
 
@@ -183,10 +199,14 @@ case "$SPILL" in  # the rm -rf target asserted first: this job's own spill direc
   /?*/diag-chunkdiff-1043a-[0-9a-f]*) rm -rf -- "$SPILL";;
   *) red "refusing to remove the spill path $SPILL";;
 esac
+verdict() { grep -q "\"verdict\": \"$1\"" "$RUN/out/summary.json" 2>/dev/null; }
 case $rc in
-  0) log "done: GREEN, the re-extracted 1043a equals the dev chunk up to the fca8c80 rules (out/report.md)";;
-  1) red "chunk_diff found unexpected differences (out/report.md, out/summary.json)";;
+  0) verdict GREEN || red "chunk_diff rc 0 without a GREEN out/summary.json: a tool failure (chunk_diff.log)"
+     log "done: GREEN, the re-extracted 1043a equals the dev chunk up to the fca8c80 rules (out/report.md)";;
+  1) verdict RED || red "chunk_diff rc 1 without a RED out/summary.json: a tool failure (an import error?), not a data finding (chunk_diff.log)"
+     red "chunk_diff found unexpected differences (out/report.md, out/summary.json)";;
   2) red "chunk_diff refused its inputs (chunk_diff.log)";;
-  *) red "chunk_diff failed with rc $rc (chunk_diff.log)";;
+  3) red "chunk_diff failed: a tool or resource failure (DuckDB memory or spill cap, an unreadable file), not a data finding (chunk_diff.log)";;
+  *) red "chunk_diff failed with rc $rc (killed? out of memory?): a tool failure, not a data finding (chunk_diff.log)";;
 esac
 sums  # after job.log's last line

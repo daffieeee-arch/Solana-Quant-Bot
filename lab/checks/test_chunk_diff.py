@@ -1,6 +1,7 @@
 """checks.chunk_diff on synthetic mini chunk directories: equal chunks, a changed value, missing and extra rows,
-duplicates, type-only drift, the fca8c80 normalisation, one-sided tables and columns, manifest checks, the --extra
-root, footprints, buckets, and the refusals. Test names avoid the refused words: tmp_path carries the test name."""
+duplicates, type-only drift, the fca8c80 normalisation, one-sided tables and columns, manifest checks (a blocks table on
+each side), the --extra root, footprints, buckets, failures (exit 3, never RED), and the refusals (also a chunk against
+itself and argument lists that would drop an input). Test names avoid the refused words: tmp_path carries the test name."""
 
 import json
 import os
@@ -335,6 +336,78 @@ def test_buckets_do_not_change_the_result(tmp_path):
     assert got[0] == got[1] == got[2] and got[0][0] == 1
     tr = got[0][1][NAME]["tables"]["pump/TradeEvent"]
     assert (tr["identical"], tr["differing"], tr["only_old"], tr["duplicates"]["new"]["identical_rows"]) == (22, 1, 1, 1)
+
+
+def test_argument_lists_that_drop_an_input_refused(tmp_path, capsys):
+    """An empty or repeated --chunks entry (`--chunks ,` once compared no chunk and said GREEN) or a second --extra for
+    one table (the first silently lost) is refused before anything is written."""
+    rows = trades()
+    rows[7] = rows[7][:-1] + (rows[7][-1] + 1,)
+    chunk(tmp_path / "a", base()), chunk(tmp_path / "b", base(trade_rows=rows))
+    chunk(tmp_path / "c", {"tx_ctx": (TXCTX, [(S, 1, "Payer0", "1:pump")])})
+
+    def run(out, *args):
+        rc = cd.main(["--old-root", str(tmp_path / "a"), "--new-root", str(tmp_path / "b"), "--out", str(tmp_path / out),
+                      "--spill", str(tmp_path / "spill"), *args])
+        return rc, capsys.readouterr().err, os.path.exists(tmp_path / out)
+
+    for n, chunks in enumerate((",", ",,", f"{NAME},", f",{NAME}", f"{NAME},{NAME}")):
+        assert run(f"o{n}", "--chunks", chunks) == (2, f"REFUSED: --chunks {chunks!r}: an empty or repeated entry\n", False)
+    extra = f"tx_ctx={tmp_path / 'c'}"
+    rc, err, written = run("o9", "--chunks", NAME, "--extra", extra, "--extra", extra)
+    assert (rc, written) == (2, False) and "one per table" in err
+    assert run("named", "--chunks", NAME)[0] == 1  # control: the chunk named, its changed value found
+
+
+def test_a_chunk_against_itself_refused(tmp_path, capsys):
+    """Old (or an --extra chunk) resolving to the new chunk, or nested in it, is refused: a self-compare is GREEN."""
+    old, new = chunk(tmp_path / "a", base()), chunk(tmp_path / "b", base(extra_new=True))
+    os.makedirs(tmp_path / "l")
+    os.symlink(old, tmp_path / "l" / NAME)
+    outer = chunk(tmp_path / "n", base())
+    inner = chunk(os.path.join(outer, "x"), base())  # n/<chunk>/x/<chunk>
+
+    def refused(out, *args):
+        rc = cd.main([*args, "--out", str(tmp_path / out), "--spill", str(tmp_path / "spill")])
+        err = capsys.readouterr().err
+        return rc == 2 and "a chunk compared with itself" in err and not os.path.exists(tmp_path / out)
+
+    assert refused("o1", "--old", old, "--new", str(tmp_path / "l" / NAME))                 # a symlink to old
+    assert refused("o2", "--old-root", str(tmp_path / "a"), "--new-root", str(tmp_path / "a"), "--chunks", NAME)
+    assert refused("o3", "--old", old, "--new", new, "--extra", f"tx_ctx={tmp_path / 'b'}")  # tx_ctx against itself
+    assert refused("o4", "--old", outer, "--new", inner) and refused("o5", "--old", inner, "--new", outer)
+    assert cd.main(["--old", old, "--new", new, "--out", str(tmp_path / "ok"), "--spill", str(tmp_path / "spill")]) == 0  # control
+
+
+def test_chunks_without_blocks_red(tmp_path):
+    """Every extractor chunk writes blocks: a chunk pair without it (or without any table) compares (nearly) nothing."""
+    tabs = base()
+    del tabs["blocks"]
+    rc, s = diff(tmp_path, chunk(tmp_path / "a", tabs), chunk(tmp_path / "b", tabs))
+    assert rc == 1 and s["chunks"][NAME]["manifest_findings"] == ["old: no blocks table", "new: no blocks table"]
+    assert all(t["unexpected"] == 0 for t in s["chunks"][NAME]["tables"].values())  # the event tables themselves agree
+    rc, s = diff(tmp_path, chunk(tmp_path / "c", {}), chunk(tmp_path / "d", {}), out="none")
+    assert rc == 1 and s["chunks"][NAME]["tables"] == {} and s["unexpected"] == 2
+
+
+@pytest.mark.parametrize("how", ["truncated parquet", "out of memory"])
+def test_a_failure_is_no_verdict(tmp_path, capsys, monkeypatch, how):
+    """Any other exception exits 3 with a last FAILED line and no summary.json: never 1, which says the data differ."""
+    old, new = chunk(tmp_path / "a", base()), chunk(tmp_path / "b", base())
+    if how == "truncated parquet":
+        f = os.path.join(new, "failed_txs", "part-00000.parquet")
+        with open(f, "rb") as fh:
+            data = fh.read()
+        with open(f, "wb") as fh:
+            fh.write(data[: len(data) // 2])
+    else:  # what the spill cap or memory_limit raises in the middle of a table
+        def oom(*args):
+            raise duckdb.OutOfMemoryException("Out of Memory Error: failed to offload data block (max_temp_directory_size)")
+        monkeypatch.setattr(cd.Diff, "keyed", oom)
+    rc, s = diff(tmp_path, old, new)
+    err = capsys.readouterr().err.strip().splitlines()
+    assert rc == 3 and s is None and err[-1].startswith("FAILED: ") and "not a data finding" in err[-1]
+    assert os.listdir(tmp_path / "spill") == []  # its own spill directory is still removed
 
 
 def test_refusals(tmp_path, capsys):
