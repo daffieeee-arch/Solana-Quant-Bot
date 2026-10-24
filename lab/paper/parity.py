@@ -103,7 +103,7 @@ def engine_side(store, a, b, journal_dir, clock, var=VARIANT, d=D, d_ms=None, se
         if st in ("filled", "entry_failed") and x:
             rec.update(tokens=x["tokens"], cost=x["cost"], exit_decision_slot=x["exit_decision_slot"],
                        exit_slot=x["exit_slot"], exit_reason=x["exit_reason"], proceeds=x["proceeds"],
-                       exit_attempts=x["exit_attempts"], pnl=x["pnl"])
+                       exit_attempts=x["exit_attempts"], pnl=x["pnl"], entry_slot=x["entry_slot"], cap_slots=x.get("cap_slots"))
         out[k] = rec
     return out, eng.events_seen
 
@@ -146,14 +146,25 @@ def unsold_busy(bt, en, k):
     return bt[p].get("exit_slot") is None and held and e.get("status") == "filled"
 
 
-def written_off_row(bt, en, k):
+def _at_deadline(y, k):
+    """The engine's write-off came at its rule's deadline (as journal_diff's): decided at or after entry_slot + cap_slots,
+    filled at that decision + d."""
+    return (y.get("cap_slots") is not None and y.get("entry_slot") is not None and y.get("exit_decision_slot") is not None
+            and y["exit_decision_slot"] >= y["entry_slot"] + y["cap_slots"]
+            and y.get("exit_slot") == y["exit_decision_slot"] + (y["entry_slot"] - k[1]))
+
+
+def written_off_row(bt, en, k, failed_tx=None):
     """The backtest's unsold position (exit_slot None, proceeds 0: a drained pool) that the engine wrote off at its rule's
     deadline (exit_reason 'written_off', proceeds 0, the same fill): the same position, closed where the backtest leaves
-    it open (its exit_slot, reason, attempts and the P&L of the attempts differ). Explained."""
+    it open (its exit_slot, reason, attempts and the P&L of the attempts differ). Explained only with the same farm and,
+    given failed_tx, a P&L apart by exactly the difference of the failed attempts (Codex review #7)."""
     x, y = bt.get(k), en.get(k)
     return bool(x and y and x["status"] == y["status"] == "filled" and x.get("exit_slot") is None and not x.get("proceeds")
-                and y.get("exit_reason") == "written_off" and not y.get("proceeds")
-                and (x.get("tokens"), x.get("cost")) == (y.get("tokens"), y.get("cost")))
+                and y.get("exit_reason") == "written_off" and not y.get("proceeds") and x.get("farm") == y.get("farm")
+                and (x.get("tokens"), x.get("cost")) == (y.get("tokens"), y.get("cost")) and _at_deadline(y, k)
+                and (failed_tx is None or (y.get("pnl") or 0) - (x.get("pnl") or 0)
+                     == ((x.get("exit_attempts") or 0) - (y.get("exit_attempts") or 0)) * failed_tx))
 
 
 def written_off_later_sold(bt, en, k):
@@ -161,14 +172,31 @@ def written_off_later_sold(bt, en, k):
     after the pool got liquidity again: the late sale the write-off forgoes by the owner's rule. Explained, listed apart."""
     x, y = bt.get(k), en.get(k)
     return bool(x and y and x["status"] == y["status"] == "filled" and y.get("exit_reason") == "written_off"
-                and not y.get("proceeds") and (x.get("tokens"), x.get("cost")) == (y.get("tokens"), y.get("cost"))
+                and not y.get("proceeds") and x.get("farm") == y.get("farm") and _at_deadline(y, k)
+                and (x.get("tokens"), x.get("cost")) == (y.get("tokens"), y.get("cost"))
                 and x.get("exit_slot") is not None and y.get("exit_slot") is not None and x["exit_slot"] > y["exit_slot"])
 
 
-def _split(diffs, bt, en):
+def organic(k, bt, en):
+    """A key in the organic comparison when either side labels it organic: a farm label the two sides disagree on then
+    reaches compare() as a farm difference (unexplained) instead of dropping out (Codex review #7)."""
+    return "organic" in {(bt.get(k) or {}).get("farm"), (en.get(k) or {}).get("farm")}
+
+
+def open_at_end(en, bt, end):
+    """Keys the engine still held at its data's end (exit_reason end_of_data) and the backtest did not sell inside it
+    either: only those cannot be compared. A backtest sale before the end against an engine position still open is a
+    difference (Codex review #7)."""
+    def sold_inside(x):
+        return bool(x and x.get("exit_slot") is not None and x["exit_slot"] < end
+                    and x.get("exit_reason") not in ("end_of_data", "window_end"))
+    return {k for k, v in en.items() if v.get("exit_reason") == "end_of_data" and not sold_inside(bt.get(k))}
+
+
+def _split(diffs, bt, en, failed_tx=None):
     """(unexplained diffs, explained unsold_busy diffs, explained written_off diffs, explained written_off_later_sold
     diffs): the two write-off causes apart, so a forgone late sale shows (LAB review on #533)."""
-    wo = [d for d in diffs if "diff" in d and written_off_row(bt, en, tuple(d["key"]))]
+    wo = [d for d in diffs if "diff" in d and written_off_row(bt, en, tuple(d["key"]), failed_tx)]
     later = [d for d in diffs if "diff" in d and d not in wo and written_off_later_sold(bt, en, tuple(d["key"]))]
     expl = [d for d in diffs if "diff" in d and d not in wo and d not in later and unsold_busy(bt, en, tuple(d["key"]))]
     return [d for d in diffs if d not in expl and d not in wo and d not in later], expl, wo, later
@@ -185,15 +213,16 @@ def arm_parity(store, a, b, arm, journal_dir, con=None, tail=ARM_TAIL, d_ms=600,
     bt_org = backtest_side(con, cfg, clock, a, b, var=arm, d_ms=d_ms, segments=segs, organic_busy=True)
     bt_tour = backtest_side(con, cfg, clock, a, b, var=arm, d_ms=d_ms, segments=segs, organic_busy=False)
     en, n_events = engine_side(store, a, b, journal_dir, clock, var=arm, d_ms=d_ms, segments=segs, farm="organic", tail=tail)
-    open_at_end = {k for k, v in en.items() if v.get("exit_reason") == "end_of_data"}
+    held_at_end = open_at_end(en, bt_org, b + tail)
     flagged_pools = {k[0] for k, v in bt_tour.items() if v.get("farm") == "flagged" and a - WARMUP <= k[1] < b}
-    org = {k for k in set(bt_org) | set(en) if a <= k[1] < b and (bt_org.get(k) or en.get(k)).get("farm") == "organic"}
-    keys1 = sorted(k for k in org if k not in open_at_end)
+    org = {k for k in set(bt_org) | set(en) if a <= k[1] < b and organic(k, bt_org, en)}
+    keys1 = sorted(k for k in org if k not in held_at_end)
     _, d1, c1 = compare({k: bt_org[k] for k in keys1 if k in bt_org}, {k: en[k] for k in keys1 if k in en}, a, b)
-    d1, e1, w1, s1 = _split(d1, bt_org, en)
+    failed_tx = Scenario.from_cfg("base", cfg).failed_tx  # both sides settle at base (backtest_side, the engine's journal)
+    d1, e1, w1, s1 = _split(d1, bt_org, en, failed_tx)
     keys2 = sorted(k for k in keys1 if k[0] not in flagged_pools)
     _, d2, c2 = compare({k: bt_tour[k] for k in keys2 if k in bt_tour}, {k: en[k] for k in keys2 if k in en}, a, b)
-    d2, e2, w2, s2 = _split(d2, bt_tour, en)
+    d2, e2, w2, s2 = _split(d2, bt_tour, en, failed_tx)
     in_flagged = [k for k in keys1 if k[0] in flagged_pools]
     _, d3, _ = compare({k: bt_tour[k] for k in in_flagged if k in bt_tour}, {k: en[k] for k in in_flagged if k in en}, a, b)
     pnl = lambda side, ks: sum((side.get(k) or {}).get("pnl") or 0 for k in ks)  # noqa: E731
@@ -204,7 +233,7 @@ def arm_parity(store, a, b, arm, journal_dir, con=None, tail=ARM_TAIL, d_ms=600,
                              "written_off": len(w1), "written_off_keys": [d["key"] for d in w1],
                              "written_off_later_sold": len(s1), "written_off_later_sold_keys": [d["key"] for d in s1],
                              "written_off_later_sold_pnl_backtest": sum((bt_org[tuple(d["key"])] or {}).get("pnl") or 0 for d in s1),
-                             "open_at_data_end": len(open_at_end), "pnl_backtest": pnl(bt_org, keys1), "pnl_engine": pnl(en, keys1)},
+                             "open_at_data_end": len(held_at_end), "pnl_backtest": pnl(bt_org, keys1), "pnl_engine": pnl(en, keys1)},
             "tournament_busy": {"triggers": len(keys2), "by_status": c2, "different": len(d2), "diffs": d2[:20],
                                 "unsold_busy": len(e2), "written_off": len(w2), "written_off_later_sold": len(s2)},
             "flagged_pools": {"organic_triggers": len(in_flagged), "different_from_the_tournament": len(d3)}}
