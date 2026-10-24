@@ -1,14 +1,17 @@
 """Diagnostic (iii) (backtest.h5_dev_repro) on tiny synthetic runs: equal runs are GREEN; a changed row, a row moved to
-another day and a different settlement rule are found (rows, the integer day series, the fields); E63's side is
-anchored before anything is compared; step 0 is informative; the guards refuse a run compared with itself, another
-store, changed analysis code, a column only one run has, the clean bridge and a snapshot that is not the pin's; the
-NAS script's tournament flags are GRID."""
+another day, another days list and a different settlement rule are found (rows, the integer day series, the fields);
+E63's side is anchored before anything is compared; step 0 is informative; the guards refuse a run compared with
+itself, an input that is not its archived copy, E63's run or jsons not E63's alone, another store, changed analysis
+code, LAB_CORE not python, a column only one run has, the clean bridge, a snapshot that is not the pin's or not the
+run's own, and a step-2 json that is not capital_ceiling's main on the new run; the NAS script's tournament flags are
+GRID and its spill dir never overlaps its evidence."""
 
 import hashlib
 import json
 import os
 import re
 import shutil
+import subprocess
 from types import SimpleNamespace
 
 import duckdb
@@ -22,6 +25,7 @@ from backtest import h5_dev_repro as h5
 from backtest.costs import Scenario, settle
 from backtest.store import load_defaults
 
+CHECK_ENGINE = h5.check_engine  # the real one: the lab fixture stubs it
 LO = cc.DEV[0]
 DAY0 = np.datetime64("2026-09-12")
 SPAN = 100_000  # slots per fixture day
@@ -188,6 +192,19 @@ def rewrite(run, change):
 
 def find(rows, pool, size=0.5, d=2):
     return next(r for r in rows if (r["pool"], r["size_sol"], r["d"]) == (pool, size, d))
+
+
+def edit_json(path, change):
+    """The JSON file with change(j) applied in place."""
+    with open(path) as f:
+        j = json.load(f)
+    change(j)
+    with open(path, "w") as f:
+        json.dump(j, f)
+
+
+def h5_cell(j, size=0.5, d=2, scen="base"):
+    return next(c for c in j["cells"] if (c["candidate"], c["size"], c["d"], c["scenario"]) == ("H5", size, d, scen))
 
 
 def test_equal_runs_are_green(lab):
@@ -406,17 +423,24 @@ def test_field_diffs_are_exact():
     assert h5.field_diffs({"a": 1}, {"b": 1}) == [["a", 1, "<missing>"], ["b", "<missing>", 1]]
 
 
-def test_the_snapshot_must_be_the_pins_tree(tmp_path, monkeypatch):
-    assert h5.git_blob(_write(tmp_path / "hello", b"hello\n")) == "ce013625030ba8dba906f756967f9e9ca394464a"  # git hash-object
-    snap = tmp_path / "backtest"
-    _write(snap / "replay.py", b"engine\n")
-    _write(snap / "store.py", f'x = 1\nDEFAULTS = "{h5.store.DEFAULTS}"\n'.encode())
-    _write(snap / "tests" / "t.py", b"")
+def snapshot(snap, monkeypatch):
+    """A three-file 'pin' written to snap, with PIN_MANIFEST and the clean H5 Spec's replay files set to it: (manifest,
+    its lines)."""
+    _write(os.path.join(snap, "replay.py"), b"engine\n")
+    _write(os.path.join(snap, "store.py"), f'x = 1\nDEFAULTS = "{h5.store.DEFAULTS}"\n'.encode())
+    _write(os.path.join(snap, "tests", "t.py"), b"")
     want, lines = h5.manifest(str(snap))
-    assert [x.split(" ", 1)[1] for x in lines] == ["replay.py", "store.py", "tests/t.py"]
     monkeypatch.setattr(h5, "PIN_MANIFEST", want)
     import backtest.clean_h5 as ch5
     monkeypatch.setattr(ch5, "SPEC", SimpleNamespace(name="H5", replay_sha256={"replay.py": hashlib.sha256(b"engine\n").hexdigest()}))
+    return want, lines
+
+
+def test_the_snapshot_must_be_the_pins_tree(tmp_path, monkeypatch):
+    assert h5.git_blob(_write(tmp_path / "hello", b"hello\n")) == "ce013625030ba8dba906f756967f9e9ca394464a"  # git hash-object
+    snap = tmp_path / "backtest"
+    want, lines = snapshot(snap, monkeypatch)
+    assert [x.split(" ", 1)[1] for x in lines] == ["replay.py", "store.py", "tests/t.py"]
     assert h5.check_engine(str(snap)) == want
     _write(snap / "__pycache__" / "replay.cpython-313.pyc", b"x")
     with pytest.raises(cc.Refused, match="not 15fa3dd"):
@@ -468,3 +492,197 @@ def test_the_inputs_step_checks_job_87_too(lab, monkeypatch):
     shas(lab, monkeypatch)
     with pytest.raises(cc.Refused, match="job 87"):
         h5.main(a)
+
+
+def test_compare_checks_the_runs_own_snapshot(lab, monkeypatch):
+    """The new config's engine_commit is only LAB_ENGINE_COMMIT, which the script sets: what ties the rows to 15fa3dd
+    is the run's engine_dir, which must be --engine-dir, and compare's own check_engine of that dir."""
+    monkeypatch.setattr(h5, "check_engine", CHECK_ENGINE)
+    snapshot(lab.engine, monkeypatch)
+    assert h5.main(argv(lab, out="e0")) == 0
+    # The same files under another dir of the same name: not the snapshot the run came from.
+    other = os.path.join(lab.root, "other", "engine", "backtest")
+    shutil.copytree(lab.engine, other)
+    cfg = h5.config(lab.new)
+    edit_json(os.path.join(lab.new, "config.json"), lambda j: j.update(engine_dir=other))
+    with pytest.raises(cc.Refused, match="engine_dir"):
+        h5.main(argv(lab, out="e1"))
+    edit_json(os.path.join(lab.new, "config.json"), lambda j: j.update(engine_dir=cfg["engine_dir"]))
+    a = argv(lab, out="e2")
+    del a[a.index("--engine-dir"):a.index("--engine-dir") + 2]
+    with pytest.raises(cc.Refused, match="engine_dir"):
+        h5.main(a)
+    _write(os.path.join(lab.engine, "replay.py"), b"engine!\n")
+    with pytest.raises(cc.Refused, match="not 15fa3dd"):
+        h5.main(argv(lab, out="e3"))
+
+
+@pytest.mark.parametrize("key,cmd", [("e63_config", "full"), ("e63_json", "full"), ("e63_exitday_json", "full"),
+                                     ("c3_keys", "full"), ("defaults", "full"), ("bigtp_config", "inputs"),
+                                     ("bigtp_config", "step0")])
+def test_an_input_that_is_not_its_archived_copy_is_refused(lab, monkeypatch, key, cmd):
+    """The same content in another copy (the JSON re-serialized, the parquet in another compression, the YAML with a
+    comment more) is refused by its sha256 alone: a NAS copy that differs would move E63's side or the exit rules and
+    look like an engine difference (map risk 4)."""
+    if key == "defaults":
+        copy = os.path.join(lab.root, "week2-defaults.yaml")
+        with open(h5.store.DEFAULTS) as f, open(copy, "w") as g:
+            g.write(f.read() + "\n# a copy\n")
+        monkeypatch.setattr(h5.store, "DEFAULTS", copy)
+    elif key == "c3_keys":
+        pq.write_table(pq.read_table(lab.keys), lab.keys, compression="gzip")
+    else:
+        path = {"e63_config": os.path.join(lab.e63, "config.json"), "e63_json": os.path.join(lab.e63, "ceiling", "ceiling.json"),
+                "e63_exitday_json": lab.exitday, "bigtp_config": os.path.join(lab.bigtp, "config.json")}[key]
+        with open(path) as f:
+            j = json.load(f)
+        with open(path, "w") as f:
+            json.dump(j, f, indent=2)
+    a = argv(lab, cmd) if cmd != "inputs" else ["inputs", "--e63", lab.e63, "--e63-exitday-json", lab.exitday,
+                                                "--c3-keys", lab.keys, "--store", lab.store, "--bigtp", lab.bigtp]
+    with pytest.raises(cc.Refused, match=f"archived {key} "):
+        h5.main(a)
+
+
+@pytest.mark.parametrize("change,match", [(lambda j: j.update(engine_commit=h5.PIN), "not E63's run"),
+                                          (lambda j: j.update(venue_math="rust"), "not E63's run"),
+                                          (lambda j: j.update(positions=j["positions"] + 1), "rows in its parts")],
+                         ids=["engine", "venue-math", "incomplete"])
+def test_e63s_run_must_be_e63s_complete_python_run(lab, monkeypatch, change, match):
+    edit_json(os.path.join(lab.e63, "config.json"), change)
+    shas(lab, monkeypatch)
+    with pytest.raises(cc.Refused, match=match):
+        h5.check_inputs(lab.e63, lab.exitday, lab.keys, lab.store)
+
+
+@pytest.mark.parametrize("which", ["ceiling.json", "exit-day ceiling.json"])
+@pytest.mark.parametrize("change", [lambda p, j: p.update(engine_commit=h5.PIN),
+                                    lambda p, j: j["provenance"].append(dict(p, run="other"))], ids=["engine", "two-runs"])
+def test_e63s_jsons_must_be_of_e63s_run_alone(lab, monkeypatch, which, change):
+    path = lab.exitday if which.startswith("exit-day") else os.path.join(lab.e63, "ceiling", "ceiling.json")
+    edit_json(path, lambda j: change(j["provenance"][0], j))
+    shas(lab, monkeypatch)
+    with pytest.raises(cc.Refused, match=f"E63's {which} is not of E63's run alone"):
+        h5.check_inputs(lab.e63, lab.exitday, lab.keys, lab.store)
+
+
+def test_lab_core_other_than_python_is_refused(monkeypatch):
+    monkeypatch.setenv("LAB_CORE", "rust")
+    with pytest.raises(cc.Refused, match="LAB_CORE"):
+        h5.check_analysis()
+    monkeypatch.setenv("LAB_CORE", "python")
+    h5.check_analysis()
+
+
+def test_step0_refuses_an_incomplete_job_87(lab, monkeypatch):
+    edit_json(os.path.join(lab.bigtp, "config.json"), lambda j: j.update(positions=j["positions"] + 1))
+    shas(lab, monkeypatch)
+    with pytest.raises(cc.Refused, match="positions"):
+        h5.main(argv(lab, "step0"))
+
+
+@pytest.mark.parametrize("change", [lambda j, p: j.update(settle_rule=2), lambda j, p: j.update(daily_loss_book="trigger_day"),
+                                    lambda j, p: j["provenance"][0].update(engine_commit=h5.E63_COMMIT),
+                                    lambda j, p: j["provenance"][0].update(run=p.e63),
+                                    lambda j, p: j["provenance"].append(dict(j["provenance"][0], run=p.e63)),
+                                    None], ids=["rule-2", "trigger-day-book", "e63-engine", "e63-run", "two-runs", "e63s-own-json"])
+def test_step2s_json_must_be_capital_ceilings_main_on_the_new_run(lab, change):
+    """Labels alone (the cells are the new run's): rule 2, another loss book, E63's engine or run in the provenance, or
+    E63's own exit-day json as step 2's (map risk 2: E63 compared with itself, GREEN without the check)."""
+    if change is None:
+        lab.new_json = lab.exitday
+    else:
+        edit_json(lab.new_json, lambda j: change(j, lab))
+    with pytest.raises(cc.Refused, match="not capital_ceiling's main on the new run"):
+        h5.main(argv(lab))
+
+
+@pytest.mark.parametrize("change", [lambda j: h5_cell(j, 2.0, 3)["unlimited"].update(filled=h5_cell(j, 2.0, 3)["unlimited"]["filled"] + 1),
+                                    lambda j: j["cells"].remove(h5_cell(j, 10.0, 3, "pessimistic"))], ids=["field", "cell"])
+def test_step2s_cells_must_be_this_modules_recompute_of_the_new_run(lab, change):
+    edit_json(lab.new_json, change)
+    with pytest.raises(cc.Refused, match="not this module's recompute"):
+        h5.main(argv(lab))
+
+
+def test_step2_compares_max_useful_and_e63s_own_without_limits_fields(lab, monkeypatch):
+    with open(lab.new_json) as f:
+        best = json.load(f)["max_useful"]["H5"]["best_size"]
+    edit_json(lab.new_json, lambda j: j["max_useful"]["H5"].update(best_size=10.0))
+    assert h5.main(argv(lab, out="m1")) == 1
+    o = result(lab, "m1")
+    assert o["json"]["max_useful_h5"] == [["best_size", 10.0, best]] and o["reasons"] == ["step 2 json: max_useful_h5 1 differences"]
+    # E63's own ceiling.json's sandwich flag: not anchored (only its without-limits fields are), compared in step 2.
+    lab.new_json = new_json(lab)
+    edit_json(os.path.join(lab.e63, "ceiling", "ceiling.json"), lambda j: h5_cell(j).update(sandwich_flagged_pct=50.0))
+    shas(lab, monkeypatch)
+    assert h5.main(argv(lab, out="m2")) == 1
+    o = result(lab, "m2")
+    with open(lab.new_json) as f:
+        flag = h5_cell(json.load(f))["sandwich_flagged_pct"]
+    assert flag != 50.0 and o["json"]["e63_json_unlimited"] == [["(0.5, 2, 'base')", "flag", flag, 50.0]]
+    assert o["json"]["exitday_cells"] == [] and o["reasons"] == ["step 2 json: e63_json_unlimited 1 differences"]
+
+
+def test_a_new_run_whose_days_are_not_e63s_is_red_by_its_days(lab):
+    """F's rows on a fifth day: the new run's days are not E63's. RED with that reason and the json's days (each
+    side's cells over its own days, as capital_ceiling's main), not a refusal of step 2's json as another run's."""
+    rewrite(lab.new, lambda rows: [r.update(day=DAY_OF.days[4]) for r in rows if r["pool"] == "F"])
+    lab.new_json = new_json(lab)
+    assert h5.main(argv(lab)) == 1
+    o = result(lab)
+    assert o["new_days"] == DAYS[:3] + [DAY_OF.days[4]] and o["days"] == DAYS
+    assert f"the new run's days {o['new_days']} are not E63's" in o["reasons"] and o["json"]["days"]
+
+
+COMMIT = "0123456" + "0" * 33
+
+
+def nas_script(tmp, data, spill_root, swap=None):
+    """nas_h5_dev_repro.sh copied into a repo dir of its own (a COMMIT file, no git), STEP0_ONLY=1, with a stub python
+    that logs its calls and exits 0 (swap: (link, target), the stub's first call makes link a symlink to target):
+    (rc, stderr, the stub's calls, OUT)."""
+    repo = tmp / "repo"
+    os.makedirs(repo / "lab" / "backtest")
+    shutil.copy(os.path.join(os.path.dirname(h5.__file__), "nas_h5_dev_repro.sh"), repo / "lab" / "backtest")
+    (repo / "COMMIT").write_text(COMMIT + "\n")
+    py = tmp / "py"
+    py.write_text('#!/bin/bash\necho "$*" >> "$STUB_LOG"\n'
+                  'if [ -n "${SWAP:-}" ] && [ ! -L "$SWAP" ]; then rm -rf -- "$SWAP"; ln -s "$SWAP_TO" "$SWAP"; fi\n')
+    py.chmod(0o755)
+    env = {"PATH": os.environ["PATH"], "LAB_DATA_ROOT": str(data), "LAB_SPILL_ROOT": str(spill_root), "LAB_PY": str(py),
+           "STUB_LOG": str(tmp / "calls"), "ENGINE_REPO": str(tmp / "no-engine"), "STEP0_ONLY": "1"}
+    if swap:
+        env.update(SWAP=str(swap[0]), SWAP_TO=str(swap[1]))
+    p = subprocess.run(["bash", str(repo / "lab" / "backtest" / "nas_h5_dev_repro.sh")], env=env, capture_output=True,
+                       text=True, timeout=60)
+    calls = (tmp / "calls").read_text().splitlines() if (tmp / "calls").exists() else []
+    return p.returncode, p.stderr, calls, data / "backtests" / f"h5-dev-repro-{COMMIT[:7]}-step0"
+
+
+def test_the_nas_scripts_spill_dir_is_its_own(tmp_path):
+    """The spill dir is removed on every exit: apart from the output it is; the same dir (LAB_SPILL_ROOT=$DATA/backtests),
+    one inside the other or the same through a symlinked backtests dir is refused before anything runs."""
+    name = f"h5-dev-repro-{COMMIT[:7]}-step0"
+    t = tmp_path / "apart"
+    rc, err, calls, out = nas_script(t, t / "data", t / "spill")
+    assert rc == 0 and len(calls) == 3 and (out / "job.log").exists() and (out / "SHA256SUMS").exists(), err
+    assert os.listdir(t / "spill") == []  # its spill dir made and removed
+    for case, data, spill_root in (("same", "data", "data/backtests"), ("spill-in-out", "data", f"data/backtests/{name}"),
+                                   ("out-in-spill", f"sp/{name}/data", "sp"), ("symlinked-backtests", "data", "bt")):
+        t = tmp_path / case
+        os.makedirs(t / "bt")
+        if case == "symlinked-backtests":
+            os.makedirs(t / "data")
+            os.symlink(t / "bt", t / "data" / "backtests")
+        rc, err, calls, out = nas_script(t, t / data, t / spill_root)
+        assert rc == 1 and "overlap" in err and calls == [] and not out.exists() and os.listdir(t / "bt") == [], (case, err)
+
+
+def test_the_nas_script_keeps_its_evidence_when_the_spill_dir_turns_into_it(tmp_path):
+    """The exit's own check: the spill root swapped for a symlink to the backtests dir during the run would make the
+    spill dir the output; it is left (RED), the evidence kept."""
+    data, spill_root = tmp_path / "data", tmp_path / "sp"
+    rc, err, calls, out = nas_script(tmp_path, data, spill_root, swap=(spill_root, data / "backtests"))
+    assert rc == 1 and "not removed" in err and len(calls) == 3
+    assert (out / "job.log").exists() and (out / "SHA256SUMS").exists()

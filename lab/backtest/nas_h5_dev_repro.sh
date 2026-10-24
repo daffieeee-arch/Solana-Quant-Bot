@@ -18,8 +18,9 @@
 # ceiling/ceiling.json), $E63_EXITDAY (capital-exitday-576db7a/e63/ceiling.json), $DATA/backtests/bigtp-dev-1033-1046-4dbd34b,
 # the C3 keys, $DATA/store/dev2.duckdb (read-only), research/week2-defaults.yaml; ENGINE_REPO (/lab/code/repo-15fa3dd)
 # is only read (git archive / tar -c), never run in.
-# Overrides: WORKERS (4), ENGINE_REPO, E63_EXITDAY, C3_KEYS, MEMORY (8GB), LAB_SPILL_ROOT (/lab/tmp), LAB_SPILL_MAX (24GB,
-# E63's), STEP0_ONLY=1, RANGE=lo:hi (a dry run of the whole job: not evidence), CLEAN_BRIDGE=1 (step 4: refused).
+# Overrides: WORKERS (4), ENGINE_REPO, E63_EXITDAY, C3_KEYS, MEMORY (8GB), LAB_SPILL_ROOT (/lab/tmp; its dir for this job is
+# removed on exit, so one that is the output dir, inside it or holding it is refused), LAB_SPILL_MAX (24GB, E63's),
+# STEP0_ONLY=1, RANGE=lo:hi (a dry run of the whole job: not evidence), CLEAN_BRIDGE=1 (step 4: refused).
 # Writes a new $DATA/backtests/h5-dev-repro-<commit7>[-step0|-dry]/ (job.log, guards.log, pytest.log, step0/, step0.log,
 # h5-dev2-15fa3dd/ with engine/, parts/ and config.json, tournament.log, ceiling-new/, repro/, SHA256SUMS of every file
 # in it); an existing one is refused (move it aside; never delete evidence). RED = rc 1 with its reason in job.log.
@@ -49,6 +50,14 @@ RUN_ID=h5-dev2-${PIN:0:7}
 RUN=$OUT/$RUN_ID
 
 fail() { echo "$(date -u +%FT%TZ) RED: $*" >&2; exit 1; }
+overlap() {  # rc 0 when the two dirs, symlinks resolved, are one dir or one holds the other
+  local a b
+  a=$(realpath -m "$1")
+  b=$(realpath -m "$2")
+  case "$a/" in "$b/"*) return 0 ;; esac
+  case "$b/" in "$a/"*) return 0 ;; esac
+  return 1
+}
 [ -z "${CLEAN_BRIDGE:-}" ] || fail "CLEAN_BRIDGE: step 4 (the clean conventions with the case exclusions on dev2) needs LAB research's OK"
 case "${RANGE:-}" in
   "") ;;
@@ -67,12 +76,17 @@ for p in "$OUT" "$SPILL"; do
   esac
   [ ! -e "$p" ] || fail "$p exists: every output dir is new (move it aside; never delete evidence)"
 done
+# The spill dir is removed on every exit: never the evidence dir, nor inside it, nor holding it (LAB_SPILL_ROOT=$DATA/backtests).
+if overlap "$OUT" "$SPILL"; then fail "the spill dir $SPILL and the output $OUT overlap (LAB_SPILL_ROOT): the exit would delete evidence"; fi
 mkdir -p "$OUT" "$SPILL"
 
 finish() {  # on every exit: SHA256SUMS of every file written (the logs too), the spill dir removed (asserted first)
   local rc=$?
   (cd "$OUT" && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 -r sha256sum > SHA256SUMS) || rc=1
-  if [ -n "$SPILL" ] && [ "$SPILL" = "$SPILL_ROOT/$NAME" ] && [ "${NAME#h5-dev-repro-}" != "$NAME" ] && [ -d "$SPILL" ]; then
+  if overlap "$OUT" "$SPILL"; then
+    echo "$(date -u +%FT%TZ) RED: the spill dir $SPILL overlaps $OUT: not removed" >&2
+    rc=1
+  elif [ -n "$SPILL" ] && [ "$SPILL" = "$SPILL_ROOT/$NAME" ] && [ "${NAME#h5-dev-repro-}" != "$NAME" ] && [ -d "$SPILL" ]; then
     rm -rf -- "$SPILL"
   fi
   exit "$rc"

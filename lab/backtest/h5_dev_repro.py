@@ -17,8 +17,10 @@ What compare compares, new run against E63 (exact: 0 rows, 0 lamports on every d
   sum of the settled P&L in integer lamports; with limits, for C = size / 5 % and size / 10 % and every unsold
   convention, the trigger-cohort day_pnl and the limit's exit_day_pnl of capital_ceiling.limited's own capital_days
   call (limited_days: no second copy of its trades), as integer lamports;
-- the cells' unlimited and limited dicts field by field; full: also the new ceiling.json (capital_ceiling's main on
-  the new rows, step 2) against E63's: its H5 cells, sandwich keys included, and max_useful['H5'].
+- the cells' unlimited and limited dicts field by field, each run's over its own days (as capital_ceiling's main on
+  that run computes them); a new run whose days are not E63's is RED by its days, never refused as another json;
+  full: also the new ceiling.json (capital_ceiling's main on the new rows, step 2) against E63's: its H5 cells,
+  sandwich keys included, and max_useful['H5'].
 
 Settlement: capital_ceiling.load's, costs.settle_sql under rule 1 (capital_ceiling.SETTLE_RULE_E63), which E63 was
 settled with; main's default is rule 2 since Codex review #6, so a compare refuses when capital_ceiling's rule is not 1.
@@ -517,7 +519,9 @@ def compare(a):
         cons["e63"].execute(f"DELETE FROM r WHERE t < {int(rng[0])} OR t >= {int(rng[1])}")
         days = new_days
         e63 = side(cons["e63"], cells, days, day_of)
-    new = side(cons["new"], cells, days, day_of)
+    # Over the new run's own days, as capital_ceiling's main on it (step 2's json): days that are not E63's are a RED
+    # reason of their own (below), not a refusal of step 2's json as another run's.
+    new = side(cons["new"], cells, new_days, day_of)
     rows, common = rows_diff(cons["new"], a.new, a.e63, cells, rng)
     out_cells, reasons = [], []
     if new_days != days:
@@ -539,7 +543,7 @@ def compare(a):
                        "day_unlimited": du, "day_limited": dl}
         out_cells.append({"size": r["size"], "d": r["d"], "rows": r, "scenarios": scen})
     o = {"mode": a.mode, "dry_run": bool(rng), "tolerance": TOLERANCE, "scope": SCOPE, "settle_rule": cc.SETTLE_RULE_E63,
-         "daily_loss_book": "exit_day", "days": days, "common_columns": common,
+         "daily_loss_book": "exit_day", "days": days, "new_days": new_days, "common_columns": common,
          "new": {"run": a.new, "engine_commit": new_cfg["engine_commit"], "slot_range": new_cfg.get("slot_range")},
          "anchors": "GREEN (days, the exit-day json's H5 cells, ceiling.json without limits, descriptives.out)",
          "inputs": {**SHA256, "analysis_blobs": ANALYSIS, "pin_manifest": PIN_MANIFEST,
