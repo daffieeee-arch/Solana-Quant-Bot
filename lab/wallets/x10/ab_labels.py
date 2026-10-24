@@ -3,7 +3,9 @@
 Used for the mark-cap fix proof (spec-runners-mark-cap-2026-10-24.md): old = the archived run, new = the fixed harness.
 
   python -m wallets.x10.ab_labels --old OLD.parquet --new NEW.parquet --out DIR [--tag s0.5]
-Writes ab-<tag>.json and ab-<tag>.md.
+Writes ab-<tag>.json and ab-<tag>.md. Fail-closed (x10-hertelling-plan-2026-10-24.md section 2): exit status 1, with the
+reason in the json ("red"), when the row counts differ, an entry differs (tokens / cost) or any peak_24 went down; the
+NAS job turns that into RED before stage B.
 """
 
 import argparse
@@ -59,16 +61,26 @@ def main(argv=None):
     a = ap.parse_args(argv)
     os.makedirs(a.out, exist_ok=True)
     res = compare(a.old, a.new)
+    red = []
+    if not (res["rows"][0] == res["rows"][1] == res["rows"][2]):
+        red.append(f"rows differ old/new/matched {res['rows']}")
+    if res["entries_identical"] != res["rows"][2]:
+        red.append(f"entries not identical: {res['entries_identical']} of {res['rows'][2]}")
+    if res["direction"].get("peak_24_down", 0) > 0:
+        red.append(f"peak_24 down on {res['direction']['peak_24_down']} rows")
+    res["red"] = red
     with open(os.path.join(a.out, f"ab-{a.tag}.json"), "w") as f:
         json.dump(res, f, indent=1, default=str)
     lines = [f"# A/B labels {a.tag}: rows old/new/matched {res['rows']}, identical entries {res['entries_identical']}, rows with a changed label {res['rows_with_a_changed_label']}", "",
              "| moment | n | " + " | ".join(f"{h} old→new" for h in HITS) + " | depth < cost |", "|---|---|" + "---|" * (len(HITS) + 1)]
     for m, d in res["by_moment"].items():
         lines.append(f"| {m} | {d['n']} | " + " | ".join(f"{d[h]['old']}→{d[h]['new']}" if h in d else "–" for h in HITS) + f" | {d['share_depth_below_cost']} |")
-    lines += ["", "means old → new: " + ", ".join(f"{c} {v['old']:.3f}→{v['new']:.3f}" for c, v in res["means"].items() if v["old"] is not None), f"direction: {res['direction']}"]
+    lines += ["", "means old → new: " + ", ".join(f"{c} {v['old']:.3f}→{v['new']:.3f}" for c, v in res["means"].items() if v["old"] is not None), f"direction: {res['direction']}",
+              ("RED: " + "; ".join(red)) if red else "GREEN: rows equal, entries identical, no peak_24 down"]
     with open(os.path.join(a.out, f"ab-{a.tag}.md"), "w") as f:
         f.write("\n".join(lines) + "\n")
     print("\n".join(lines))
+    return 1 if red else 0
 
 
 if __name__ == "__main__":

@@ -142,9 +142,32 @@ def test_ab_labels_counts(tmp_path):
     new = dict(base, hit_2_24=[True, True, False], stop_first_24=[False, False, True], x_trail30_24=[0.9, 1.5, 0.3], peak_24=[2.0, 2.1, 0.4])
     pq.write_table(pa.table(base), tmp_path / "old.parquet")
     pq.write_table(pa.table(new), tmp_path / "new.parquet")
-    AB.main(["--old", str(tmp_path / "old.parquet"), "--new", str(tmp_path / "new.parquet"), "--out", str(tmp_path / "out"), "--tag", "t"])
+    assert AB.main(["--old", str(tmp_path / "old.parquet"), "--new", str(tmp_path / "new.parquet"), "--out", str(tmp_path / "out"), "--tag", "t"]) == 0
     import json
     res = json.load(open(tmp_path / "out" / "ab-t.json"))
+    assert res["red"] == []
     assert res["rows"] == [3, 3, 3] and res["entries_identical"] == 3 and res["rows_with_a_changed_label"] == 1
     assert res["by_moment"]["e10"]["hit_2_24"] == {"old": 1, "new": 2} and res["by_moment"]["e10"]["stop_first_24"] == {"old": 2, "new": 1}
     assert res["direction"] == {"peak_24_up": 1, "peak_24_down": 0} and (tmp_path / "out" / "ab-t.md").exists()
+
+
+def test_ab_labels_is_fail_closed(tmp_path):
+    """A synthetic decrease of peak_24, a changed entry or a missing row makes ab_labels exit 1 with the reason (the NAS job
+    then goes RED before stage B: x10-hertelling-plan section 2)."""
+    import json
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from wallets.x10 import ab_labels as AB
+    base = {"key": ["A", "B"], "moment": ["e10"] * 2, "t": [1, 2], "tokens": [10, 10], "cost_sol": [0.5] * 2, "depth_sol": [0.1, 2.0],
+            "hit_2_24": [False, True], "hit_5_24": [False] * 2, "hit_10_24": [False] * 2, "hit_2_72": [False, True], "hit_5_72": [False] * 2,
+            "hit_10_72": [False] * 2, "stop_first_24": [True, False], "stop_first_72": [True, False],
+            "x_tp2_24": [0.2, 2.0], "x_trail30_24": [0.2, 1.5], "x_tp5_24": [0.2, 1.5], "peak_24": [0.3, 2.1], "end_24": [0.1, 1.0]}
+    pq.write_table(pa.table(base), tmp_path / "old.parquet")
+    pq.write_table(pa.table(dict(base, peak_24=[0.3, 1.9])), tmp_path / "down.parquet")          # a peak went down
+    pq.write_table(pa.table(dict(base, tokens=[11, 10])), tmp_path / "entry.parquet")            # an entry differs
+    pq.write_table(pa.table({k: v[:1] for k, v in base.items()}), tmp_path / "short.parquet")    # a row is missing
+    for name, reason in (("down", "peak_24 down"), ("entry", "entries not identical"), ("short", "rows differ")):
+        rc = AB.main(["--old", str(tmp_path / "old.parquet"), "--new", str(tmp_path / f"{name}.parquet"), "--out", str(tmp_path / "out"), "--tag", name])
+        res = json.load(open(tmp_path / "out" / f"ab-{name}.json"))
+        assert rc == 1 and any(reason in r for r in res["red"]), (name, res["red"])
+        assert open(tmp_path / "out" / f"ab-{name}.md").read().strip().splitlines()[-1].startswith("RED")
