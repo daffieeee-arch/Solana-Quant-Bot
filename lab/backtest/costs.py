@@ -69,7 +69,9 @@ class Scenario:
 
 def exit_filled(r):
     """The position's last counted exit attempt filled: it has an exit slot (a sale, a graduation's sale) and is no paper
-    write-off. An unsold position (exit_slot None) and a write-off ended with a failed attempt."""
+    write-off. An unsold position (exit_slot None) and a write-off ended with a failed attempt. A graduation counts as
+    filled: on the dev runs every graduation sold something (graduations with an exit slot and nothing sold: 0 of 92,342
+    in families-v2 and of 194,942 in v1.1-dev, counted 24 Oct for LAB review's Q2)."""
     return r.exit_slot is not None and r.exit_reason != "written_off"
 
 

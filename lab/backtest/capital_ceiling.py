@@ -42,6 +42,11 @@ import numpy as np
 from .costs import Scenario, settle_sql
 from .store import load_defaults
 
+# E63, E65 and E70 are frozen experiments, settled under rule 1 (before Codex review #6): their tooling keeps that rule
+# so a rerun reproduces them and its gates (E65 G4, E70 T1) compare like with like; a new experiment changes it on
+# purpose (LAB review on #6).
+SETTLE_RULE_E63 = 1
+
 PLAN = "research/capital-ceiling-plan-2026-10-23.md"
 PLAN_SHA = "2a17f2d2ea9d6e8f46bee05eb69e1f6427ab38ca456c794671baf587b3110916"
 DEV = (446_256_000, 452_304_000)  # dev2's window: epochs 1033-1046
@@ -246,7 +251,7 @@ def check_run(run_dir):
 def load(con, runs, c3_keys, store=None):
     """The rows table r (settled under both scenarios) and the C3 keys table c3."""
     cfg = load_defaults()
-    pnl = {s: settle_sql(Scenario.from_cfg(s, cfg))[0] for s in SCENARIOS}
+    pnl = {s: settle_sql(Scenario.from_cfg(s, cfg), SETTLE_RULE_E63)[0] for s in SCENARIOS}
     variants = sorted({c[1] for c in CANDIDATES})
     vlist = ", ".join(f"'{v}'" for v in variants)
     con.execute("""CREATE TABLE r (src INTEGER, variant VARCHAR, size_sol DOUBLE, d INTEGER, t UBIGINT, day VARCHAR,
@@ -542,7 +547,7 @@ def report_md(out):
 def parity(con, ref, days):
     """tp4_T600 without limits (base) at 0.5 / 1 / 2 SOL, d 2 / 3, against a reference run: rows and SOL/day."""
     cfg = load_defaults()
-    pnl = settle_sql(Scenario.from_cfg("base", cfg))[0]
+    pnl = settle_sql(Scenario.from_cfg("base", cfg), SETTLE_RULE_E63)[0]
     check_run(ref)
     src = f"read_parquet('{os.path.join(ref, 'parts', '*.parquet')}', union_by_name = true)"
     out = []
@@ -580,7 +585,7 @@ def main(argv=None):
         con.execute(f"SET temp_directory = '{tmp}'")
     info = load(con, a.parts, a.c3_keys, a.store)
     days, cells = compute(con, info["sandwich_flags"], slot_days(con))
-    out = {"plan": PLAN, "plan_sha256": PLAN_SHA, "daily_loss_book": "exit_day", "days": days, "c3_keys": info["c3_keys"], "provenance": info["provenance"],
+    out = {"plan": PLAN, "plan_sha256": PLAN_SHA, "daily_loss_book": "exit_day", "settle_rule": SETTLE_RULE_E63, "days": days, "c3_keys": info["c3_keys"], "provenance": info["provenance"],
            "primary": PRIMARY, "capitals": CAPITALS, "mappings": dict(MAPPINGS), "max_open": MAX_OPEN, "daily_loss_share": DAILY_LOSS,
            "cells": cells, "max_useful": {name: max_useful(cells, name) for name, *_ in CANDIDATES}, "w8b": W8B, "gap": GAP}
     if a.parity:

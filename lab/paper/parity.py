@@ -17,6 +17,13 @@ The paper arms (research/week4-spec-paper-h4h5-2026-10-16.md §6.4): an exit var
 d_ms 600, against the backtest with busy over the organic triggers only (as the engine's arm: equal on every
 organic trigger) and with the tournament's busy over every trigger (equal on the organic triggers of pools without
 a flagged trigger; the others are the documented difference, counted).
+
+Both sides settle under the engine's rule (costs.ENGINE_SETTLE_RULE, 1 until the paper deploy switches it; Codex review
+#6, LAB review Q4). A known difference that this comparison does not fix: a position in a pool that cannot pay after its
+deadline. The batch replay re-decides and re-attempts at every later event slot of the pool, and stays unsold
+(exit_slot NULL, n attempts). Since #533 the paper writes it off at its first failed attempt after the deadline
+(written_off, exit_slot set, 1 attempt). The failed exit fees therefore differ by the extra batch attempts, under either
+rule. Follow-up: count these rows in parity.md.
 """
 
 import argparse

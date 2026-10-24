@@ -449,8 +449,9 @@ def holdout(run_dir, config, store=STORE):
     cfg = load_defaults()
     con = _con()
     src = f"read_parquet('{results_glob(run_dir)}')"
-    pnl, ret = settle_sql(Scenario.from_cfg("base", cfg))
-    _, ret_p = settle_sql(Scenario.from_cfg("pessimistic", cfg))
+    # The hold-out (12 Oct) is frozen and settled under rule 1 (before Codex review #6); it is never re-run.
+    pnl, ret = settle_sql(Scenario.from_cfg("base", cfg), 1)
+    _, ret_p = settle_sql(Scenario.from_cfg("pessimistic", cfg), 1)
     parts = c["parts"]
     part = "CASE " + " ".join(f"WHEN t >= {lo} AND t < {hi} THEN '{k}'" for k, (lo, hi) in parts.items()) + " END"
     groups = {k: [k] for k in parts} | c.get("combined", {})

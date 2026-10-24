@@ -69,7 +69,7 @@ def test_the_o7_table_counts_the_undefined_vetoes(tmp_path):
         for ov, reason in (("none", "time"), ("O7V1", "o7_veto")):
             rows.append(dict(family="F7", variant="tp4_T600", size_sol=0.5, d=1, tau="empirical", q=0.5, mint=mint, t=t,
                              pool=None, overlay=ov, day="2026-09-01", skipped=False, entry_failed=False, cost=int(0.5 * sol),
-                             proceeds=int(0.4 * sol), exit_attempts=1, exit_reason=reason,
+                             proceeds=int(0.4 * sol), exit_attempts=1, exit_reason=reason, exit_slot=t + 50,
                              ins_share=share if ov != "none" else None, ins_reason=why if ov != "none" else None))
     pq.write_table(pa.Table.from_pylist(rows), tmp_path / "r.parquet")
     (o,) = overlay_effects(str(tmp_path / "r.parquet"), load_defaults())
