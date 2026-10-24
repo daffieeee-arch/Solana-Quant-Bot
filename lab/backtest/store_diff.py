@@ -549,7 +549,10 @@ def triggers(stores, strategies, lo, hi, spill, memory="1GB", threads=2, example
     report = {"check": "C4", "green": not red, "red": red, "window": [lo, hi], "store_start_a": s,
               "f7_range": list(f7_range(strategies.decision_bounds, clock, lo, hi)),
               "clock": {"ms_per_slot_a": ma.get("ms_per_slot"), "ms_per_slot_b_same_epochs": ms_b,
-                        "regimes": [list(r) for r in clock.regimes(lo, hi)]},
+                        "regimes": [list(r) for r in clock.regimes(lo, hi)],
+                        # LAB nit on #584: one clock for both stores' triggers, so a d difference against a run on
+                        # dev2's own per-epoch ms (ms_per_slot_b_same_epochs) is the clock, not the build
+                        "d_from": "A's ms per slot (its meta), for both stores"},
               "segments": dict(sorted(segs.items()))}
     rows = [("a",) + _row(r, True) for r in ta.values()] + [("b",) + _row(r, True) for r in tb.values()]
     return report, sorted(rows, key=lambda r: [str(v) for v in r])
@@ -668,6 +671,8 @@ def _summary(r):
                   f"remainder_b {x['remainder_b']}" if "remainder_b" in x else "")
         print("pools", json.dumps(r["categories"]["pools"]["columns"], sort_keys=True)[:2000])
     elif r["check"] == "C4":
+        print("clock for d:", r["clock"]["d_from"], json.dumps(r["clock"]["regimes"]), "B's ms on those epochs",
+              json.dumps(r["clock"]["ms_per_slot_b_same_epochs"], sort_keys=True))
         for g, x in r["segments"].items():
             print(g, {k: v for k, v in x.items() if k != "examples"})
     elif r["check"] == "inputs":

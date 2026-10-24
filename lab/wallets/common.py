@@ -44,7 +44,11 @@ def store_meta(con):
 def forward_guard(lo, hi, meta):
     """--forward: instead of guard, a forward store (backtest.store's period 'forward') that starts at or after
     FORWARD_START, and a slot range inside it. Never a dev, hold-out, clean or paper store, never a slot before 1064."""
-    period, s0, s1 = meta.get("period"), int(meta["slot_start"]), int(meta["slot_end_exclusive"])
+    period = meta.get("period")
+    try:
+        s0, s1 = int(meta["slot_start"]), int(meta["slot_end_exclusive"])
+    except (KeyError, TypeError, ValueError) as e:  # one kind of refusal in a NAS log (LAB nit on #571)
+        raise ValueError(f"--forward needs the store's slot_start and slot_end_exclusive in its meta ({e!r})") from e
     if period != "forward":
         raise ValueError(f"--forward reads forward stores only (this store's period: {period!r})")
     if s0 < FORWARD_START:

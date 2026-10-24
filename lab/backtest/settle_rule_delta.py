@@ -124,7 +124,9 @@ def parts_glob(d):
 
 
 def clean_source(name, result_path):
-    """(parts dir, provenance) of a locked H3 / H4 / H5 result."""
+    """(parts dir, provenance) of a locked H3 / H4 / H5 result. Puts this checkout's lab/ on sys.path to import
+    wallets.clean_reports (the script runs as `python -P -m backtest.settle_rule_delta` from lab/, so no other path is
+    searched first)."""
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
     from wallets.clean_reports import PRODUCER, parts_dir
 

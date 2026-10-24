@@ -17,6 +17,10 @@ import urllib.request
 SERVER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "server.py")
 HOLDOUT_START = 452_304_000
 HOLDOUT_END = 454_464_000  # exclusive: the hold-out is epochs 1047-1051; live paper (epoch 1064 on) is past it
+# The server's analytics database (server.ANALYTICS). A host without it (the NAS containers: N1 of 24 Oct) answers 503
+# "database niet beschikbaar" on every data route; Api.get skips there. With the file present a 503 still fails.
+ANALYTICS = os.path.join(os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab"),
+                         "analytics", "analytics.duckdb")
 
 
 def free_port():
@@ -91,6 +95,8 @@ class Api(unittest.TestCase):
 
     def get(self, path):
         status, _, body = self.req(path)
+        if status == 503 and not os.path.exists(ANALYTICS):
+            self.skipTest(f"no {ANALYTICS} on this host (a 503 there is the missing database, not a regression)")
         self.assertEqual(status, 200, body[:200])
         return json.loads(body)
 

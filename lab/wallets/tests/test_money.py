@@ -160,6 +160,12 @@ def test_forward_reads_forward_stores_from_1064_only(tmp_path, monkeypatch):
     refused(tmp_path / "fwd1053.duckdb", 454_896_000, 454_896_000 + DAY_SLOTS, "before epoch 1064")
     refused(tmp_path / "fwd.duckdb", FWD0 - 1, FWD0 + DAY_SLOTS, "outside the store")
     refused(tmp_path / "fwd.duckdb", FWD0, FWD0 + 3 * DAY_SLOTS + 1, "outside the store")
+    # a meta without the window: the same kind of refusal (ValueError), never a KeyError (LAB nit on #571)
+    from wallets.common import forward_guard
+    for meta in ({"period": "forward"}, {"period": "forward", "slot_start": FWD0},
+                 {"period": "forward", "slot_start": None, "slot_end_exclusive": FWD0 + DAY_SLOTS}):
+        with pytest.raises(ValueError, match="slot_start and slot_end_exclusive"):
+            forward_guard(FWD0, FWD0 + 1, meta)
     # the CLI: --forward never writes into the development money-v1 default
     monkeypatch.setattr("sys.argv", ["money", "--from-slot", str(FWD0), "--to-slot", str(FWD0 + DAY_SLOTS), "--forward"])
     with pytest.raises(SystemExit):

@@ -4,6 +4,7 @@ Run: "$LAB_PY" -m unittest discover -s lab/analytics/tests -v   (light; a few se
 """
 import json
 import os
+import shutil
 import subprocess
 import tempfile
 import sys
@@ -26,29 +27,39 @@ FAKE_STORE_SQL = """
 DEV_META = '{"period": "dev", "slot_start": 450144000, "slot_end_exclusive": 452304000}'
 
 
+# lab/bin/q runs every accepted query in a systemd-run memory scope (the VPS rule). On a host without systemd-run (the
+# NAS containers, N1 of 24 Oct) a test that needs a query to RUN cannot pass; the refusal tests (q refuses before the
+# exec) still run there.
+needs_scope = unittest.skipIf(shutil.which("systemd-run") is None, "lab/bin/q runs queries in a systemd-run scope; this host has none")
+
+
 def q(sql, *args, env=None):
     return subprocess.run([Q, *args, sql], capture_output=True, text=True, timeout=120,
                           env={**os.environ, **(env or {})})
 
 
 class Works(unittest.TestCase):
+    @needs_scope
     def test_select(self):
         r = q("SELECT count(*) AS n FROM mints", "--json")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertGreater(json.loads(r.stdout)["rows"][0][0], 0)
 
+    @needs_scope
     def test_settings_are_hardened(self):
         r = q("SELECT current_setting('threads'), current_setting('enable_external_access'), "
               "current_setting('lock_configuration'), current_setting('autoload_known_extensions')", "--json")
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(json.loads(r.stdout)["rows"][0], [2, False, True, False])
 
+    @needs_scope
     def test_row_cap(self):
         r = q("SELECT * FROM range(2000)", "--json")
         out = json.loads(r.stdout)
         self.assertEqual(len(out["rows"]), 500)
         self.assertTrue(out["truncated"])
 
+    @needs_scope
     def test_only_development_slots(self):
         r = q("SELECT greatest((SELECT max(slot) FROM blocks), (SELECT max(slot) FROM curve), "
               "(SELECT max(slot) FROM pool), (SELECT max(create_slot) FROM mints))", "--json")
@@ -148,6 +159,7 @@ class MustNotTouchTheStore(unittest.TestCase):
         r = q(sql, env={"LAB_DATA_ROOT": self.tmp.name})
         self.assertNotEqual(r.returncode, 0, f"should have failed: {sql}\n{r.stdout}")
 
+    @needs_scope
     def test_fake_store_is_usable(self):
         # Otherwise the refusals below could pass only because q cannot open the copy at all.
         r = q("SELECT count(*) FROM mints UNION ALL SELECT count(*) FROM pool_trades", "--json",
@@ -175,6 +187,7 @@ if __name__ == "__main__":
 class RefusesANonDevStore(unittest.TestCase):
     """If STORE ever points at a store whose meta is not development-only, q must not open it."""
 
+    @needs_scope
     def test_holdout_meta(self):
         import duckdb
         for meta in ('{"period": "holdout", "slot_start": 452304000, "slot_end_exclusive": 454464000}',

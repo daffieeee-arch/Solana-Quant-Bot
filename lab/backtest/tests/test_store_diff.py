@@ -280,6 +280,7 @@ def test_c4_equal_triggers_and_an_explained_mint_are_green(tmp_path):
     assert rev["examples"][0]["a"][1] == "P_OLD" and rev["examples"][0]["b"][1] == "M_X"
     assert (r["segments"]["curve"]["equal"], r["segments"]["pool_normal"]["equal"]) == (1, 1)
     assert r["clock"]["regimes"] == [[F.LO, F.HI, 267.93]]
+    assert r["clock"]["d_from"] == "A's ms per slot (its meta), for both stores"  # the report names the clock of d
 
 
 def test_c4_a_difference_in_an_in_store_pool_is_red(tmp_path):

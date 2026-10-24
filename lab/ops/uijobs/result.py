@@ -46,7 +46,7 @@ def run_rule(con, parts, run, variants):
             fits.append(rule)
     if not fits:
         raise SystemExit(f"{run}: the parts' base total fits its summary.parquet under no settle rule")
-    return fits[0]
+    return fits[0]  # both fit only when no row's last attempt failed: the two rules then give the same rows
 
 
 def rows(run, variants, segment, farm, size, con=None, rule=None):
