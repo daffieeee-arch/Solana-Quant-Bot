@@ -29,7 +29,7 @@ import json
 import os
 import time
 
-from wallets.common import EPOCH_SLOTS, HOLDOUT_START, OUT_ROOT, Clock, connect, git_commit
+from wallets.common import EPOCH_SLOTS, HOLDOUT_START, OUT_ROOT, Clock, connect, git_commit, SOL_QUOTE
 from wallets.markout import ms_case
 from wallets import runners as R
 
@@ -140,9 +140,12 @@ def creator_history(con, clock):
 
 def market_context(con):
     """F5: pump-wide curve buy SOL and creates per UTC hour from the store; the hour before the entry's hour."""
-    con.execute("""CREATE OR REPLACE TEMP TABLE hrs AS
+    # SOL-quoted curves only: a PUMP-quoted curve logs q in PUMP units, which must not be summed as SOL (test_quote_filter;
+    # audit 2026-10-18); the fix of 2026-10-24 changes mkt_buy_sol / mkt_buys where such curves traded (E64 old harness, E75)
+    con.execute(f"""CREATE OR REPLACE TEMP TABLE hrs AS
         WITH cb AS (SELECT (b.block_time // 3600) AS hr, sum(c.q) / 1e9 AS buy_sol, count(*) AS buys
-                    FROM curve c JOIN blocks b ON b.slot = c.slot WHERE c.is_buy GROUP BY 1),
+                    FROM curve c JOIN blocks b ON b.slot = c.slot LEFT JOIN mints m ON m.mint = c.mint
+                    WHERE c.is_buy AND {SOL_QUOTE} GROUP BY 1),
              cr AS (SELECT (b.block_time // 3600) AS hr, count(*) AS creates FROM mints m JOIN blocks b ON b.slot = m.create_slot GROUP BY 1)
         SELECT COALESCE(cb.hr, cr.hr) AS hr, COALESCE(buy_sol, 0) AS mkt_buy_sol, COALESCE(buys, 0) AS mkt_buys, COALESCE(creates, 0) AS mkt_creates
         FROM cb FULL OUTER JOIN cr USING (hr)""")
