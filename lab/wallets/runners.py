@@ -15,8 +15,9 @@ when nothing can fill there (curve complete without a pool state yet, empty pool
 Measures per entry: the mark at every trade from the entry trade on (its post-state) up to 6 h = the net SOL of a
 full sell of the position at that state (price impact, venue fees, network cost; capped at the real SOL of the
 venue state PLUS our own net deposit q_in, since 2026-10-24 (spec-runners-mark-cap-2026-10-24.md; before, the cap was the
-logged reserve alone and valued a position on a venue thinner than the budget at that reserve: E71 section 3.3; the sell
-itself follows the engine's pool_sell_capped / curve_sell). mult_1h / mult_6h = the highest mark / cost within 1 h /
+logged reserve alone and valued a position on a venue thinner than the budget at that reserve: E71 section 3.3; reversed
+pools are deliberately unchanged: their constant-product payout is always below b; the sell itself follows the engine's
+pool_sell_capped / curve_sell). mult_1h / mult_6h = the highest mark / cost within 1 h /
 6 h, t_max the minutes from the entry to that mark, end_6h the mark at the last trade within 6 h, dd_6h the lowest
 mark before the maximum. After the curve completes, the mint's SOL pool prices the position (its own state).
 Three simple exits on the same marks, as multiples of the cost (x_tp2: the first mark >= 2 x cost; x_tr30 / x_tr50:
