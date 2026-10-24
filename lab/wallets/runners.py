@@ -210,7 +210,8 @@ def _pool_mark(pos, b, e, virt, q_in):
     """SQL: the gross SOL a full sell of `pos` tokens into a normal pool at the logged state (b tokens, e quote incl. the
     virtual part `virt`) can realise: the constant-product output e * pos // (b + pos), capped at the real quote reserve
     e - virt plus our own deposit q_in (the logged states lack it: spec-runners-mark-cap-2026-10-24). The output grows
-    with the tokens sold, so the most any sell can take out of a real reserve R is min(out(pos), R); no token inversion
+    with the tokens sold, so the most any sell can take out of a real reserve R is min(out(pos), R), within e/b lamports
+    above the largest sell the reserve can really pay (one token's worth of rounding); no token inversion
     (the R * b // virt inversion of #552 solved out(x) = R only for q_in = 0: Codex finding #3, 2026-10-24)."""
     return f"least(({e}) * ({pos}) // (({b}) + ({pos})), greatest(0, ({e}) - ({virt}) + ({q_in})))"
 
