@@ -120,7 +120,8 @@ def _guard(con, run, src, cols):
 # The settings every run must share with E63's (capital-ceiling-d15ac45), so that its d 2 and 3 cells are like for like with
 # the new d 0 / 1 / 5 / 8 / 13 cells by construction (LAB review of #536): equal fields, and the leads' variants and sizes
 # inside each run's sets (busy is kept per (family, variant), so other variants in a run do not change these rows).
-SAME = ("families", "segments", "f7_grid", "m1_grid", "tau", "tol", "n2_k", "only", "decide_range")
+# slippage_tol is the tournament's name for --tol (config.json); the earlier "tol" named no field (found 24 Oct).
+SAME = ("families", "segments", "f7_grid", "m1_grid", "tau", "slippage_tol", "n2_k", "only", "decide_range")
 
 
 def grid_check(runs):
