@@ -48,6 +48,12 @@ TABLES = {
 # State the two runs must share: the same groups and the same costs, or the comparison means nothing.
 STATE_KEYS = ("groups", "cost_scenario", "feed")
 SHOWN = 50
+# The one difference a freed pool may make to a signal both runs have: one saw the pool busy, the other entered.
+FREED_SIGNAL = {("skipped", "busy"), ("entered", None)}
+# The exits columns a write-off ends earlier than the run without it (the exit, its day and attempts, the P&L, and the
+# diagnostics counted over the hold); entry, size, cost, cap and the flags must match.
+WRITE_OFF_COLS = {"day", "exit_decision_slot", "exit_slot", "exit_reason", "pnl", "ret", "exit_attempts", "n_flow_slots",
+                  "reverted_direct", "reverted_router", "sells_dropped", "sells_scaled", "peak_mark", "peak_slot"}
 # The signals scope (C1b): the signal columns that do not depend on positions (block_time, d_ms and farm_complete are
 # NULL in a replay, engine.py:656-659, 731-732), and the farm gates, which _signal checks before busy (engine.py:737-742).
 SIGNAL_COLS = ("day", "venue", "orientation", "depth", "trigger_trader", "farm", "pool_seen_slot", "farm_window_complete",
@@ -272,15 +278,19 @@ def writeoff_causes(path_a, path_b):
     """The causes of an engine without the write-off (A) against one with it (B, engine._write_off_if_stuck), both on the
     same input: `written_off`, B's exit 'written_off' (and its sell fill) where A's position never sold (exit_slot NULL,
     proceeds 0, e.g. closed by the data's end), with the same entry; B's exit at its last decision + d, that decision at or
-    after the rule's deadline (entry_slot + cap_slots), and the P&L apart by the failed attempts only.
-    `written_off_later_sold`: the same write-off where A's position sold later, after B's write-off (the pool got
-    liquidity again: the late sale the write-off forgoes, by the owner's rule); listed apart. `busy_freed`: a row of a
-    (family, variant, key) after B's write-off there (its pool freed, where A's position still held it)."""
+    after the rule's deadline (entry_slot + cap_slots), the P&L apart by the failed attempts only, and no other exits
+    column apart than those a write-off ends earlier (WRITE_OFF_COLS). `written_off_later_sold`: the same write-off where
+    A's position sold later, after B's write-off (the pool got liquidity again: the late sale the write-off forgoes, by the
+    owner's rule); listed apart. `busy_freed`: after a write-off freed the pool of a (family, variant, key), a signal both
+    runs have whose only difference is busy on one side and entered on the other, and a row of that entered signal
+    (order, fill, exit, position) the busy side has not. A signal only one side has, a row of a signal both entered, or a
+    row both have that differs in anything else stays unexplained (Codex review #7)."""
     wo = {tuple(r[c] for c in TABLES["exits"][0]): r for r in _raw(path_b, "exits") if r["exit_reason"] == "written_off"}
     failed_tx = json.loads(_state(path_b).get("cost_scenario") or "{}").get("failed_tx")
     freed = {}
     for k, r in wo.items():
         freed.setdefault(k[:3], []).append(r["exit_slot"])
+    sig = [_rows(p, "signals", *TABLES["signals"], None, None) for p in (path_a, path_b)]
 
     def written_off(table, key, a, b):
         if table not in ("exits", "fills") or a is None or b is None:
@@ -294,22 +304,38 @@ def writeoff_causes(path_a, path_b):
             if (a["slot"], a["quote"]) == (None, 0):
                 return "written_off"
             return "written_off_later_sold" if a["slot"] is not None and a["slot"] > x["exit_slot"] else None
+        differ = {c for c in TABLES["exits"][1] if a[c] != b[c]}
         d = x["entry_slot"] - key[3]  # x: B's exits row with every column (cap_slots is not compared)
         b_ok = ((a["entry_slot"], a["tokens"], a["cost"]) == (x["entry_slot"], x["tokens"], x["cost"])
                 and x["exit_slot"] == x["exit_decision_slot"] + d and x["cap_slots"] is not None
                 and x["exit_decision_slot"] >= x["entry_slot"] + x["cap_slots"] and not x["proceeds"])
         if not b_ok:
             return None
-        if (a["exit_slot"] is None and not a["proceeds"] and failed_tx is not None
+        if (a["exit_slot"] is None and not a["proceeds"] and failed_tx is not None and not differ - WRITE_OFF_COLS
                 and x["pnl"] - a["pnl"] == (a["exit_attempts"] - x["exit_attempts"]) * failed_tx):
             return "written_off"
-        if a["exit_slot"] is not None and a["exit_slot"] > x["exit_slot"]:
-            return "written_off_later_sold"
+        if a["exit_slot"] is not None and a["exit_slot"] > x["exit_slot"] and not differ - WRITE_OFF_COLS - {"proceeds", "vault_capped"}:
+            return "written_off_later_sold"  # A's later sale: its proceeds (and a capped vault) too
         return None
+
+    def pair(k):
+        """(A's, B's) (status, reason) of the signal k, or None when a side has no such signal."""
+        s = [x.get(k) for x in sig]
+        return None if None in s else tuple((r["status"], r["reason"]) for r in s)
 
     def busy_freed(table, key, a, b):
         slots = freed.get(tuple(key[:3]))
-        return "busy_freed" if slots and key[3] > min(slots) else None
+        if not slots or key[3] <= min(slots):
+            return None
+        p = pair(tuple(key[:4]))
+        if p is None or set(p) != FREED_SIGNAL:
+            return None  # a signal one side lacks, or not busy against entered
+        if table == "signals":
+            if a is None or b is None or {c for c in TABLES["signals"][1] if a[c] != b[c]} - {"status", "reason"}:
+                return None
+            return "busy_freed"
+        entered = 0 if p[0] == ("entered", None) else 1  # the side whose signal entered has the rows, the busy side none
+        return "busy_freed" if (a, b)[entered] is not None and (a, b)[1 - entered] is None else None
 
     return (written_off, busy_freed)
 
