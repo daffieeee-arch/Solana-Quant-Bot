@@ -14,7 +14,9 @@ when nothing can fill there (curve complete without a pool state yet, empty pool
 
 Measures per entry: the mark at every trade from the entry trade on (its post-state) up to 6 h = the net SOL of a
 full sell of the position at that state (price impact, venue fees, network cost; capped at the real SOL of the
-venue, as the engine's pool_sell_capped / curve_sell do). mult_1h / mult_6h = the highest mark / cost within 1 h /
+venue state PLUS our own net deposit q_in, since 2026-10-24 (spec-runners-mark-cap-2026-10-24.md; before, the cap was the
+logged reserve alone and valued a position on a venue thinner than the budget at that reserve: E71 section 3.3; the sell
+itself follows the engine's pool_sell_capped / curve_sell). mult_1h / mult_6h = the highest mark / cost within 1 h /
 6 h, t_max the minutes from the entry to that mark, end_6h the mark at the last trade within 6 h, dd_6h the lowest
 mark before the maximum. After the curve completes, the mint's SOL pool prices the position (its own state).
 Three simple exits on the same marks, as multiples of the cost (x_tp2: the first mark >= 2 x cost; x_tr30 / x_tr50:
@@ -237,7 +239,13 @@ def entries(con, cost_tx):
                -- the curve fill capped at the real tokens buys exactly rt_pre (curve_buy_exact_out): q = rt * vq // (vt - rt) + 1 plus fees
                CASE WHEN venue = 'curve' AND tokens = rt_pre
                     THEN (rt_pre * vq_pre) // (vt_pre - rt_pre) + 1 + ({_fees('(rt_pre * vq_pre) // (vt_pre - rt_pre) + 1', 'fee_bps', 'creator_bps')}) + {cost_tx}
-                    ELSE {SIZE} + {cost_tx} END::HUGEINT AS cost
+                    ELSE {SIZE} + {cost_tx} END::HUGEINT AS cost,
+               -- q_in: our own net deposit into the venue's real reserve (after the venue fees), which the logged states do not
+               -- contain; marks add it to the real reserve before capping a sell (spec-runners-mark-cap-2026-10-24.md)
+               CASE WHEN venue = 'curve' AND tokens = rt_pre THEN (rt_pre * vq_pre) // (vt_pre - rt_pre) + 1
+                    WHEN venue = 'curve' THEN cq
+                    WHEN orientation = 'normal' THEN pn
+                    ELSE {SIZE} END::HUGEINT AS q_in
         FROM g WHERE tokens IS NOT NULL AND tokens > 0 AND (venue = 'curve' OR orientation = 'reversed' OR tokens < b_pre)""")
     progress(f"entries {_count(con, 'ent')} of {_count(con, 'mom')} moments (one per key x moment x t): " + str(con.execute("SELECT moment, venue, count(*) FROM ent GROUP BY 1, 2 ORDER BY 1, 2").fetchall()))
 
@@ -251,15 +259,17 @@ def marks(con, cost_tx, hi_ext):
             UNION ALL
             SELECT key, ord, slot, 'pool', orientation, NULL, NULL, NULL, NULL, NULL, NULL, b_post, e_post, virt, lp, pr, cr, cb FROM pl),
         j AS (
-            SELECT e.key, e.moment, e.t, e.entry_ord, e.entry_slot, e.h1, e.cost, e.tokens AS pos, s.ord, s.slot, s.venue, s.orientation,
+            SELECT e.key, e.moment, e.t, e.entry_ord, e.entry_slot, e.h1, e.cost, e.tokens AS pos, e.q_in, s.ord, s.slot, s.venue, s.orientation,
                    s.vt, s.vq, s.rt, s.rq, s.fee_bps, s.creator_bps, s.b, s.e, s.virt, s.lp, s.pr, s.cr, s.cb
             FROM ent e JOIN st s ON s.key = e.key AND s.ord >= e.entry_ord AND s.slot <= e.entry_slot + e.h6),
         q AS (
             SELECT *,
-              CASE WHEN venue = 'curve' AND rt > 0 THEN least(rq, (pos * vq) // (vt + pos)) END::HUGEINT AS cq,
+              -- the real reserve available to our sell = the logged reserve + our own deposit q_in (the logged states lack it;
+              -- without q_in a position on a venue thinner than the budget is valued at the reserve: E71 section 3.3)
+              CASE WHEN venue = 'curve' AND rt > 0 THEN least(rq + q_in, (pos * vq) // (vt + pos)) END::HUGEINT AS cq,
               CASE WHEN venue = 'pool' AND orientation = 'normal' AND b > 0 AND e > 0
-                   THEN CASE WHEN (e * pos) // (b + pos) <= e - virt THEN (e * pos) // (b + pos)
-                             WHEN e > e - virt THEN (e * (((e - virt) * b) // virt)) // (b + ((e - virt) * b) // virt) END END::HUGEINT AS pg,
+                   THEN CASE WHEN (e * pos) // (b + pos) <= e - virt + q_in THEN (e * pos) // (b + pos)
+                             WHEN e > e - virt THEN (e * (((e - virt + q_in) * b) // virt)) // (b + ((e - virt + q_in) * b) // virt) END END::HUGEINT AS pg,
               CASE WHEN venue = 'pool' AND orientation = 'reversed' AND b > 0 AND e > 0 THEN {_net_for_budget('pos', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS rn
             FROM j),
         n AS (
