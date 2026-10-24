@@ -345,7 +345,7 @@ def daily_report(journal, day, watch_log=None):
     feed = feed_of(journal.state(FEED_KEY),
                    journal.db.execute("SELECT 1 FROM signals WHERE received_unix_ns IS NOT NULL LIMIT 1").fetchone())
     judged = assessment(traded, mean, lo, hi, verdict_, clock_state(clock, day, verdict_), cost_scenario(journal),
-                        primary_group(journal.state(GROUPS_KEY)), feed)
+                        primary_group(journal.state(GROUPS_KEY)), feed, settle_rule=int(journal.state("settle_rule") or 1))
     final, mdd, taken, skipped = capital_sim([(x["entry_slot"], x["exit_slot"], x["cost"], x["pnl"], not x["tokens"])
                                               for x in traded])
     gaps = [b for b in beats if b["note"]]

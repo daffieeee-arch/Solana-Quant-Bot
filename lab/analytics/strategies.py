@@ -130,10 +130,17 @@ def load(con, run_dir, defaults=DEFAULTS, stage_dir=None):
                             "SELECT DISTINCT family, variant FROM strategy_summary").fetchall()
         if extra:
             raise SystemExit(f"positions for family x variant missing from summary.parquet: {extra[:5]}")
+        run_rule = None  # the run's settle rule, from the first chunk that tells them apart (chunk_rules)
         for fam, var in chunks:
             where = f"family = {sql_str(fam)} AND variant = {sql_str(var)}"
             con.execute(f"CREATE OR REPLACE TEMP TABLE pos AS SELECT * FROM {staged} WHERE {where}")
-            settle_chunk(con, cfg, pos_keys, k_sql, where, has_base)
+            rules = chunk_rules(con, cfg, pos_keys, k_sql, where, has_base)
+            if not rules or (run_rule is not None and run_rule not in rules):
+                raise SystemExit(f"re-settled P&L matches the run's own under no settle rule (rule {run_rule or 'none'} so far; {where})")
+            if run_rule is None and len(rules) == 1:
+                run_rule = rules[0]
+            settle_chunk(con, cfg, pos_keys, k_sql, where, has_base, run_rule or rules[0])
+        conf["settle_rule_detected"] = run_rule
         con.execute("DROP TABLE IF EXISTS pos")
     finally:
         shutil.rmtree(stage, ignore_errors=True)
@@ -154,48 +161,81 @@ def sql_str(v):
     return "NULL" if v is None else "'" + str(v).replace("'", "''") + "'"
 
 
-def settle_chunk(con, cfg, pos_keys, k_sql, where, has_base):
-    """Settle temp table `pos` (one family x variant) under every cost scenario, check its group totals
-    against strategy_summary, and append its curves (and, for base, its positions to strategy_results)."""
-    for name, per_tx, failed, rent, rent_mode, adverse in scenarios(cfg):
-        # Every exit is full: the remainder is burned and the account closed (backtest/costs.py exit_net's doc).
-        refund = rent if rent_mode in ("refunded", "refunded_on_full_exit") else 0
-        # Same arithmetic as costs.settle_sql: the factors are Python floats, so multiply as DOUBLE (a bare
-        # 0.995 literal is DECIMAL in DuckDB and truncates differently by one lamport).
-        up, down = f"{1 + adverse!r}::DOUBLE", f"{1 - adverse!r}::DOUBLE"
-        con.execute(f"""
-            CREATE OR REPLACE TEMP TABLE settled AS
+# backtest.costs.failed_exits_sql (this module does not import the lab's backtest package): the failed exit attempts that
+# pay failed_tx. Rule 2 (Codex review #6, 24 Oct): every one, i.e. exit_attempts - filled; rule 1 (runs settled before
+# it): exit_attempts - 1. analytics/tests pins the text against costs'.
+FILLED_SQL = "(exit_slot IS NOT NULL AND exit_reason IS DISTINCT FROM 'written_off')"
+
+
+def failed_exits_sql(rule=2):
+    if rule == 1:
+        return "GREATEST(0, COALESCE(exit_attempts, 1) - 1)"
+    return f"GREATEST(0, COALESCE(exit_attempts, 1) - CASE WHEN {FILLED_SQL} THEN 1 ELSE 0 END)"
+
+
+def _settled_sql(k_sql, has_base, per_tx, failed, rent, rent_mode, adverse, rule):
+    # Every exit is full: the remainder is burned and the account closed (backtest/costs.py exit_net's doc).
+    refund = rent if rent_mode in ("refunded", "refunded_on_full_exit") else 0
+    # Same arithmetic as costs.settle_sql: the factors are Python floats, so multiply as DOUBLE (a bare
+    # 0.995 literal is DECIMAL in DuckDB and truncates differently by one lamport).
+    up, down = f"{1 + adverse!r}::DOUBLE", f"{1 - adverse!r}::DOUBLE"
+    net = f"(trunc(coalesce(proceeds, 0)::DOUBLE * {down})::BIGINT - {per_tx} + {refund} - {failed_exits_sql(rule)} * {failed})"
+    cost = f"(trunc(coalesce(cost, 0)::DOUBLE * {up})::BIGINT + {per_tx} + {rent})"
+    return f"""
             SELECT {k_sql}, mint, venue, day, t AS signal_slot, entry_slot, exit_slot, exit_reason, entry_failed,
                    cf_graduation, hist_ret,
                    {"pnl_base_lamports," if has_base else ""}
-                   CASE WHEN entry_failed THEN -{failed}
-                        ELSE (trunc(coalesce(proceeds, 0)::DOUBLE * {down})::BIGINT - {per_tx} + {refund}
-                              - greatest(0, coalesce(exit_attempts, 1) - 1) * {failed})
-                             - (trunc(coalesce(cost, 0)::DOUBLE * {up})::BIGINT + {per_tx} + {rent}) END AS pnl,
-                   CASE WHEN entry_failed THEN NULL
-                        ELSE (trunc(coalesce(proceeds, 0)::DOUBLE * {down})::BIGINT - {per_tx} + {refund}
-                              - greatest(0, coalesce(exit_attempts, 1) - 1) * {failed})
-                             / (trunc(coalesce(cost, 0)::DOUBLE * {up})::BIGINT + {per_tx} + {rent}) - 1 END AS ret
-            FROM pos""")
-        if name == "base" and has_base:
-            off = con.execute("SELECT count(*) FROM settled WHERE pnl IS DISTINCT FROM pnl_base_lamports").fetchone()[0]
-            if off:
-                raise SystemExit(f"{off} positions differ from the run's own pnl_base_lamports ({where})")
-        # Group totals per key, plus roll-ups (farm = 'all'); keys may be NULL, so match IS NOT DISTINCT FROM.
-        mine = [f"SELECT {k_sql}, sum(pnl) AS pnl FROM settled GROUP BY ALL"]
-        for rk, rv in ROLLUP.items():
-            if rk in pos_keys:
-                cols = ", ".join(f"'{rv}' AS {k}" if k == rk else k for k in pos_keys)
-                mine.append(f"SELECT {cols}, sum(pnl) FROM settled GROUP BY ALL")
-        on = " AND ".join(f"a.{k} IS NOT DISTINCT FROM b.{k}" for k in pos_keys)
-        bad, missing = con.execute(f"""
-            WITH a AS ({" UNION ALL ".join(mine)}),
-                 b AS (SELECT * FROM strategy_summary WHERE scenario = ? AND {where})
-            SELECT (SELECT count(*) FROM a JOIN b ON {on} WHERE abs(a.pnl / 1e9 - b.total_pnl_sol) > 1e-6),
-                   (SELECT count(*) FROM b ANTI JOIN a ON {on} WHERE b.filled > 0)""", [name]).fetchone()
-        if bad or missing:
-            raise SystemExit(f"scenario {name}: re-settled P&L differs from summary.parquet "
-                             f"({bad} groups differ, {missing} missing; {where})")
+                   CASE WHEN entry_failed THEN -{failed} ELSE {net} - {cost} END AS pnl,
+                   CASE WHEN entry_failed THEN NULL ELSE {net} / {cost} - 1 END AS ret
+            FROM pos"""
+
+
+def _check(con, name, pos_keys, k_sql, where, has_base):
+    """None when temp table `settled` matches the run's own numbers (pnl_base_lamports, strategy_summary), else why."""
+    if name == "base" and has_base:
+        off = con.execute("SELECT count(*) FROM settled WHERE pnl IS DISTINCT FROM pnl_base_lamports").fetchone()[0]
+        if off:
+            return f"{off} positions differ from the run's own pnl_base_lamports ({where})"
+    # Group totals per key, plus roll-ups (farm = 'all'); keys may be NULL, so match IS NOT DISTINCT FROM.
+    mine = [f"SELECT {k_sql}, sum(pnl) AS pnl FROM settled GROUP BY ALL"]
+    for rk, rv in ROLLUP.items():
+        if rk in pos_keys:
+            cols = ", ".join(f"'{rv}' AS {k}" if k == rk else k for k in pos_keys)
+            mine.append(f"SELECT {cols}, sum(pnl) FROM settled GROUP BY ALL")
+    on = " AND ".join(f"a.{k} IS NOT DISTINCT FROM b.{k}" for k in pos_keys)
+    bad, missing = con.execute(f"""
+        WITH a AS ({" UNION ALL ".join(mine)}),
+             b AS (SELECT * FROM strategy_summary WHERE scenario = ? AND {where})
+        SELECT (SELECT count(*) FROM a JOIN b ON {on} WHERE abs(a.pnl / 1e9 - b.total_pnl_sol) > 1e-6),
+               (SELECT count(*) FROM b ANTI JOIN a ON {on} WHERE b.filled > 0)""", [name]).fetchone()
+    if bad or missing:
+        return f"scenario {name}: re-settled P&L differs from summary.parquet ({bad} groups differ, {missing} missing; {where})"
+    return None
+
+
+def chunk_rules(con, cfg, pos_keys, k_sql, where, has_base):
+    """The settle rules (2, 1) under which temp table `pos` reproduces the run's own base numbers: a run settled before
+    Codex review #6 matches rule 1 only where it has a row whose last exit attempt failed; such a chunk decides the run's
+    rule. A chunk without one matches both."""
+    out = []
+    for rule in (2, 1):
+        for name, *sc in scenarios(cfg):
+            if name == "base":
+                con.execute(f"CREATE OR REPLACE TEMP TABLE settled AS {_settled_sql(k_sql, has_base, *sc, rule)}")
+                if _check(con, name, pos_keys, k_sql, where, has_base) is None:
+                    out.append(rule)
+    con.execute("DROP TABLE IF EXISTS settled")
+    return out
+
+
+def settle_chunk(con, cfg, pos_keys, k_sql, where, has_base, rule=2):
+    """Settle temp table `pos` (one family x variant) under every cost scenario (settle rule `rule`), check its group
+    totals against strategy_summary, and append its curves (and, for base, its positions to strategy_results)."""
+    for name, *sc in scenarios(cfg):
+        con.execute(f"CREATE OR REPLACE TEMP TABLE settled AS {_settled_sql(k_sql, has_base, *sc, rule)}")
+        why = _check(con, name, pos_keys, k_sql, where, has_base)
+        if why:
+            raise SystemExit(why)
         # Curves per group, and per roll-up group the summary has (farm 'all': all positions of the other keys).
         sources = [("settled", "")]
         for rk, rv in ROLLUP.items():

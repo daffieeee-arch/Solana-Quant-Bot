@@ -26,7 +26,7 @@ import time
 from collections import defaultdict
 
 from backtest import replay, streams
-from backtest.costs import Scenario, settle
+from backtest.costs import ENGINE_SETTLE_RULE, Scenario, settle
 from backtest.store import load_defaults
 from backtest.strategies import F6_FARM_MS, Clock, Signal, f7_signals_sql
 from backtest.tournament import STORE, delay_slots, exit_rule_for, work_items
@@ -71,7 +71,8 @@ def backtest_side(con, cfg, clock, a, b, var=VARIANT, d=D, d_ms=None, segments=N
             sim = replay.simulate_pool_position if venue == "pool" else replay.simulate_curve_position
             r = sim(st, s.t, int(SIZE * 1e9), dd, Q, exit_rule_for(s, scn, dd, clock, st), TOL, replay.Tau("empirical"))
             busy = r.exit_slot or s.t
-            pnl, _, _ = settle(r, scn) if not r.skipped else (None, None, None)
+            # the engine's settle rule, so the two sides' P&L compare (backtest.costs.ENGINE_SETTLE_RULE)
+            pnl, _, _ = settle(r, scn, ENGINE_SETTLE_RULE) if not r.skipped else (None, None, None)
             out[(key, s.t)] = {"farm": farm.get((key, s.t)),
                                "status": "skipped" if r.skipped else "entry_failed" if r.entry_failed else "filled",
                                "tokens": r.tokens, "cost": r.cost, "exit_decision_slot": r.exit_decision_slot,

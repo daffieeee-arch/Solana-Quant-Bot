@@ -39,7 +39,7 @@ import numpy as np
 
 from backtest import replay
 from backtest import venues as V
-from backtest.costs import Scenario, settle
+from backtest.costs import ENGINE_SETTLE_RULE, Scenario, settle
 from backtest.replay import _hist_state, _insertion_index
 from backtest.store import DAY_MS, load_defaults
 from backtest.strategies import (
@@ -944,7 +944,7 @@ class Engine:
                    size=size, status=status, reason=r.exit_reason if status != "filled" else None)
         if status != "filled":
             if r.entry_failed:  # the transaction landed and failed: it costs the failed-tx fee
-                pnl, _, _ = settle(r, self.scn)
+                pnl, _, _ = settle(r, self.scn, ENGINE_SETTLE_RULE)
                 self._book_loss(p, pnl)
                 self._wallet_tx(p, "buy", slot, pnl, settled=pnl)
                 self.j.put("exits", family=p.family, variant=p.variant, key=p.key, t=p.t, day=self.day, entry_slot=slot,
@@ -1047,7 +1047,7 @@ class Engine:
         p, r = o.p, o.r
         if self.replaying:
             return self._replayed_exit(o, slot)
-        pnl, ret, _ = settle(r, self.scn)
+        pnl, ret, _ = settle(r, self.scn, ENGINE_SETTLE_RULE)
         self.j.put("fills", family=p.family, variant=p.variant, key=p.key, t=p.t, side="sell", day=self.day,
                    slot=r.exit_slot, tokens=r.tokens, quote=r.proceeds)
         self.j.put("exits", family=p.family, variant=p.variant, key=p.key, t=p.t, day=self.day, entry_slot=r.entry_slot,
@@ -1066,8 +1066,9 @@ class Engine:
         rule's max_slots: from there on every exit rule says exit), that decision's fill failed (pending None) and no
         sale is possible now (sell() None: a pool whose liquidity was withdrawn). A slippage miss is no write-off: the
         position sells at its next decision. exit_reason 'written_off' at the failed attempt's slot (decision + d),
-        proceeds 0, settled like the backtest's unsold row (settle: the exit's modelled close returns the rent, each
-        failed attempt before it pays the failed-tx fee); the normal exit path frees its place, books its loss on the
+        proceeds 0, settled like the backtest's unsold row (settle under ENGINE_SETTLE_RULE: the exit's modelled close
+        returns the rent; rule 1, until the paper deploy switches it, charges every failed attempt but the last, rule 2
+        every one); the normal exit path frees its place, books its loss on the
         day, starts the pool's cooldown and sets busy. True when written off."""
         sim, r = o.sim, o.r
         if (sim is None or sim.done or o.grad or sim.pending is not None or sim.deadline is None
