@@ -206,6 +206,15 @@ def _net_for_budget(budget, *bps):
     return f"(CASE {cases} ELSE {n0} END)"
 
 
+def _pool_mark(pos, b, e, virt, q_in):
+    """SQL: the gross SOL a full sell of `pos` tokens into a normal pool at the logged state (b tokens, e quote incl. the
+    virtual part `virt`) can realise: the constant-product output e * pos // (b + pos), capped at the real quote reserve
+    e - virt plus our own deposit q_in (the logged states lack it: spec-runners-mark-cap-2026-10-24). The output grows
+    with the tokens sold, so the most any sell can take out of a real reserve R is min(out(pos), R); no token inversion
+    (the R * b // virt inversion of #552 solved out(x) = R only for q_in = 0: Codex finding #3, 2026-10-24)."""
+    return f"least(({e}) * ({pos}) // (({b}) + ({pos})), greatest(0, ({e}) - ({virt}) + ({q_in})))"
+
+
 def entries(con, cost_tx):
     """The entry trade of every moment (the first fillable trade >= t + d_slots) and the fill at its pre-state."""
     con.execute(f"""CREATE OR REPLACE TEMP TABLE cand AS
@@ -268,9 +277,7 @@ def marks(con, cost_tx, hi_ext):
               -- the real reserve available to our sell = the logged reserve + our own deposit q_in (the logged states lack it;
               -- without q_in a position on a venue thinner than the budget is valued at the reserve: E71 section 3.3)
               CASE WHEN venue = 'curve' AND rt > 0 THEN least(rq + q_in, (pos * vq) // (vt + pos)) END::HUGEINT AS cq,
-              CASE WHEN venue = 'pool' AND orientation = 'normal' AND b > 0 AND e > 0
-                   THEN CASE WHEN (e * pos) // (b + pos) <= e - virt + q_in THEN (e * pos) // (b + pos)
-                             WHEN e > e - virt THEN (e * (((e - virt + q_in) * b) // virt)) // (b + ((e - virt + q_in) * b) // virt) END END::HUGEINT AS pg,
+              CASE WHEN venue = 'pool' AND orientation = 'normal' AND b > 0 AND e > 0 THEN {_pool_mark('pos', 'b', 'e', 'virt', 'q_in')} END::HUGEINT AS pg,
               CASE WHEN venue = 'pool' AND orientation = 'reversed' AND b > 0 AND e > 0 THEN {_net_for_budget('pos', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS rn
             FROM j),
         n AS (
