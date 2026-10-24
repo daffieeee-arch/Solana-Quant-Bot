@@ -82,6 +82,8 @@ NAS op commit 4457b80 (`STEP=e72`); cellen copy (primair), copy2–5, orig. **Le
 
 NAS op commit 4457b80 (`STEP=e73`); goede set (plandrempel 5 SOL = 5e9 lamports) ≈ 8–14,5 k wallets per dag (feit, sizing-query 24 okt, niet gepind); cellen k2n30 (primair), k3n30, k2n10, k2n120. Lezing vooraf: "hun gelijktijdige kopen volgen", niet "kopiëren". **Leesregel (vooraf, na E71 §3.3):** dieptebuckets als bij E72; oordeel op het ≥ 2 SOL-deel; afwijkend oordeel op de volledige set → NOT_JUDGED tot de herrun op het gefixte harnas.
 
+**Addendum (vooraf, 24 okt ≈ 10:30Z, vóór enige E72/E73-uitslag; coördinator + LAB review):** E72 en E73 worden aangehouden tot de mark-cap-fix (#552, spec sha 4760bff9…) gemerged is en draaien dan op de fix-commit. Op het gefixte harnas is de plan-primaire cel (alle instappen) weer het oordeel; de dieptebuckets blijven beschrijvend. De herruns E64 → E71/E74 op het gefixte harnas zijn nieuwe, getelde blikken met eigen archief; het oude E64-oordeel blijft in de registerrij als "oud harnas".
+
 ## 6. Blikken
 
 Conservatief geteld (plan §1 v0.2): E74 1 (primaire cel), E71 2, E72 2, E73 4 = 9 bij voltooiing; na E74 en E71: 3. Teller ≈ 2.305.
