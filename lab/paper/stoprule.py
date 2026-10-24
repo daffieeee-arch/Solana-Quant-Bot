@@ -27,6 +27,12 @@ FEW_DAYS = 14  # below this many trading days the day bootstrap is coarse
 # days. CLOCK_DAYS (4 weeks) is the planned length; since 2026-10-16 it no longer holds a verdict back.
 CLOCK_KEY, CLOCK_LATEST, CLOCK_DAYS, CLOCK_MAX_DAYS = "clock_start", "2026-11-02", 28, 42
 GROUPS_KEY, FEED_KEY, COSTS_KEY = "groups", "feed", "cost_scenario"
+SETTLE_RULE_KEY = "settle_rule"  # the journal's settle rule (backtest.costs; absent: 1, the engine's until the deploy step)
+
+
+def settle_rule_of(value):
+    """The settle rule a journal's state value names (Codex review #6): 1 when the journal has none."""
+    return int(value or 1)
 ALPENGLOW_SLOT = 1064 * 432_000  # the consensus switch (epoch 1064, about 2026-10-21): a new regime
 DECISIONS = ("GO", "ADJUST", "STOP")
 # Cost items that are expectations from the cost scenario, not counted from the journal (LAB review P2, #309.3).

@@ -28,7 +28,7 @@ from .restart import RESTARTS_KEY, restart_lines
 # paper/stoprule.py.
 from .stoprule import (CLOCK_DAYS, CLOCK_KEY, CLOCK_LATEST, CLOCK_MAX_DAYS, COSTS_KEY, DRAWS, FEED_KEY,  # noqa: F401
                        GROUPS_KEY, MIN_DAYS_CI, MIN_TRADES, SEED, assessment, clock_state, counted, feed_of,
-                       parse_clock, parse_groups, primary_group, stop_rule_inputs, verdict)
+                       SETTLE_RULE_KEY, parse_clock, parse_groups, primary_group, settle_rule_of, stop_rule_inputs, verdict)
 
 TRIM, EMPTY = 0.01, -0.99
 
@@ -345,7 +345,8 @@ def daily_report(journal, day, watch_log=None):
     feed = feed_of(journal.state(FEED_KEY),
                    journal.db.execute("SELECT 1 FROM signals WHERE received_unix_ns IS NOT NULL LIMIT 1").fetchone())
     judged = assessment(traded, mean, lo, hi, verdict_, clock_state(clock, day, verdict_), cost_scenario(journal),
-                        primary_group(journal.state(GROUPS_KEY)), feed, settle_rule=int(journal.state("settle_rule") or 1))
+                        primary_group(journal.state(GROUPS_KEY)), feed,
+                        settle_rule=settle_rule_of(journal.state(SETTLE_RULE_KEY)))
     final, mdd, taken, skipped = capital_sim([(x["entry_slot"], x["exit_slot"], x["cost"], x["pnl"], not x["tokens"])
                                               for x in traded])
     gaps = [b for b in beats if b["note"]]

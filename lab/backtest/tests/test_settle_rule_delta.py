@@ -56,6 +56,24 @@ def test_dev_rule_2_charges_one_failed_tx_per_unfilled_row(tmp_path, monkeypatch
         assert cell[s]["delta_sol_per_day"] == pytest.approx(-f / 1e9, abs=1e-15)
     assert (tmp_path / "out" / "delta.md").exists() and not (tmp_path / "out.tmp").exists()
     assert run(tmp_path, "--run", f"dev={tmp_path / 'run' / 'parts'}") == 2  # an existing out is refused
+    assert D.main(["--out", str(tmp_path / "out2") + "/", "--run", f"dev={tmp_path / 'run' / 'parts'}"]) == 0  # 'DIR/'
+    assert (tmp_path / "out2" / "delta.json").exists() and not (tmp_path / "out2" / ".tmp").exists()
+
+
+def test_a_cell_is_one_configuration_and_per_day_is_over_the_sources_days(tmp_path):
+    """Rows that differ only in segment, regime, tau or entry are separate cells; every cell's per-day difference
+    divides by the source's days, not its own."""
+    rows = [dict(t=1, pool="A", day="2026-10-01", exit_attempts=2)]  # unsold: changes
+    rows += [dict(t=2, pool="B", day=f"2026-10-0{k}", exit_attempts=2, **{key: v}) for k, (key, v) in enumerate(
+        (("segment", "pool_normal"), ("regime", "200ms"), ("tau", "fixed"), ("entry", "E2")), 2)]
+    parts(tmp_path / "parts", [dict({"regime": "270ms", "tau": "empirical", "entry": "E1"}, **r) for r in rows])
+    assert run(tmp_path, "--run", f"dev={tmp_path / 'parts'}") == 0
+    src = json.load(open(tmp_path / "out" / "delta.json"))["sources"]["dev dev"]
+    assert (len(src["cells"]), src["days"]) == (5, 5)
+    f = Scenario.from_cfg("base", load_defaults()).failed_tx
+    for c in src["cells"]:
+        assert (c["n"], c["changed"], c["days"]) == (1, 1, 1)
+        assert c["base"]["delta_sol_per_day"] == pytest.approx(-f / 1e9 / 5, abs=1e-15)
 
 
 def clean_run(tmp_path, rule=None):

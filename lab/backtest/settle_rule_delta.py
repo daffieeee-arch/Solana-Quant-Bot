@@ -2,8 +2,10 @@
 
 Rule 1 (before 24 Oct) charges exit_attempts - 1 failed exit fees; rule 2 charges exit_attempts - filled (costs' docstring).
 They differ only on a row whose last counted exit attempt failed (not filled, at least one attempt): rule 2 charges one
-failed_tx more. Per source, base and pessimistic, per cell (family, variant, size_sol, d, q, overlay, farm): the settled
-rows, the rows that change, the days, net SOL under each rule and the difference (also per day), and the mean return.
+failed_tx more. Per source, base and pessimistic, per cell (CELL: one configuration, the report's keys and the entry
+code): the settled rows, the rows that change, the cell's days with rows, net SOL under each rule, the difference, the
+difference per day over the source's days (every day with a settled row in the source, the same for every cell, so
+cells compare as SOL/day figures do), and the mean return.
 Checked on every cell: the difference is exactly the changed rows x failed_tx (else RED).
 
   python -P -m backtest.settle_rule_delta --out DIR [--run LABEL=PARTS_DIR ...] [--clean NAME=RESULT_JSON ...]
@@ -35,7 +37,8 @@ from .costs import FILLED_SQL, Scenario, settle_sql
 from .store import load_defaults
 
 SCENARIOS = ("base", "pessimistic")
-CELL = ("family", "variant", "size_sol", "d", "q", "overlay", "farm")
+# one configuration per cell: the tournament report's keys (report.KEYS) and route (ii)'s entry code
+CELL = ("family", "segment", "regime", "variant", "size_sol", "d", "tau", "q", "entry", "overlay", "farm")
 E20_K3 = ("family = 'F7' AND segment = 'pool_reversed' AND variant = 'tp4_T600' AND size_sol = 0.5 AND q = 0.5 "
           "AND overlay = 'none' AND NOT skipped")  # clean_test.K3 at E20's engine be47fc4 (the join checks it)
 CHANGED = f"(NOT entry_failed AND NOT {FILLED_SQL} AND COALESCE(exit_attempts, 1) >= 1)"
@@ -78,7 +81,7 @@ def scenarios():
 
 def cells(con, src, scns, where="NOT skipped"):
     """Per cell of a parts source: rows, changed rows, days, net SOL and mean return under rule 1 and rule 2, per scenario;
-    the identity (rule 1 - rule 2) = changed x failed_tx checked per cell and scenario."""
+    the identity (rule 1 - rule 2) = changed x failed_tx checked per cell and scenario. Per day: over the source's days."""
     cols = {c[0] for c in con.execute(f"DESCRIBE SELECT * FROM {src}").fetchall()}
     missing = [c for c in SETTLED if c not in cols]
     if missing:
@@ -94,6 +97,7 @@ def cells(con, src, scns, where="NOT skipped"):
         FROM (SELECT {key}, {", ".join(SETTLED)}, {CHANGED} AS changed FROM {src} WHERE {where})
         GROUP BY ALL ORDER BY ALL""").fetchall()
     names = [d[0] for d in con.description]
+    days = con.execute(f"SELECT count(DISTINCT day) FROM {src} WHERE {where}").fetchone()[0]
     out, bad = [], []
     for r in rows:
         c = dict(zip(names, r))
@@ -104,12 +108,11 @@ def cells(con, src, scns, where="NOT skipped"):
             if p1 - p2 != c["changed"] * scn.failed_tx:
                 bad.append(f"{cell} {s}: rule 1 - rule 2 = {p1 - p2} != {c['changed']} x {scn.failed_tx}")
             e[s] = {"net_sol_1": p1 / 1e9, "net_sol_2": p2 / 1e9, "delta_sol": (p2 - p1) / 1e9,
-                    "delta_sol_per_day": (p2 - p1) / 1e9 / c["days"] if c["days"] else None,
+                    "delta_sol_per_day": (p2 - p1) / 1e9 / days if days else None,
                     "mean_ret_1": c[f"ret_{s}_1"], "mean_ret_2": c[f"ret_{s}_2"]}
         out.append(e)
     if bad:
         raise Refused("the rule difference is not changed x failed_tx: " + "; ".join(bad[:5]))
-    days = con.execute(f"SELECT count(DISTINCT day) FROM {src} WHERE {where}").fetchone()[0]
     return {"cells": out, "rows": sum(e["n"] for e in out), "changed": sum(e["changed"] for e in out), "days": days}
 
 
@@ -194,7 +197,7 @@ def render(res):
                 L.append(f"| {g} | {v['n']:,} | {v['changed']:,} | {f(v['mean_ret_1'])} | {f(v['mean_ret_2'])} | {f(v['delta'])} |")
             L.append("")
         top = sorted(r["cells"], key=lambda e: -abs(e["base"]["delta_sol_per_day"] or 0))[:15]
-        L += ["Largest cells by |difference per day| (base; pessimistic in delta.json):", "",
+        L += [f"Largest cells by |difference| (base, per day over the source's {r['days']} days; pessimistic in delta.json):", "",
               "| cell | n | changed | net rule 1 | net rule 2 | difference | per day | mean ret 1 → 2 |", "|---|---|---|---|---|---|---|---|"]
         for e in top:
             c, b = e["cell"], e["base"]
@@ -207,6 +210,7 @@ def render(res):
 
 
 def run(a, log=print):
+    a.out = os.path.normpath(a.out)  # 'DIR/' would make DIR/.tmp, which cannot be renamed onto DIR
     if os.path.exists(a.out) or os.path.exists(a.out + ".tmp"):
         raise Refused(f"{a.out} (or .tmp) exists")
     scns = scenarios()

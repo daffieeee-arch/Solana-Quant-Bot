@@ -141,6 +141,7 @@ def load(con, run_dir, defaults=DEFAULTS, stage_dir=None):
                 run_rule = rules[0]
             settle_chunk(con, cfg, pos_keys, k_sql, where, has_base, run_rule or rules[0])
         conf["settle_rule_detected"] = run_rule
+        con.execute("UPDATE strategy_runs SET config_json = ?", [json.dumps(conf)])  # the run's rule, kept with its config
         con.execute("DROP TABLE IF EXISTS pos")
     finally:
         shutil.rmtree(stage, ignore_errors=True)

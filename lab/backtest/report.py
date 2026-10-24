@@ -16,7 +16,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .costs import Scenario, settle_sql
+from .costs import SETTLE_RULE, Scenario, settle_sql
 from .streams import SPILL_DIR, SPILL_MAX
 
 TRIALS = os.environ.get("LAB_TRIALS", "/home/chupa/Solana-project/data-old-faithful-one/lab/trials")
@@ -95,7 +95,7 @@ def verdict(o):
     return "ADJUST" if o["mean_pnl_sol"] > 0 else "STOP"
 
 
-def summarize(results, cfg, con=None):
+def summarize(results, cfg, con=None, rule=SETTLE_RULE):
     con = con or _connect()
     raw = f"read_parquet('{results}')"
     have = {r[0] for r in con.execute(f"DESCRIBE SELECT * FROM {raw}").fetchall()}
@@ -107,7 +107,7 @@ def summarize(results, cfg, con=None):
     out, daily, daily_pnl = [], {}, {}
     parts = _partitions(con, raw)
     for name, part in ((n, p) for n in SCENARIOS for p in parts):
-        pnl, ret = settle_sql(Scenario.from_cfg(name, cfg))
+        pnl, ret = settle_sql(Scenario.from_cfg(name, cfg), rule)  # rule: costs' settle rule (a frozen run's own: 1)
         con.execute(f"CREATE OR REPLACE TEMP VIEW v AS SELECT *, {pnl} AS pnl, {ret} AS ret FROM {src} WHERE {part}")
         cols = ["skipped", "n", "filled", "mean_ret", "median_ret", "win_rate", "mean_pnl_sol", "total_pnl_sol",
                 "hist_drift", "drift_excluded", "median_cost", "stop_loss_share", "stop_loss_mean", "reverted_router", "reverted_direct",
