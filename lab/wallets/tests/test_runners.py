@@ -263,8 +263,63 @@ def test_thin_normal_pool_mark_includes_our_own_deposit(tmp_path, monkeypatch):
     real2 = (e2 - VIRT) + n
     gross2 = e2 * fill.tokens // (b2 + fill.tokens)
     assert gross2 > real2, "fixture: the drain branch must apply"
-    tmax = (real2 * b2) // VIRT
-    pg2 = e2 * tmax // (b2 + tmax)
+    pg2 = _max_payout(b2, e2, fill.tokens, real2)   # reference: the most any sell of <= our tokens can take out of real + q_in
+    assert real2 - pg2 <= 1 and pg2 <= real2, "with a thin pool the reference pays out the whole real reserve (to the lamport)"
     f2 = V._fees(V.Pool(b2, e2, 20, 5, 5, 0, VIRT), pg2)[1]
     assert abs(int(marks[S + 200]) - (pg2 - f2 - TX)) <= 2
-    assert pg2 <= real2 and pg2 > n * 9 // 10, "the drain branch pays out about real + our deposit, not real alone"
+    assert pg2 > n * 9 // 10, "the drain branch pays out about real + our deposit, not real alone"
+
+
+def _max_payout(b, e, pos, real):
+    """Brute-force reference, independent of the harness: the largest gross quote a sell of x <= pos tokens into the
+    constant-product pool (b, e) can take without exceeding the real reserve `real`; out(x) = e * x // (b + x) grows with x,
+    so a search over x finds it."""
+    out = lambda x: e * x // (b + x)  # noqa: E731
+    if real <= 0 or pos <= 0:
+        return 0
+    if out(pos) <= real:
+        return out(pos)
+    lo, hi = 0, pos                      # out(lo) <= real < out(hi)
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if out(mid) <= real:
+            lo = mid
+        else:
+            hi = mid
+    return out(lo)
+
+
+def test_pool_mark_is_min_of_output_and_real_reserve():
+    """Codex finding #3 (2026-10-24): the normal-pool mark must equal, to the lamport, what a sell can really take out of
+    the pool: the constant-product output of our whole position when the real reserve (logged real quote + our own deposit)
+    covers it, else the real reserve itself. Checked against the brute-force search above on synthetic states: Codex's
+    example, thin pools, a drain, a cap that never binds, a deposit above the virtual quote, an empty position, and
+    boundaries where the output and the reserve cross by one lamport."""
+    con = duckdb.connect()
+    cases = [
+        # (b, e, virt, q_in, pos)
+        (10**12, 12 * 10**8, 10**9, 2 * 10**8, 6 * 10**11),      # Codex: R = 4e8, out(pos) = 4.5e8 -> 4e8 (#552 gave 342,857,142)
+        (10**12, 12 * 10**8, 10**9, 2 * 10**8, 10**11),          # out(pos) = 1.09e8 < R: uncapped
+        (10**12, 102 * 10**8, 10**10, 494_000_000, 5 * 10**10),  # the thin fixture pool: real 0.2 SOL, deposit 0.494 SOL
+        (10**12, 10**10, 10**10, 0, 10**11),                     # drain: real reserve 0 and no deposit -> 0
+        (10**12, 10**10, 10**10, 0, 0),                          # empty position -> 0
+        (10**12, 5 * 10**9, 0, 0, 10**11),                       # no virtual quote: R = e >= every output, never binds
+        (10**12, 11 * 10**8, 10**9, 3 * 10**9, 9 * 10**11),      # deposit above the virtual quote: R = 3.1e9 > e; out = 5.2e8
+        (7, 13, 3, 1, 5),                                        # tiny integers: rounding at the boundary
+        (10**6 + 3, 10**6 + 1, 10**5, 7, 999_983),               # odd sizes around the crossing point
+    ]
+    for b, e, virt, q_in, pos in cases:
+        sql = runners._pool_mark(*(f"{v}::HUGEINT" for v in (pos, b, e, virt, q_in)))   # the marks query runs on HUGEINT columns
+        got = int(con.execute(f"SELECT ({sql})::HUGEINT").fetchone()[0])
+        ref = _max_payout(b, e, pos, max(0, e - virt + q_in))
+        assert got >= ref and got - ref <= 1 + e // b, (b, e, virt, q_in, pos, got, ref)
+        assert got <= max(0, e - virt + q_in) or e - virt + q_in >= e * pos // (b + pos), "never more than the real reserve"
+    # the #552 inversion value must not come back for Codex's example
+    H = lambda *a: runners._pool_mark(*(f"{v}::HUGEINT" for v in a))  # noqa: E731
+    got = int(con.execute(f"SELECT ({H(6 * 10**11, 10**12, 12 * 10**8, 10**9, 2 * 10**8)})::HUGEINT").fetchone()[0])
+    assert got == 400_000_000 and got != 342_857_142
+    # monotone in the position and in the deposit
+    vals = [int(con.execute(f"SELECT ({H(x, 10**12, 12 * 10**8, 10**9, 2 * 10**8)})::HUGEINT").fetchone()[0]) for x in (0, 10**10, 10**11, 6 * 10**11, 10**12)]
+    assert vals == sorted(vals) and vals[0] == 0 and vals[-1] == 400_000_000
+    deps = [int(con.execute(f"SELECT ({H(6 * 10**11, 10**12, 12 * 10**8, 10**9, q)})::HUGEINT").fetchone()[0]) for q in (0, 10**8, 2 * 10**8, 3 * 10**8)]
+    assert deps == [200_000_000, 300_000_000, 400_000_000, 450_000_000]
