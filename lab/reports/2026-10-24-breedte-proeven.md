@@ -74,9 +74,24 @@ De ongecapte constant-product-waarde op de gelogde toestand negeert óók onze e
 
 **Gevolg voor de rest van het lab (hypothese, te checken):** dezelfde cap zit in `runners.marks` en dus in de ×10-jager-labels (E64: instappen e10/c30/c2 op jonge curves met reserve < budget): daar kan een mark nooit boven de gelogde reserve komen, zodat hit-rates op dunne curves onderschat zijn. Omvang onbekend; een correcte cap is `rq + eigen netto inleg` (de SOL die wij zelf in de curve stopten blijft erin tot anderen verkopen). Dat is een `runners`-wijziging met spec en review, niet in deze noot; E64's conclusie (geen model haalt de poort) is er niet door omgedraaid zonder herrun, maar de labelbasisrates zijn er wel door geraakt.
 
-## 4. E72 — ticker-/naamhypes: volgt
+## 4. E72 — ticker-/naamhypes: STOP
 
-NAS op commit 4457b80 (`STEP=e72`); cellen copy (primair), copy2–5, orig. **Leesregel (vooraf, na E71 §3.3):** de marge wordt ook per dieptebucket (echte reserve bij instap vs budget) gemeld; het oordeel staat op het deel ≥ 2 SOL waar de mark-cap niet bindt. Wijkt het oordeel op de volledige set af van dat op het ≥ 2 SOL-deel (GO vs STOP), dan NOT_JUDGED tot de herrun op het gefixte harnas.
+NAS-job 99zzzzz78 op commit **9d9b43c** (`STEP=e72`; het gefixte harnas: mark-cap #552/#559, W2 #560), uitvoer `wallets/probes-e72-9d9b43c/` (report-e72.md 26b77c5e…, report-e72.json 1803162f…; NAS-SHA256SUMS 66bf1daa… over 170 bestanden; op de VPS zonder parquets, 44 van 44 gesyncte bestanden `-c` OK). Leesregel zoals in §5-addendum: op het gefixte harnas is **de plan-primaire cel 'copy' bij 10 SOL het oordeel**; dieptebuckets beschrijvend (hier niet berekend: de parquets staan alleen op de NAS en het oordeel hangt er op het gefixte harnas niet van af).
+
+**Basis (feit, dev 1033–1046, 14 epochs):** 428.317 creates met een niet-lege symboolsleutel (SOL-quote, niet-Mayhem); 103.828 daarvan zijn kopieën rang 2–5 binnen 60 min, waarvan 14.770 door de generieke-naamfilter (≥ 20 creates/24 u) vervallen → **89.058 kopieën gehouden** (20,8 % van de creates) en **47.305 originelen** (eerste create van een cluster, gekocht op het moment van de tweede create). Signalen (e10 van de kopie): 69.345 over 21 UTC-dagen (dagbasis 20); 512.268 rijen (6 momenten × 3 grootten), 0 rijen zonder kosten.
+
+| cel (10 SOL = 0,5 SOL per trade) | signalen | genomen | trades/dag | marge per trade | 95 %-dagbootstrap | SOL/dag | ≥ 90 % verlies | mediaan hold (slots) |
+|---|---|---|---|---|---|---|---|---|
+| **copy (primair, rang 2–5 gepoold)** | 69.345 | 7.420 | 371 | **−10,30 %** | **[−11,65; −8,98]** | **−19,1** | 0,4 % | 169 |
+| copy2 | 39.395 | 6.681 | 334 | −10,92 % | [−12,09; −9,61] | −18,3 | 0,6 % | 223 |
+| copy3 | 16.195 | 7.007 | 350 | −10,91 % | [−12,48; −9,32] | −19,1 | 0,3 % | 169 |
+| copy4 | 8.459 | 5.853 | 293 | −11,40 % | [−13,14; −9,36] | −16,7 | 0,3 % | 180 |
+| copy5 | 5.296 | 4.647 | 232 | −10,39 % | [−12,59; −7,98] | −12,1 | 0,3 % | 138 |
+| orig (secundair) | 32.066 | 6.695 | 335 | −8,82 % | [−9,39; −8,03] | −14,8 | 0,4 % | 173 |
+
+Bij 25 en 100 SOL (1,25 / 5 SOL per trade) wordt elke cel slechter: copy −14,1 % / −29,0 % per trade (−65 / −528 SOL/dag), orig −12,5 % / −27,5 % — de eigen prijsimpact op dunne curves domineert.
+
+**Oordeel: STOP** (regel §1: ondergrens > 0 én ≥ 3 trades/dag; de ondergrens van de primaire cel ligt op −8,98 %). Alle zes cellen zijn bij 10 SOL ondubbelzinnig negatief met intervallen ver onder nul; per rang is er geen gradient die een andere cel zou redden (copy2–copy5 −10,4 … −11,4 %), en het origineel (gekocht zodra het een cluster blijkt) verliest −8,8 %. Lezing (reconstructie met het kostenmodel): een ticker die wordt gekopieerd is op dev geen koopsignaal — de kopieën én het origineel gaan na het kopiemoment gemiddeld tien procent omlaag binnen de 6-uurs-horizon met trail30/stop −50 %. Adds-to (§1): dag-netto-correlatie met H5 −0,30 en met hold300 −0,22 over 20 dagen; 0 triggers binnen 60 s op dezelfde key (geen gelijktijdigheid met de F7-arm). Het ≥ 90 %-verlies-aandeel (0,3–0,6 %) is laag: het verlies is breed, niet een paar rugs. Blikken: 2 (copy + orig), conservatief als in §6. Geen vervolg; geen forward-pre-reg (E72 is gesloten als idee op dev).
 
 ## 5. E73 — meerdere goede wallets samen: volgt
 
@@ -86,4 +101,4 @@ NAS op commit 4457b80 (`STEP=e73`); goede set (plandrempel 5 SOL = 5e9 lamports)
 
 ## 6. Blikken
 
-Conservatief geteld (plan §1 v0.2): E74 1 (primaire cel), E71 2, E72 2, E73 4 = 9 bij voltooiing; na E74 en E71: 3. Teller ≈ 2.305.
+Conservatief geteld (plan §1 v0.2): E74 1 (primaire cel), E71 2, E72 2, E73 4 = 9 bij voltooiing; na E74, E71 en E72: 5. Teller ≈ 2.305 + 6 (schone toetsen 24 okt) + 2 (E72) = ≈ 2.313 vóór E73/E75.
