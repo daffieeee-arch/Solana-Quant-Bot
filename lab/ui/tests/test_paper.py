@@ -296,10 +296,12 @@ class DecisionBoundary(unittest.TestCase):
         out.append(("2026-10-27", -505_000, 0))
         return out
 
-    def journal(self, name, shift):
+    def journal(self, name, shift, settle_rule=None, write_off=False):
         jmod, _ = lab_paper()
         j = jmod.Journal(os.path.join(self.tmp, name, "journal"))
         j.state("groups", json.dumps(self.GROUPS))
+        if settle_rule:
+            j.state("settle_rule", settle_rule)
         j.state("clock_start", json.dumps({"date": "2026-10-26", "reason": "r", "set_at": "2026-10-22T09:30:00+00:00"}))
         j.state("feed", json.dumps({"kind": "live"}))
         j.state("cost_scenario", json.dumps(self.COSTS))
@@ -311,13 +313,19 @@ class DecisionBoundary(unittest.TestCase):
             j.put("exits", family="F7", variant="tp4_T600", key=f"P{t}", t=t, day=day, entry_slot=t + 3, exit_slot=t + 50 if tokens else None,
                   exit_reason="time" if tokens else "entry_failed", tokens=tokens, cost=self.SOL // 2 if tokens else 0,
                   proceeds=self.SOL // 2 + pnl if tokens else 0, pnl=pnl, ret=None, exit_attempts=2 if t % 700 == 0 else 1)
+        if write_off:  # a write-off after 2 failed attempts (paper since #533): rule 1 charges 1 failed_tx, rule 2 both
+            t += 100
+            j.put("orders", family="F7", variant="tp4_T600", key=f"P{t}", t=t, day="2026-10-28", entry_slot=t + 3,
+                  size=self.SOL // 2, status="filled")
+            j.put("exits", family="F7", variant="tp4_T600", key=f"P{t}", t=t, day="2026-10-28", entry_slot=t + 3, exit_slot=t + 90,
+                  exit_reason="written_off", tokens=5, cost=self.SOL // 2, proceeds=0, pnl=-self.SOL // 2, ret=None, exit_attempts=2)
         j.put("heartbeat", minute=29_330_000, day="2026-11-04", last_slot=t + 900, events=3, open_positions=0, gap_slots=0, note="")
         j.commit()
         return j
 
-    def both(self, name, shift):
+    def both(self, name, shift, **kw):
         _, report = lab_paper()
-        j = self.journal(name, shift)
+        j = self.journal(name, shift, **kw)
         report.daily_report(j, "2026-11-04")
         with open(os.path.join(j.dir, "2026-11-04", "report.md")) as f:
             md = f.read()
@@ -361,6 +369,22 @@ class DecisionBoundary(unittest.TestCase):
             self.assertIn("**GO is geen toestemming voor live geld; dat is een aparte eigenaarsbeslissing.**", md)
             self.assertIn("only 10 trading days: below 14 the day bootstrap is coarse", md)
             self.assertIn("### What the verdict rests on", md)
+
+    def test_both_settle_failed_exit_attempts_under_the_journals_rule(self):
+        """Codex review #6: the Paper tab reads the journal's settle rule (state 'settle_rule'; absent: 1) as the daily
+        report does, so a write-off after 2 failed attempts costs 1 failed_tx under rule 1 and 2 under rule 2 on both."""
+        import re
+
+        got = {}
+        for rule in (None, "1", "2"):
+            md, s = self.both(f"rule-{rule}", 0, settle_rule=rule, write_off=True)
+            b = s["assessment"]["basis"]
+            m = re.search(r"failed exit attempts ([\d.]+)", md)
+            self.assertEqual(f"{b['costs_sol']['failed_exit_attempts']:.4f}", m.group(1), rule)  # the tab = the report
+            got[rule] = (b["settle_rule"], b["costs_lamports"]["failed_exit_attempts"])
+        self.assertEqual((got[None][0], got["1"][0], got["2"][0]), (1, 1, 2))
+        self.assertEqual(got[None][1], got["1"][1])
+        self.assertEqual(got["2"][1] - got["1"][1], self.COSTS["failed_tx"])  # the write-off's last failed attempt
 
 
 class TokenNames(unittest.TestCase):

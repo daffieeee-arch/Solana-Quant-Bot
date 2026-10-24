@@ -367,7 +367,8 @@ def stop_rule(exits, orders, state, day, live_rows=False):
     st = stoprule.clock_state(clock, day, v)
     feed = stoprule.feed_of(state.get(stoprule.FEED_KEY), live_rows)
     scn = json.loads(state[stoprule.COSTS_KEY]) if state.get(stoprule.COSTS_KEY) else None
-    judged = stoprule.assessment(trades, mean, lo, hi, v, st, scn, stoprule.primary_group(state.get(stoprule.GROUPS_KEY)), feed)
+    judged = stoprule.assessment(trades, mean, lo, hi, v, st, scn, stoprule.primary_group(state.get(stoprule.GROUPS_KEY)), feed,
+                                 settle_rule=stoprule.settle_rule_of(state.get(stoprule.SETTLE_RULE_KEY)))  # as the daily report
     sol = lambda x: None if x is None else x / 1e9  # noqa: E731
     return {"trades": n, "entry_failed": len(trades) - n, "days": len(by_day), "min_trades": MIN_TRADES,
             "min_days_ci": MIN_DAYS_CI, "mean_sol_per_trade": sol(mean), "ci_lo": sol(lo), "ci_hi": sol(hi), "verdict": v,

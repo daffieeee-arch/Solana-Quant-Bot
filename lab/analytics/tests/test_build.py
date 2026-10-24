@@ -104,7 +104,7 @@ class SyntheticRunWithPartsAndNewKeys(unittest.TestCase):
 
     KEYS = ["family", "variant", "size_sol", "d", "tau", "q", "segment", "regime", "farm", "overlay"]
 
-    def make_run(self, d, corrupt_all=False):
+    def make_run(self, d, corrupt_all=False, rule=1, unsold=False):
         import json
         import random
         rnd = random.Random(7)
@@ -114,7 +114,8 @@ class SyntheticRunWithPartsAndNewKeys(unittest.TestCase):
                 for i in range(40):
                     cost = rnd.randrange(400_000_000, 600_000_000)
                     rows.append(("F6", "v", 0.5, 1, None, 0.5, "pool_reversed", "270ms", farm, overlay,
-                                 f"m{i}", "pool", "2026-09-30", 451_000_000 + i, 451_000_002 + i, 451_000_100 + i,
+                                 f"m{i}", "pool", "2026-09-30", 451_000_000 + i, 451_000_002 + i,
+                                 None if unsold and i % 7 == 1 else 451_000_100 + i,  # unsold: the last attempt failed
                                  "tp", i % 13 == 0, False, 0.0, int(cost * rnd.uniform(0.7, 1.3)), cost,
                                  1 + (i % 3 == 0), False))
         cols = self.KEYS + ["mint", "venue", "day", "t", "entry_slot", "exit_slot", "exit_reason", "entry_failed",
@@ -135,7 +136,8 @@ class SyntheticRunWithPartsAndNewKeys(unittest.TestCase):
             tot, cnt = {}, {}
             for r in rows:
                 pr, co, att, ef = r[20], r[21], r[22], r[17]
-                pnl = -failed if ef else ((int(pr * (1 - adv)) - per_tx + refund - max(0, att - 1) * failed)
+                filled = 1 if rule == 1 else int(r[15] is not None)  # costs.settle's rule (Codex review #6)
+                pnl = -failed if ef else ((int(pr * (1 - adv)) - per_tx + refund - max(0, att - filled) * failed)
                                           - (int(co * (1 + adv)) + per_tx + rent))
                 for key in (r[:10], r[:8] + ("all",) + r[9:10]):
                     tot[key] = tot.get(key, 0) + pnl
@@ -161,6 +163,31 @@ class SyntheticRunWithPartsAndNewKeys(unittest.TestCase):
             self.assertEqual(groups, 6)  # organic/flagged/all x none/O7V1: the roll-up gets its own curve
             n_all = con.execute("SELECT max(n) FROM strategy_curves WHERE farm = 'all'").fetchone()[0]
             self.assertEqual(n_all, 80)  # organic + flagged positions together
+
+    def test_the_runs_own_settle_rule_is_detected_and_kept(self):
+        """Codex review #6: a run settled before 24 Oct (rule 1) and one after (rule 2) are each re-settled under their
+        own rule; the rule is kept in strategy_runs.config_json; a summary that fits neither is refused."""
+        import json
+        for rule in (1, 2):
+            with tempfile.TemporaryDirectory() as d:
+                self.make_run(d, rule=rule, unsold=True)
+                con = duckdb.connect(config={"temp_directory": ""})
+                build.strategies.load(con, d)
+                conf = json.loads(con.execute("SELECT config_json FROM strategy_runs").fetchone()[0])
+                self.assertEqual(conf["settle_rule_detected"], rule)
+        with tempfile.TemporaryDirectory() as d:  # no unsold row: both rules fit, none is claimed
+            self.make_run(d)
+            con = duckdb.connect(config={"temp_directory": ""})
+            build.strategies.load(con, d)
+            self.assertIsNone(json.loads(con.execute("SELECT config_json FROM strategy_runs").fetchone()[0])["settle_rule_detected"])
+        with tempfile.TemporaryDirectory() as d:  # summary under rule 1, but the parts' unsold rows lost their exit attempt
+            self.make_run(d, rule=1, unsold=True)
+            con = duckdb.connect(config={"temp_directory": ""})
+            con.execute(f"COPY (SELECT * REPLACE (CASE WHEN exit_slot IS NULL THEN 0 ELSE exit_attempts END AS exit_attempts) "
+                        f"FROM '{d}/parts/part-000000.parquet') TO '{d}/p0.parquet' (FORMAT parquet)")
+            os.replace(f"{d}/p0.parquet", f"{d}/parts/part-000000.parquet")
+            with self.assertRaises(SystemExit):
+                build.strategies.load(con, d)
 
     def test_gate_sizes_from_report(self):
         g = build.strategies.gate_sizes

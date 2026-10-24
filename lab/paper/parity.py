@@ -17,6 +17,13 @@ The paper arms (research/week4-spec-paper-h4h5-2026-10-16.md §6.4): an exit var
 d_ms 600, against the backtest with busy over the organic triggers only (as the engine's arm: equal on every
 organic trigger) and with the tournament's busy over every trigger (equal on the organic triggers of pools without
 a flagged trigger; the others are the documented difference, counted).
+
+Both sides settle under the engine's rule (costs.ENGINE_SETTLE_RULE, 1 until the paper deploy switches it; Codex review
+#6, LAB review Q4). A known difference that this comparison does not fix: a position in a pool that cannot pay after its
+deadline. The batch replay re-decides and re-attempts at every later event slot of the pool, and stays unsold
+(exit_slot NULL, n attempts). Since #533 the paper writes it off at its first failed attempt after the deadline
+(written_off, exit_slot set, 1 attempt). The failed exit fees therefore differ by the extra batch attempts, under either
+rule. Follow-up: count these rows in parity.md.
 """
 
 import argparse
@@ -26,7 +33,7 @@ import time
 from collections import defaultdict
 
 from backtest import replay, streams
-from backtest.costs import Scenario, settle
+from backtest.costs import ENGINE_SETTLE_RULE, Scenario, settle
 from backtest.store import load_defaults
 from backtest.strategies import F6_FARM_MS, Clock, Signal, f7_signals_sql
 from backtest.tournament import STORE, delay_slots, exit_rule_for, work_items
@@ -71,7 +78,8 @@ def backtest_side(con, cfg, clock, a, b, var=VARIANT, d=D, d_ms=None, segments=N
             sim = replay.simulate_pool_position if venue == "pool" else replay.simulate_curve_position
             r = sim(st, s.t, int(SIZE * 1e9), dd, Q, exit_rule_for(s, scn, dd, clock, st), TOL, replay.Tau("empirical"))
             busy = r.exit_slot or s.t
-            pnl, _, _ = settle(r, scn) if not r.skipped else (None, None, None)
+            # the engine's settle rule, so the two sides' P&L compare (backtest.costs.ENGINE_SETTLE_RULE)
+            pnl, _, _ = settle(r, scn, ENGINE_SETTLE_RULE) if not r.skipped else (None, None, None)
             out[(key, s.t)] = {"farm": farm.get((key, s.t)),
                                "status": "skipped" if r.skipped else "entry_failed" if r.entry_failed else "filled",
                                "tokens": r.tokens, "cost": r.cost, "exit_decision_slot": r.exit_decision_slot,

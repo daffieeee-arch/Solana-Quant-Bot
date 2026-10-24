@@ -118,7 +118,9 @@ def parts_dir(result_path, parts=None, name=None):
 def _parts_table(result_path, variant, parts=None, o=None, memory="1GB", name=None):
     """A DuckDB connection with TEMP TABLE p: the run's F7 pool_reversed rows of `variant` (the producer's parts beside
     result.json, or an explicit parts dir with the result's window and exclusions applied as the producers do), net per
-    row via costs.settle_sql (base). None without parts."""
+    row via costs.settle_sql (base) under the producer's settle rule (result.json's settle_rule; 1 for a result without
+    it: every clean test so far ran an engine from before Codex review #6, and re-settling its parts under main's rule
+    would drift from the locked result). None without parts."""
     d = parts_dir(result_path, parts, name)
     if d is None:
         return None, None
@@ -126,7 +128,11 @@ def _parts_table(result_path, variant, parts=None, o=None, memory="1GB", name=No
     import duckdb
     from backtest.costs import Scenario, settle_sql
     from backtest.store import load_defaults
-    pnl, _ = settle_sql(Scenario.from_cfg("base", load_defaults()))
+    held = o
+    if held is None:
+        with open(result_path) as f:
+            held = json.load(f)
+    pnl, _ = settle_sql(Scenario.from_cfg("base", load_defaults()), int(held.get("settle_rule", 1)))
     con = duckdb.connect(config={"memory_limit": memory, "threads": 2})
     extra = ""
     if parts and o:

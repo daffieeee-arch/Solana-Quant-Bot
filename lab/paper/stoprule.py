@@ -27,6 +27,12 @@ FEW_DAYS = 14  # below this many trading days the day bootstrap is coarse
 # days. CLOCK_DAYS (4 weeks) is the planned length; since 2026-10-16 it no longer holds a verdict back.
 CLOCK_KEY, CLOCK_LATEST, CLOCK_DAYS, CLOCK_MAX_DAYS = "clock_start", "2026-11-02", 28, 42
 GROUPS_KEY, FEED_KEY, COSTS_KEY = "groups", "feed", "cost_scenario"
+SETTLE_RULE_KEY = "settle_rule"  # the journal's settle rule (backtest.costs; absent: 1, the engine's until the deploy step)
+
+
+def settle_rule_of(value):
+    """The settle rule a journal's state value names (Codex review #6): 1 when the journal has none."""
+    return int(value or 1)
 ALPENGLOW_SLOT = 1064 * 432_000  # the consensus switch (epoch 1064, about 2026-10-21): a new regime
 DECISIONS = ("GO", "ADJUST", "STOP")
 # Cost items that are expectations from the cost scenario, not counted from the journal (LAB review P2, #309.3).
@@ -139,13 +145,15 @@ def clock_state(clock, day, verdict_):
     return {"phase": "due" if limit or verdict_ in DECISIONS else "running", "clock_day": n, "limit": limit}
 
 
-def costs(traded, scn):
+def costs(traded, scn, rule=1):
     """The stop rule's costs beyond the fill prices, in lamports, as backtest.costs.settle books them under the cost
-    scenario `scn` (the engine's, state 'cost_scenario'): per filled trade an entry and an exit transaction (fee, tip
-    and the *expected* failed attempts before one lands: int((1 / land_prob - 1) * failed_tx) per transaction, a
-    rounded expectation, not counted attempts), the exit attempts that failed on their own limit, the failed
-    entries, ATA rent when it is lost, and adverse execution. Venue fees are in the fill prices (each pool's and
-    curve's own fee rates from the data) and are not split out in the journal."""
+    scenario `scn` (the engine's, state 'cost_scenario') and the journal's settle rule (state 'settle_rule'; 1 for a
+    journal without it): per filled trade an entry and an exit transaction (fee, tip and the *expected* failed attempts
+    before one lands: int((1 / land_prob - 1) * failed_tx) per transaction, a rounded expectation, not counted
+    attempts), the exit attempts that failed (rule 1: all but one; rule 2: all but a filling one, so an unsold or
+    written-off position pays every attempt), the failed entries, ATA rent when it is lost, and adverse execution.
+    Venue fees are in the fill prices (each pool's and curve's own fee rates from the data) and are not split out in
+    the journal."""
     filled = [x for x in traded if x["tokens"]]
     n = len(filled)
     retries = int((1 / scn["land_prob"] - 1) * scn["failed_tx"])
@@ -154,7 +162,8 @@ def costs(traded, scn):
         "network": 2 * n * scn["fee_per_tx"],
         "tips": 2 * n * scn["tip"],
         "landing_retries": 2 * n * retries,  # an expectation (COSTS_EXPECTED), not counted attempts
-        "failed_exit_attempts": sum(max(0, (x["exit_attempts"] or 0) - 1) for x in filled) * scn["failed_tx"],
+        "failed_exit_attempts": sum(max(0, (x["exit_attempts"] or 0) - (1 if rule == 1 else int(
+            x.get("exit_slot") is not None and x.get("exit_reason") != "written_off"))) for x in filled) * scn["failed_tx"],
         "failed_entries": sum(1 for x in traded if not x["tokens"]) * scn["failed_tx"],
         "ata_rent_lost": n * scn["ata_rent"] if scn.get("rent_mode") == "lost" else 0,
         "adverse_execution": sum(int(x["cost"] * (1 + adverse)) - x["cost"] + x["proceeds"] - int(x["proceeds"] * (1 - adverse))
@@ -162,7 +171,7 @@ def costs(traded, scn):
     }
 
 
-def assessment(traded, mean, lo, hi, verdict_, clock_st, scn=None, group=None, feed="live"):
+def assessment(traded, mean, lo, hi, verdict_, clock_st, scn=None, group=None, feed="live", settle_rule=1):
     """What a verdict rests on and what stays uncertain (owner, 2026-10-16), for the daily report and the Paper tab.
 
     - basis: filled trades, failed entries, trading days, the clock day, mean and interval (lamports per filled
@@ -209,7 +218,8 @@ def assessment(traded, mean, lo, hi, verdict_, clock_st, scn=None, group=None, f
         "basis": {"filled_trades": n, "failed_entries": len(traded) - n, "trading_days": days,
                   "clock_day": clock_st.get("clock_day"), "mean_lamports": mean,
                   "ci95_lamports": [lo, hi] if lo is not None else None, "draws": DRAWS, "seed": SEED,
-                  "costs_lamports": costs(traded, scn) if scn else None, "costs_expected": list(COSTS_EXPECTED)},
+                  "costs_lamports": costs(traded, scn, settle_rule) if scn else None, "costs_expected": list(COSTS_EXPECTED),
+                  "settle_rule": settle_rule},
         "assumptions": assumptions,
         "uncertainty": uncertainty,
         "not_permission": NOT_PERMISSION,

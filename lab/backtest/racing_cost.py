@@ -43,7 +43,7 @@ import duckdb
 import numpy as np
 
 from .capital_ceiling import (COOLDOWN_MS, DAILY_LOSS, DEV, MAX_OPEN, SCENARIOS, Refused, boot_days, capital_days,
-                              check_run, ci, exit_of, flag_share, fmt, limited, unlimited, slot_days, require_exit_day)
+                              check_run, ci, exit_of, flag_share, fmt, limited, unlimited, slot_days, require_exit_day, SETTLE_RULE_E63)
 from .costs import Scenario, settle_sql
 from .store import load_defaults
 
@@ -150,7 +150,7 @@ def load(con, runs, c3_keys, store):
     """The rows table r (both scenarios settled, ms per slot per row), the C3 keys c3, the store's per-epoch ms per
     slot and E63's fee table (the sandwich flag)."""
     cfg = load_defaults()
-    pnl = {s: settle_sql(Scenario.from_cfg(s, cfg))[0] for s in SCENARIOS}
+    pnl = {s: settle_sql(Scenario.from_cfg(s, cfg), SETTLE_RULE_E63)[0] for s in SCENARIOS}  # E63's rule (frozen)
     con.execute("""CREATE TABLE r (src INTEGER, variant VARCHAR, size_sol DOUBLE, d INTEGER, q DOUBLE, t UBIGINT, day VARCHAR,
                    pool VARCHAR, farm VARCHAR, entry_failed BOOLEAN, cost BIGINT, proceeds BIGINT, exit_slot UBIGINT,
                    exit_decision_slot UBIGINT, d_ms DOUBLE, depth DOUBLE, pnl_base BIGINT, pnl_pessimistic BIGINT)""")
