@@ -27,7 +27,10 @@ A table is a directory of *.parquet below the chunk (blocks, failed_txs, pump/<E
 --normalize fca8c80: the old side predates fca8c80 (0cfc4db2 = b10c5c8: dev 1041-1043). The rules come from that
   commit's extract.rs (fca8c80_rules) and touch the old side only: a cell they explain is 'expected', a cell they
   do not explain is unexpected (also a new value the rule would have nulled). Without the flag nothing is
-  normalised; on an old side already written with fca8c80 semantics the rules change no value.
+  normalised; on an old side already written with fca8c80 semantics the rules change no value. Provenance of the rules
+  (Lab Backtest's reading of fca8c80's extract.rs), checked on real data on 24 Oct (VPS): 3,000 rows of dev 1043a
+  pump/TradeEvent part-00000 against a copy written with fca8c80 semantics plus the six ix_* columns gave RED without
+  the flag (2,994 parent_ix_data and 2,678 signers cells) and GREEN with it, exactly those cells 'expected'.
 Manifests: status complete, slot range = the directory name, coverage.missing_slots 0, the SAME_COUNTERS both
   sides have equal, idl_sha256 equal, a blocks table on each side (every extractor chunk writes one: a chunk without
   it compares nothing), per side sum(blocks.executed_tx_count) = counters.txs_seen (the new side must have the
@@ -162,7 +165,10 @@ def fca8c80_rules(table, old_cols):
 def footprint(chunk):
     """{relative path: [size, sha256]} of every file in the chunk; for parquet files the sha256 of the footer only
     (it holds every row group's offsets, sizes, row counts and column statistics), so a copy is matched without
-    reading its data. Other files up to 64 MB are hashed whole."""
+    reading its data. Other files up to 64 MB are hashed whole; a larger one gets "large" and is then matched by its
+    size only: a provenance gap to name in the reading. The non-parquet files of a chunk today are _manifest.json
+    (KBs) and, with LAB_TRANSFERS, the chunk's _learned_mints.txt (its newly learned mints, KBs to a few MB); none is
+    near 64 MB, and the dev chunks of events/v1 have only the manifest."""
     out = {}
     for root, dirs, files in os.walk(chunk):
         dirs.sort()

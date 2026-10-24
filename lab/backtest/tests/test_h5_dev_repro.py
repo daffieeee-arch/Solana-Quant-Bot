@@ -178,7 +178,9 @@ def argv(p, mode="full", out="out", new=None, extra=()):
 
 def result(p, out="out"):
     with open(os.path.join(p.root, out, "repro.json")) as f:
-        return json.load(f)
+        o = json.load(f)
+    assert o["scope"] == h5.SCOPE  # the archive carries the GREEN's scope verbatim (LAB nit on #585), in every mode
+    return o
 
 
 def rewrite(run, change):
