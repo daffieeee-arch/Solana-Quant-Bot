@@ -129,3 +129,22 @@ def test_size_2_sol_run_writes_its_own_file(tmp_path, monkeypatch):
     assert abs(r["tokens"] - fill.tokens) <= 2 and abs(r["cost_sol"] - (2 * 10**9 + TX) / 1e9) < 1e-9
     assert not (out / f"mint_peaks-{LO}.parquet").exists()
     assert runners.SIZE == 5 * 10**8 and runners.H6_MS == 21_600_000   # the runners globals are restored after the run
+
+
+def test_ab_labels_counts(tmp_path):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from wallets.x10 import ab_labels as AB
+    base = {"key": ["A", "B", "C"], "moment": ["e10"] * 3, "t": [1, 2, 3], "tokens": [10, 10, 10], "cost_sol": [0.5] * 3, "depth_sol": [0.1, 2.0, 0.3],
+            "hit_2_24": [False, True, False], "hit_5_24": [False] * 3, "hit_10_24": [False] * 3, "hit_2_72": [False, True, False], "hit_5_72": [False] * 3,
+            "hit_10_72": [False] * 3, "stop_first_24": [True, False, True], "stop_first_72": [True, False, True],
+            "x_tp2_24": [0.2, 2.0, 0.3], "x_trail30_24": [0.2, 1.5, 0.3], "x_tp5_24": [0.2, 1.5, 0.3], "peak_24": [0.3, 2.1, 0.4], "end_24": [0.1, 1.0, 0.2]}
+    new = dict(base, hit_2_24=[True, True, False], stop_first_24=[False, False, True], x_trail30_24=[0.9, 1.5, 0.3], peak_24=[2.0, 2.1, 0.4])
+    pq.write_table(pa.table(base), tmp_path / "old.parquet")
+    pq.write_table(pa.table(new), tmp_path / "new.parquet")
+    AB.main(["--old", str(tmp_path / "old.parquet"), "--new", str(tmp_path / "new.parquet"), "--out", str(tmp_path / "out"), "--tag", "t"])
+    import json
+    res = json.load(open(tmp_path / "out" / "ab-t.json"))
+    assert res["rows"] == [3, 3, 3] and res["entries_identical"] == 3 and res["rows_with_a_changed_label"] == 1
+    assert res["by_moment"]["e10"]["hit_2_24"] == {"old": 1, "new": 2} and res["by_moment"]["e10"]["stop_first_24"] == {"old": 2, "new": 1}
+    assert res["direction"] == {"peak_24_up": 1, "peak_24_down": 0} and (tmp_path / "out" / "ab-t.md").exists()

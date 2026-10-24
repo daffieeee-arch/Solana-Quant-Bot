@@ -186,3 +186,85 @@ def test_reversed_pool_f7_entry(tmp_path, monkeypatch):
     marks = [(V.rev_sell_token(st, fill.tokens).trader_quote - TX) for _, st in states[1:]]
     assert r["n_marks"] == len(marks) and abs(r["mult_6h"] - max(marks) / (SIZE + TX)) < 1e-6 and abs(r["end_6h"] - marks[-1] / (SIZE + TX)) < 1e-6
     assert r["mult_6h"] > 1.2   # the 30 SOL buy at S + 40 lifts the mark
+
+
+def test_thin_curve_mark_includes_our_own_deposit(tmp_path, monkeypatch):
+    """spec-runners-mark-cap-2026-10-24: on a curve with less real SOL than our budget, the mark after the entry is the
+    constant-product sell value of our tokens (minus fees and network cost), capped at the logged reserve PLUS our own net
+    deposit; the old cap (the logged reserve alone) valued the position at roughly the reserve (E71 section 3.3)."""
+    trades = [(S, True, 2 * 10**7, True), (S + 20, True, 2 * 10**7, True), (S + 40, True, 10**7, True)]   # 0.02 / 0.02 / 0.01 SOL
+    rows, states = _curve_rows(trades)
+    _store(tmp_path / "s.duckdb", rows, [])
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    con = runners.connect(str(tmp_path / "s.duckdb"), memory="500MB", threads=1)
+    clock = runners.Clock.from_store(con)
+    runners.setup(con, LO, LO + 5_000, clock)
+    # one moment at S + 10 with the fixed 3-slot delay of the probes: the entry is the S + 20 trade (pre-state = after S)
+    con.execute(f"CREATE OR REPLACE TEMP TABLE mom AS SELECT '{M}' AS key, 'x' AS moment, {S + 10}::BIGINT AS t, 3::BIGINT AS d_slots, 9000::BIGINT AS h1, 54000::BIGINT AS h6, 150::BIGINT AS m1s, 750::BIGINT AS m5s")
+    runners.entries(con, TX)
+    runners.marks(con, TX, LO + 60_000)
+    pre = states[0][1]
+    fill = V.curve_buy_exact_in(pre, SIZE)
+    (q_in, tokens, cost) = con.execute("SELECT q_in, tokens, cost FROM ent").fetchone()
+    assert abs(int(tokens) - fill.tokens) <= 2 and int(q_in) == fill.curve_quote and int(cost) == SIZE + TX
+    assert pre.rq < SIZE // 5, "the fixture curve must be far thinner than the budget"
+    marks = con.execute("SELECT slot, net FROM mk ORDER BY ord").fetchall()
+    assert [m[0] for m in marks] == [S + 20, S + 40]
+    for (slot, net), (_, c) in zip(marks, states[1:]):
+        gross = fill.tokens * c.vq // (c.vt + fill.tokens)
+        capped = min(gross, c.rq + fill.curve_quote)          # the new cap: logged reserve + our own deposit
+        expect = max(0, capped - V.fee(capped, FEE) - V.fee(capped, CFEE)) - TX
+        assert abs(int(net) - expect) <= 2
+        assert int(net) > 0.9 * (SIZE + TX), "the position is worth about what we paid, not the thin reserve"
+        assert c.rq < 0.2 * (SIZE + TX), "the old cap (logged reserve alone) would have given less than 20 % of the cost"
+
+
+def test_thin_normal_pool_mark_includes_our_own_deposit(tmp_path, monkeypatch):
+    """spec-runners-mark-cap-2026-10-24 section 4, normal pool with a virtual quote: real = e - virt < budget. First mark: the
+    gross sell value fits in real + q_in (cap branch, uncapped); second mark after an 80 % liquidity withdrawal: the gross
+    exceeds real + q_in, so only the tokens that drain real + q_in are sold (drain branch). Expected values follow the
+    engine's pool arithmetic on the logged state with the real vault raised by our own deposit."""
+    rows, states = _curve_rows([(S, True, 2 * 10**9, True)])    # a curve row so the token exists; the entry is on the pool
+    B0, REAL, VIRT = 10**12, 2 * 10**8, 10 * 10**9                 # 0.2 SOL real, 10 SOL virtual -> e = 10.2 SOL
+    e0 = REAL + VIRT
+    buy_tokens = 10**9                                             # a small buy by someone else: the entry's reference trade
+    e_delta = (e0 * buy_tokens) // (B0 - buy_tokens) + 1
+    prow = [{"kind": "deposit", "slot": S + 100, "b": 0, "e": 0, "vault": 0, "base": B0, "e_delta": None, "quote_user": REAL},
+            {"kind": "buy", "slot": S + 120, "b": B0, "e": e0, "vault": REAL, "base": buy_tokens, "e_delta": e_delta, "token_buy": True, "sol_amount": e_delta, "token_amount": buy_tokens},
+            {"kind": "withdraw", "slot": S + 200, "b": B0 - buy_tokens, "e": e0 + e_delta, "vault": REAL + e_delta, "base": (B0 - buy_tokens) * 8 // 10, "e_delta": None, "quote_user": (REAL + e_delta) * 8 // 10}]
+    _store(tmp_path / "s.duckdb", rows, [{"pool": "P1", "mint": M, "create_slot": S + 100, "rows": prow}])
+    w = duckdb.connect(str(tmp_path / "s.duckdb"))
+    w.execute(f"UPDATE pool SET vq = {VIRT} WHERE pool = 'P1'")  # the fixture writes vq = 0; here the pool prices with a virtual quote
+    w.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    con = runners.connect(str(tmp_path / "s.duckdb"), memory="500MB", threads=1)
+    clock = runners.Clock.from_store(con)
+    runners.setup(con, LO, LO + 5_000, clock)
+    con.execute(f"CREATE OR REPLACE TEMP TABLE mom AS SELECT '{M}' AS key, 'x' AS moment, {S + 110}::BIGINT AS t, 3::BIGINT AS d_slots, 9000::BIGINT AS h1, 54000::BIGINT AS h6, 150::BIGINT AS m1s, 750::BIGINT AS m5s")
+    runners.entries(con, TX)
+    runners.marks(con, TX, LO + 60_000)
+    venue, tokens, q_in, depth = con.execute("SELECT venue, tokens, q_in, depth FROM ent").fetchone()
+    p0 = V.Pool(B0, e0, 20, 5, 5, 0, VIRT)
+    fill = V.pool_buy_exact_in(p0, SIZE)
+    assert venue == "pool" and abs(int(tokens) - fill.tokens) <= 2 and int(depth) == REAL and int(depth) < SIZE
+    n = V.net_for_budget(SIZE, p0.fee_list)
+    assert int(q_in) == n
+    marks = dict(con.execute("SELECT slot, net FROM mk ORDER BY ord").fetchall())
+    assert set(marks) == {S + 120, S + 200}
+    # mark 1: state after the small buy; gross <= real + q_in -> the uncapped constant-product value (old code: capped at real 0.2 SOL)
+    b1, e1 = B0 - buy_tokens, e0 + e_delta
+    gross1 = e1 * fill.tokens // (b1 + fill.tokens)
+    assert gross1 <= (e1 - VIRT) + n and gross1 > e1 - VIRT, "fixture: the cap must bind without our deposit and not with it"
+    f1 = V._fees(V.Pool(b1, e1, 20, 5, 5, 0, VIRT), gross1)[1]
+    assert abs(int(marks[S + 120]) - (gross1 - f1 - TX)) <= 2 and int(marks[S + 120]) > 0.8 * SIZE
+    # mark 2: after the 80 % withdrawal the gross exceeds real + q_in: sell only the tokens that drain real + q_in
+    b2 = b1 - prow[2]["base"]
+    e2 = (REAL + e_delta) + VIRT - prow[2]["quote_user"]
+    real2 = (e2 - VIRT) + n
+    gross2 = e2 * fill.tokens // (b2 + fill.tokens)
+    assert gross2 > real2, "fixture: the drain branch must apply"
+    tmax = (real2 * b2) // VIRT
+    pg2 = e2 * tmax // (b2 + tmax)
+    f2 = V._fees(V.Pool(b2, e2, 20, 5, 5, 0, VIRT), pg2)[1]
+    assert abs(int(marks[S + 200]) - (pg2 - f2 - TX)) <= 2
+    assert pg2 <= real2 and pg2 > n * 9 // 10, "the drain branch pays out about real + our deposit, not real alone"
