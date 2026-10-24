@@ -5,7 +5,8 @@ Opdracht van de coördinator (24 okt, audit-actie 5): per ongeteste familie éé
 ## 0. Kort
 
 - **E74 niet-SOL-quote (PUMP-curves): STOP (feit).** Nettomarge per trade bij 0,5 SOL **−58,9 % [−61,2; −56,5]** (dag-geclusterd, 17 dagen); 262 trades/dag; 52 % van de posities verliest ≥ 90 %; **−77 SOL/dag bij 10 SOL**, −213 bij 25, −1.098 bij 100. De PUMP→SOL-omrekening is niet de oorzaak: in PUMP-eenheden (zonder omrekening) is de marge −58,1 %. Het verlies zit in de curves zelf: twee derde van de posities eindigt op de stop en op curves ≥ 10 SOL diep is de marge nog −21 %. 1 blik, geen vervolg.
-- E71 (Mayhem-curve), E72 (ticker-clusters), E73 (goede wallets samen): volgen na de NAS-runs van zaterdagavond.
+- **E71 Mayhem-munten in de curvefase: STOP (feit), met een voorbehoud bij het kopcijfer.** Pariteitspoort OK (14 van 14 epochs 100 %). Primaire cel −68,8 % [−69,6; −68,1], agent-vrij −59,6 % [−60,9; −58,3]; 8.067 trades/dag; mediaan hold 6 slots. **Maar:** 79 % van de instappen zit op curves met minder dan 0,5 SOL echte reserve (mediaan 0,14 SOL), en het harnas capt een verkoop op de gelogde echte reserve zónder onze eigen inleg — op zulke curves kan het de positie niet waarderen en valt de stop vrijwel meteen (artefact, zie §3.3). Op curves ≥ 2 SOL diep (12.145 instappen, 580/dag), waar die cap niet bindt, is de marge **−47,8 %** (agent-vrij −17,1 %) en is elke dag negatief (dagmarges −31 … −71 %). De uitkomst STOP staat dus op het schone deel; het kopcijfer −69 % is geen marktgetal. **Meetfoutcorrectie §2.0:** over alle 191.788 Mayhem-mints piekt 2,25 % ≥ ×10 (gegradueerd 7,36 %, niet-gegradueerd 2,10 %), niet 19,8 %. 2 blikken, geen vervolg.
+- E72 (ticker-clusters) en E73 (goede wallets samen): volgen na de NAS-runs van zaterdagavond (commit 4457b80).
 
 ## 1. Raamwerk (plan §1, kort)
 
@@ -29,22 +30,58 @@ Zonder capaciteit (alle 6.282 signalen, 0,5 SOL): −57,8 % in SOL, −57,1 % in
 
 **Optelbaarheid (beschrijvend):** Pearson dag-netto met H5 0,16 en met hold300 0,35 over 17 dagen; 0 van de triggers binnen 60 s op dezelfde key als een H5- of hold300-instap (andere munten). Niet relevant bij STOP.
 
-**Oordeel:** STOP — de ondergrens ligt ver onder nul in elke lezing (SOL, PUMP, met en zonder capaciteit, elke epoch, elke dieptebucket). Geen vervolg-pre-reg. 1 blik (de primaire cel; kapitaal 25/100 en de diagnose zijn beschrijvend). Lezing in één zin: PUMP-quote-curves verliezen op dev ongeveer 58 % per trade met trail30/stop, de helft van de posities is een drain.
+**Caveat (toegevoegd na E71, §3.3):** ook hier capen de marks een verkoop op de gelogde echte reserve zónder onze eigen inleg; in 25,8 % van de instappen is ons budget groter dan de reserve, en de dunne buckets (< 0,1 SOL −83 %, 0,1–0,5 −87 %) dragen die cap. Het oordeel staat op het deel waar de cap niet bindt: **≥ 2 SOL diep, 3.688 instappen (2–10 SOL 2.508 × −49 %, ≥ 10 SOL 1.180 × −21 %)**, beide ver onder nul.
+
+**Oordeel:** STOP — de ondergrens ligt ver onder nul in elke lezing (SOL, PUMP, met en zonder capaciteit, elke epoch, ook op de diepe curves waar de cap niet bindt). Geen vervolg-pre-reg. 1 blik (de primaire cel; kapitaal 25/100 en de diagnose zijn beschrijvend). Lezing in één zin: PUMP-quote-curves verliezen op dev ongeveer 58 % per trade met trail30/stop, de helft van de posities is een drain.
 
 **Wat dit niet zegt:** niets over USDC- en overige quotes (geen SOL-koers in de store, plan §5.1) en niets over Meteora DLMM (nooit geëxtraheerd, plan §6); niets over een andere instap dan e10 of een andere uitstap dan trail30/stop (één regel vooraf).
 
-## 3. E71 — Mayhem-munten in de curvefase: volgt
+## 3. E71 — Mayhem-munten in de curvefase (plan §2): STOP, kopcijfer met voorbehoud
 
-NAS zaterdagavond op commit 03bd9a7 (`STEP=e71`); eerst de pariteitspoort (`parity_ok`), dan §2.0 basisrates over alle Mayhem-mints, dan de cellen e10 en e10_agentfree.
+**Bron (feit):** NAS-job op commit **03bd9a7** (poging 2; poging 1 faalde op een ontbrekende uitvoermap, hersteld in #550 4457b80 zonder rekenwijziging; de wrapper maakte de mappen vooraf aan, provenance in `SHA256SUMS.provenance` 103f6bfd…), rc 0 (07:30Z), `wallets/probes-e71-03bd9a7/` (SHA256SUMS 06ef5ffa…; `report-e71.json` 7bcfaae0…, `report-e71.md` 508809de…); diagnose `research/breedte-proeven-2026-10-24/e71_diag.py` 2ef5bd27… / `.out` d3c02ae8…, prijspaden `e71_paths.py` e5b6a6dd… / `.out` 23d3f19f… (SHA256SUMS 95b1f048…). Universum: Mayhem-mints met SOL-quote, create in dev: 14 epochs, 185.651 e10-signalen op 185.651 mints; 21 UTC-dagen met signalen (incl. de partiële 11 sep; dagbasis in het plan 20: de bootstrap telt 21 dagen).
+
+**3.1 Poort en basisrates (feit).** Fill-pariteit: 14 van 14 epochs 10.000/10.000 (kopen exact-in óf exact-out, verkopen exact) → E71 wordt beoordeeld. §2.0 meetfoutcorrectie: over **alle 191.788** Mayhem-mints met SOL-quote en ≥ 1 trade piekt ≥ ×2 28,4 %, ≥ ×5 6,4 %, **≥ ×10 2,25 %**, ≥ ×20 0,76 % binnen 72 u vanaf de eerste trade (curve vq/vt én pool), mediaan ×1,44; gegradueerd (5.487) ≥ ×10 7,36 %, niet-gegradueerd 2,10 %. De ×10-noot §2 meldde 19,8 % op 5.326 mints: dat was de poolfase van alleen de gegradueerde Mayhem-mints (runners hield hun curve-legs buiten, dus p0 = de eerste pooltrade) — de noemer verklaart het grootste deel (2,9 % van de mints is gegradueerd), het resterende verschil 7,36 % vs 19,8 % is een definitieverschil (vanaf de eerste curve-trade over curve én pool, tegen vanaf de eerste pooltrade over alleen de pool; de Mayhem-agent reset de virtuele SOL in zijn trades, zodat de vroege curve-prijs anders ligt dan de poolstart) en is hier niet verder uitgesplitst (onbekend deel, hypothese). De ×10-rij blijft dus een poolfase-maat van gegradueerde Mayhem-coins; als basisrate over Mayhem-munten geldt 2,25 %.
+
+**3.2 Cellen (feit, report-e71.json).**
+
+| cel | kapitaal | signalen | genomen | trades/dag | marge | CI 95 % | SOL/dag | ≥ 90 % verlies | mediaan hold |
+|---|---|---|---|---|---|---|---|---|---|
+| e10 | 10 SOL | 185.651 | 161.342 | 8.067 | **−68,8 %** | [−69,6; −68,1] % | −2.780 | 26,6 % | 6 slots |
+| e10 | 25 SOL | 185.651 | 170.401 | 8.520 | −81,3 % | – | −8.665 | 52,3 % | 5 |
+| e10 | 100 SOL | 185.651 | 176.407 | 8.820 | −92,6 % | – | −40.840 | 81,4 % | 5 |
+| e10 agent-vrij | 10 SOL | 185.651 | 161.342 | 8.067 | **−59,6 %** | [−60,9; −58,3] % | −2.408 | 18,7 % | 6 |
+| e10 agent-vrij | 25 / 100 SOL | | | | −76,6 % / −91,4 % | – | −8.157 / −40.306 | | |
+
+Per reden (0,5 SOL, alle signalen, e71_diag.out): stop 139.067 × −76,8 % (mediaan 5 slots), trail 33.490 × −23,8 %, end_after_stop 12.896 × −100 %, end 39 × −0,9 %; agent-vrij: cut 160.880 × −55,8 % (87 % krijgt een agent-leg vóór de uitstap). Per epoch −66 … −72 %, dagblokken 1–9 / 10–20 −69,4 / −68,4 %; 99,9 % van de posities is binnen een uur gesloten; 2,2 % krijgt na onze koop geen trade meer. Optelbaarheid (beschrijvend): Pearson dag-netto met H5 0,03, met hold300 0,13; 0 gelijktijdige triggers.
+
+**3.3 Het kopcijfer is deels een artefact van het harnas (feit + lezing).** Diepte van de curve (echte reserve) bij instap: p10 0,044, p25 0,071, **p50 0,138**, p75 0,391, p90 1,207 SOL; **79 % ligt onder ons budget van 0,5 SOL**, 66 % onder 0,25. De marks capen een verkoop op de gelogde echte reserve (`least(rq, …)` in `runners.marks`, een conventie die `runners` en de ×10-jager delen): die reserve bevat onze eigen inleg níet. Op een curve van 0,1 SOL wordt onze positie van 0,5 SOL dus op hooguit ≈ 0,1 SOL gewaardeerd, ook als niemand handelt — de prijspaden laten dat zien (e71_paths.out: een curve van 0,094 SOL geeft bij de instap-mark 0,22× de kosten, een van 0,127 SOL 0,22×, terwijl een curve van 2,4 SOL 0,955× geeft = onze eigen impact + fees ≈ −4,5 %). Daardoor valt de −50 %-stop op dunne curves meteen (bucket < 0,1 SOL: 70.915 instappen, 99,3 % stop, mediaan 4 slots, −84,7 %; 0,1–0,5 SOL: 75.833, 87,4 % stop, −64,6 %). Per dieptebucket:
+
+| diepte bij instap | n | marge | agent-vrij | aandeel stop | ooit > kosten | mediaan hold |
+|---|---|---|---|---|---|---|
+| < 0,1 SOL | 70.915 | −84,7 % | −85,0 % | 99,3 % | 22,7 % | 4 |
+| 0,1–0,5 | 75.833 | −64,6 % | −58,0 % | 87,4 % | 36,2 % | 6 |
+| 0,5–1 | 16.657 | −49,2 % | −16,4 % | 40,3 % | 66,9 % | 22 |
+| 1–2 | 10.101 | −48,0 % | −14,9 % | 38,7 % | 68,7 % | 20 |
+| 2–5 | 7.249 | −50,4 % | −17,7 % | 41,2 % | 71,3 % | 18 |
+| 5–20 | 4.486 | −44,8 % | −16,4 % | 35,2 % | 72,9 % | 15 |
+| ≥ 20 | 410 | −34,5 % | −14,3 % | 21,2 % | 74,1 % | 9 |
+
+De ongecapte constant-product-waarde op de gelogde toestand negeert óók onze eigen verschuiving van de virtuele reserves, maar dat is klein bij ≈ 30 SOL virtueel (daarom 0,955× op de curve van 2,4 SOL); de fout zit alleen in de cap. **Fix-spec (runners, niet hier):** cap = gelogde rq + onze netto inleg in de reserve ná de curve-fee, pool-analoog (vault + onze netto SOL), met een test op een dunne curve.
+
+**Schone lezing:** op curves ≥ 2 SOL (12.145 instappen, ≈ 580/dag, cap bindt niet: ons budget ≤ 25 % van de reserve) is de marge **−47,8 %**, agent-vrij **−17,1 %**, en elke UTC-dag negatief (dagmarges −31 … −71 %). De prijspaden van diepe curves tonen wat er gebeurt: de agent verkoopt in brokken van 0,3–0,6 SOL ná onze koop (trail), en daarnaast gewone drains (één verkoop van 2,4 SOL die een reserve van 2,8 SOL naar 0,09 brengt). Zonder de agent-legs blijft −17 % over: eigen impact + fees (≈ −4,5 % bij 2,4 SOL) en de bewegingen vóór de eerste agent-leg.
+
+**Oordeel:** **STOP** — op het schone deel (≥ 2 SOL) zijn beide cellen (primair én agent-vrij, plan §2.4) ver onder nul en is geen dag positief; de poort vraagt een ondergrens > 0 in beide. Het kopcijfer −69 % is geen marktgetal maar vooral de cap op dunne curves; de eerlijke uitspraak is: **Mayhem-curves bij e10 zijn te klein voor 0,5 SOL (79 % heeft minder reserve dan onze inleg) en op de curves die groot genoeg zijn verliest de regel ≈ 48 % per trade, zonder agent-legs ≈ 17 %.** Geen vervolg-pre-reg. 2 blikken (primair + agent-vrij); dieptebuckets en kapitaal 25/100 zijn beschrijvend.
+
+**Gevolg voor de rest van het lab (hypothese, te checken):** dezelfde cap zit in `runners.marks` en dus in de ×10-jager-labels (E64: instappen e10/c30/c2 op jonge curves met reserve < budget): daar kan een mark nooit boven de gelogde reserve komen, zodat hit-rates op dunne curves onderschat zijn. Omvang onbekend; een correcte cap is `rq + eigen netto inleg` (de SOL die wij zelf in de curve stopten blijft erin tot anderen verkopen). Dat is een `runners`-wijziging met spec en review, niet in deze noot; E64's conclusie (geen model haalt de poort) is er niet door omgedraaid zonder herrun, maar de labelbasisrates zijn er wel door geraakt.
 
 ## 4. E72 — ticker-/naamhypes: volgt
 
-NAS op commit 5cbdf23 (`STEP=e72`); cellen copy (primair), copy2–5, orig.
+NAS op commit 4457b80 (`STEP=e72`); cellen copy (primair), copy2–5, orig. **Leesregel (vooraf, na E71 §3.3):** de marge wordt ook per dieptebucket (echte reserve bij instap vs budget) gemeld; het oordeel staat op het deel ≥ 2 SOL waar de mark-cap niet bindt. Wijkt het oordeel op de volledige set af van dat op het ≥ 2 SOL-deel (GO vs STOP), dan NOT_JUDGED tot de herrun op het gefixte harnas.
 
 ## 5. E73 — meerdere goede wallets samen: volgt
 
-NAS op commit 5cbdf23 (`STEP=e73`); goede set (plandrempel 5 SOL = 5e9 lamports) ≈ 8–14,5 k wallets per dag (feit, sizing-query 24 okt, niet gepind); cellen k2n30 (primair), k3n30, k2n10, k2n120. Lezing vooraf: "hun gelijktijdige kopen volgen", niet "kopiëren".
+NAS op commit 4457b80 (`STEP=e73`); goede set (plandrempel 5 SOL = 5e9 lamports) ≈ 8–14,5 k wallets per dag (feit, sizing-query 24 okt, niet gepind); cellen k2n30 (primair), k3n30, k2n10, k2n120. Lezing vooraf: "hun gelijktijdige kopen volgen", niet "kopiëren". **Leesregel (vooraf, na E71 §3.3):** dieptebuckets als bij E72; oordeel op het ≥ 2 SOL-deel; afwijkend oordeel op de volledige set → NOT_JUDGED tot de herrun op het gefixte harnas.
 
 ## 6. Blikken
 
-Conservatief geteld (plan §1 v0.2): E74 1 (primaire cel), E71 2, E72 2, E73 4 = 9 bij voltooiing; na E74: 1. Teller ≈ 2.303.
+Conservatief geteld (plan §1 v0.2): E74 1 (primaire cel), E71 2, E72 2, E73 4 = 9 bij voltooiing; na E74 en E71: 3. Teller ≈ 2.305.
