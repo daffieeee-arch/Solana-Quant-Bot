@@ -63,7 +63,7 @@ def load(con, labels_dir, money_dir):
     files_sql = "[" + ", ".join("'" + f.replace("'", "''") + "'" for f in wd) + "]"   # a view cannot take prepared parameters
     con.execute(f"""CREATE OR REPLACE TEMP VIEW WD AS
         SELECT wallet, day::DATE AS day, n_opened >= {BOT_POSITIONS} AND median_hold_slots * ms_per_slot <= {BOT_HOLD_MS} AS bot, n_snipe >= 1 AS sniper,
-               buy_sol >= {HEAVY_SOL} AS heavy
+               buy_sol >= {HEAVY_SOL} * 1e9 AS heavy  -- wallet-day buy_sol is lamports (money.py: sol = sol_amount::BIGINT); Codex finding #2
         FROM read_parquet({files_sql}, union_by_name = true)""")
     R.progress(f"stage B inputs: entries {_n(con, 'L')} ({len(files)} windows), mint_peaks {_n(con, 'MP')}, early_buyers {_n(con, 'EB')}, wallet-days {_n(con, 'WD')} ({len(wd)} files)")
     return files, wd

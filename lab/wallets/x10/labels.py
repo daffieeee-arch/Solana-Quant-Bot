@@ -131,16 +131,20 @@ def labels_and_exits(con):
         own = {"trail30": (f"ord_trail_{H}", f"slot_trail_{H}"),
                "tp2": ("ord_2", "slot_2"), "tp5": ("ord_5", "slot_5"), "tp10": ("ord_10", "slot_10")}
         for rule, (o, s) in own.items():
-            trig.append(f"""SELECT key, moment, t, '{rule}' AS rule, '{H}' AS h, 1.0 AS part,
+            trig.append(f"""SELECT key, moment, t, '{rule}' AS rule, '{H}' AS h, 1.0 AS part, 'own' AS leg,
                 CASE WHEN {o} IS NOT NULL AND {s} <= {cap} AND (ord_stop IS NULL OR {o} < ord_stop) THEN {s}
                      WHEN ord_stop IS NOT NULL AND slot_stop <= {cap} THEN slot_stop END AS trig_slot FROM lab2""")
         for m in (2, 5):
-            # the target part: the target's own trigger (or the stop / the end when the target never comes within H)
-            trig.append(f"""SELECT key, moment, t, 'half{m}' AS rule, '{H}' AS h, 0.5 AS part,
+            # the target part: the target's own trigger; when the target never comes within H, this half trails with the
+            # whole position (the docstring's rule; before 2026-10-24 it waited for the stop or the end: Codex finding #4)
+            trig.append(f"""SELECT key, moment, t, 'half{m}' AS rule, '{H}' AS h, 0.5 AS part, 'target' AS leg,
                 CASE WHEN ord_{m} IS NOT NULL AND slot_{m} <= {cap} AND (ord_stop IS NULL OR ord_{m} < ord_stop) THEN slot_{m}
+                     WHEN ord_trail_{H} IS NOT NULL AND slot_trail_{H} <= {cap} AND (ord_stop IS NULL OR ord_trail_{H} < ord_stop) THEN slot_trail_{H}
                      WHEN ord_stop IS NOT NULL AND slot_stop <= {cap} THEN slot_stop END AS trig_slot FROM lab2""")
             # the trailing part: after the target the first trail mark; without the target the whole-position trail
-            trig.append(f"""SELECT key, moment, t, 'half{m}' AS rule, '{H}' AS h, 0.5 AS part,
+            # the two legs carry a `leg` tag: when both trigger at the same slot (the whole position trails) they must stay two
+            # rows of 0.5 in the fill's GROUP BY, not collapse into one
+            trig.append(f"""SELECT key, moment, t, 'half{m}' AS rule, '{H}' AS h, 0.5 AS part, 'trail' AS leg,
                 CASE WHEN ord_{m} IS NOT NULL AND slot_{m} <= {cap} AND (ord_stop IS NULL OR ord_{m} < ord_stop)
                      THEN CASE WHEN ord_trail{m}_{H} IS NOT NULL AND (ord_stop IS NULL OR ord_trail{m}_{H} < ord_stop) THEN slot_trail{m}_{H}
                                WHEN ord_stop IS NOT NULL AND slot_stop <= {cap} THEN slot_stop END
@@ -150,7 +154,7 @@ def labels_and_exits(con):
     # the fill: the first mark at or after trigger slot + d_slots within H; otherwise (no trigger, or nothing after it) the end-of-H mark
     con.execute("""CREATE OR REPLACE TEMP TABLE fills AS
         WITH f AS (
-            SELECT tr.key, tr.moment, tr.t, tr.rule, tr.h, tr.part, tr.trig_slot,
+            SELECT tr.key, tr.moment, tr.t, tr.rule, tr.h, tr.part, tr.leg, tr.trig_slot,
                    arg_min(k.net, k.ord) FILTER (WHERE tr.trig_slot IS NOT NULL AND k.slot >= tr.trig_slot + l.d_slots AND k.slot <= CASE tr.h WHEN '24' THEN l.cap24 ELSE l.cap72 END) AS fill_net,
                    any_value(CASE tr.h WHEN '24' THEN l.end_net_24 ELSE l.end_net_72 END) AS end_net
             FROM trig tr JOIN lab2 l USING (key, moment, t) JOIN mkx k ON k.key = tr.key AND k.moment = tr.moment AND k.t = tr.t

@@ -64,7 +64,9 @@ def test_families_are_point_in_time(tmp_path):
     money = tmp_path / "money"
     money.mkdir()
     _write(money / "wallet-day-0.parquet", [
-        {"wallet": "W1", "day": day - datetime.timedelta(days=1), "ms_per_slot": MS, "n_opened": 60, "median_hold_slots": 10, "n_snipe": 0, "buy_sol": 100.0},
+        # wallet-day buy_sol is lamports (money.py); W1 bought 100 SOL, W4 49.999999999 SOL (one lamport under the 50 SOL line)
+        {"wallet": "W1", "day": day - datetime.timedelta(days=1), "ms_per_slot": MS, "n_opened": 60, "median_hold_slots": 10, "n_snipe": 0, "buy_sol": 100 * 10**9},
+        {"wallet": "W4", "day": day - datetime.timedelta(days=1), "ms_per_slot": MS, "n_opened": 1, "median_hold_slots": 10, "n_snipe": 0, "buy_sol": 50 * 10**9 - 1},
         {"wallet": "W2", "day": day, "ms_per_slot": MS, "n_opened": 60, "median_hold_slots": 10, "n_snipe": 3, "buy_sol": 1.0}])   # the entry day itself: must not be used
     (money / "SHA256SUMS.wallet-days").write_text("x\n")
     info = F.run(str(lab), str(money), str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"))
@@ -77,8 +79,11 @@ def test_families_are_point_in_time(tmp_path):
     assert abs(e1["eb_hit_rate"] - 0.5) < 1e-12 and e1["eb_max_hits"] == 1   # W2 has no earlier early buy: its rate is NULL and drops out of the mean
     # c2 on C at entry S + 5100: C's x5 (S + 5050) is now known, but it is the entry's own coin: still 1 hit for W1
     assert e2["eb_n"] == 3 and e2["eb_hits"] == 1   # W4 (first buy S + 5030 <= t) is a buyer now
-    # money-v2 on the day before: W1 bot + heavy, W2 only has a row on the entry day itself (ignored), W4 none
+    # money-v2 on the day before: W1 bot + heavy, W2 only has a row on the entry day itself (ignored), W4 not among e1's buyers
     assert abs(e1["eb_active_share"] - 0.5) < 1e-12 and abs(e1["eb_bot_share"] - 0.5) < 1e-12 and e1["eb_sniper_share"] == 0 and abs(e1["eb_heavy_share"] - 0.5) < 1e-12
+    # c2's buyers W1, W2, W4: only W1 is heavy; W4's 49.999999999 SOL (in lamports) is not, and a wallet-day written in SOL units
+    # (the old fixture's 100.0) would be 100 lamports and never heavy (Codex finding #2, 2026-10-24)
+    assert abs(e2["eb_heavy_share"] - 1 / 3) < 1e-12 and abs(e2["eb_active_share"] - 2 / 3) < 1e-12
     # creator CR at entry S + 5010: coins known A, B (C out) = 2; x2 known A, B = 2 (C's x2 at S + 5020 is later); x5 A = 1; migrations A = 1
     assert e1["cr_prior_coins"] == 2 and e1["cr_prior_x2"] == 2 and e1["cr_prior_x5"] == 1 and e1["cr_prior_mig"] == 1
     assert abs(e1["cr_x2_rate"] - 1.0) < 1e-12 and abs(e1["cr_days_since_prev"] - 4000 * MS / 86400000) < 1e-12
@@ -91,3 +96,27 @@ def test_families_are_point_in_time(tmp_path):
     # purge: epoch 1040 is train; the entry at S + 430,000 has its 24 h window (216,000 slots) over the 1041 boundary
     assert all(r["block"] == "train" for r in rows) and e1["censored_24"] is False and e3["censored_24"] is True and e3["next_boundary"] == 1041 * 432_000
     assert info["censored_24"] == {"train": 1} and info["blocks"] == {"train": 3} and e1["censored_72"] is True   # 72 h = 648,000 slots: over the boundary
+
+
+def test_heavy_is_judged_in_lamports(tmp_path):
+    """Codex finding #2: a wallet-day's buy_sol is a lamport sum; a buyer counts as heavy from 50 SOL = 50e9 lamports on, not
+    from 50 'units'. Three wallets around the line, read through the same features run."""
+    _store(tmp_path / "s.duckdb")
+    lab = tmp_path / "labels"
+    lab.mkdir()
+    day = datetime.date(2026, 9, 25)
+    base = {"key": "C", "mint": "C", "creator": "CR", "create_slot": S + 5000, "epoch": E, "h6_slots": H72, "day": day, "cost_sol": 0.5}
+    _write(lab / f"labels-{LO}.parquet", [base | {"moment": "c2", "t": S + 5060, "entry_slot": S + 5100}])   # buyers W1, W2, W4
+    _write(lab / f"mint_peaks-{LO}.parquet", [{"mint": "C", "create_slot": S + 5000, "creator": "CR", "first_x2_slot": None, "first_x5_slot": None, "first_x10_slot": None, "peak_mult": 1.0}])
+    _write(lab / f"early_buyers-{LO}.parquet", [{"mint": "C", "create_slot": S + 5000, "wallet": w, "first_buy_slot": S + 5001 + i, "buy_sol": 1.0} for i, w in enumerate(("W1", "W2", "W4"))])
+    money = tmp_path / "money"
+    money.mkdir()
+    prev = day - datetime.timedelta(days=1)
+    row = {"day": prev, "ms_per_slot": MS, "n_opened": 1, "median_hold_slots": 10, "n_snipe": 0}
+    _write(money / "wallet-day-0.parquet", [row | {"wallet": "W1", "buy_sol": 50 * 10**9},        # exactly 50 SOL: heavy
+                                            row | {"wallet": "W2", "buy_sol": 50 * 10**9 - 1},    # one lamport short: not heavy
+                                            row | {"wallet": "W4", "buy_sol": 100.0}])            # 100 lamports (a SOL-unit mistake): not heavy
+    (money / "SHA256SUMS.wallet-days").write_text("x\n")
+    F.run(str(lab), str(money), str(tmp_path / "out"), store=str(tmp_path / "s.duckdb"))
+    (r,) = pq.read_table(str(tmp_path / "out" / "features.parquet")).to_pylist()
+    assert r["eb_n"] == 3 and abs(r["eb_active_share"] - 1.0) < 1e-12 and abs(r["eb_heavy_share"] - 1 / 3) < 1e-12
