@@ -114,3 +114,76 @@ def test_e71_parity_accepts_exact_out_buys():
                     {c.rt}::HUGEINT AS rt_pre, 0::HUGEINT AS rq_pre, 95 AS fee_bps, 30 AS creator_bps, 'W' AS trader, NULL::VARCHAR AS fee_payer""")
     par = e71.parity(con)
     assert par["buys_ok"] == 1 and par["buys_ok_exact_out"] == 1 and par["parity_ok"]
+
+
+def test_e72_ranks_generic_filter_and_originals():
+    import duckdb
+    from wallets.common import Clock
+    from wallets.probes import e72
+    con = duckdb.connect()
+    con.execute("CREATE TABLE mints (mint VARCHAR, create_slot UBIGINT, symbol VARCHAR, quote_mint VARCHAR, mayhem BOOLEAN)")
+    sysk = e72.SYS
+    lo = 1040 * 432_000
+    rows = [("O1", lo + 100, "$Cat", sysk, False), ("C1", lo + 200, "cat", sysk, False), ("C2", lo + 300, "CAT!", sysk, False),
+            ("C3", lo + 400, "cat", sysk, False), ("C4", lo + 500, "cat", sysk, False), ("C5", lo + 600, "cat", sysk, False),   # the 6th 'cat' has n_prev60 = 5 -> no copy
+            ("L", lo + 20_000, "cat", sysk, False), ("M", lo + 250, "cat", sysk, True), ("P", lo + 260, "cat", "PUMPx", False), ("E", lo + 270, "", sysk, False)]
+    # generic, point-in-time: 25 'test' creates in the 24 h before the window (outside 60 min), then a 'test' pair inside it:
+    # the second of the pair is a rank-2 copy by the 60 min rule but has 26 earlier 'test' creates in 24 h -> dropped
+    rows += [(f"T{i}", lo - 100_000 + i * 1_000, "test", sysk, False) for i in range(25)] + [("TA", lo + 700, "test", sysk, False), ("TB", lo + 710, "test", sysk, False)]
+    con.executemany("INSERT INTO mints VALUES (?, ?, ?, ?, ?)", rows)
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("INSERT INTO meta VALUES (?)", ['{"ms_per_slot": {"1040": 267.0}}'])
+    creates, copies, generic = e72.ranks(con, lo, lo + 432_000, Clock.from_store(con))
+    c = {r[0]: r for r in con.execute("SELECT mint, rank, orig_mint FROM copies ORDER BY create_slot").fetchall()}
+    assert set(c) == {"C1", "C2", "C3", "C4"} and c["C1"][1] == 2 and c["C4"][1] == 5 and c["C2"][2] == "O1"   # '$Cat' / 'CAT!' -> 'cat'
+    assert generic == 1 and copies == 5  # TB dropped by the 24 h filter; C1-C4 + TB are the rank 2-5 copies by the 60 min rule
+    assert con.execute("SELECT mint, t FROM origs").fetchall() == [("O1", lo + 200)]
+    # L is 20,000 slots (~89 min) later: outside 60 min -> not a copy; M (mayhem), P (PUMP quote), E (empty key) are not in km / ranks
+    assert con.execute("SELECT count(*) FROM ranks WHERE mint IN ('L', 'M', 'P', 'E')").fetchone()[0] == 1
+
+
+def test_e73_triggers_k_distinct_wallets_and_cooldown():
+    import duckdb
+    from wallets.common import Clock
+    from wallets.probes import e73
+    con = duckdb.connect()
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("INSERT INTO meta VALUES (?)", ['{"ms_per_slot": {"1040": 250.0}}'])
+    lo = 1040 * 432_000
+    # key A: W1 at +0, W2 at +40 (10 s), W1 again at +50 (same wallet: no), W3 at +100 (25 s after W1, 15 s after W2), then far later W4 / W5
+    buys = [("A", lo + 0, "W1"), ("A", lo + 40, "W2"), ("A", lo + 50, "W1"), ("A", lo + 100, "W3"), ("A", lo + 20_000, "W4"), ("A", lo + 20_010, "W5"),
+            ("B", lo + 0, "W1"), ("B", lo + 1_000, "W2")]   # B: 250 s apart -> only the 120 s cell never, 30 s never
+    con.execute("CREATE TABLE gb (key VARCHAR, slot UBIGINT, ord UBIGINT, trader VARCHAR)")
+    con.executemany("INSERT INTO gb VALUES (?, ?, ?, ?)", [(k, s, s * 1000, w) for k, s, w in buys])
+    e73.triggers(con, Clock.from_store(con))
+    t = sorted(con.execute("SELECT moment, key, t FROM trig_all").fetchall())
+    # k2n30 (120 slots): A triggers at +40 (W2 after W1), cooldown 60 min = 14,400 slots -> the +20,010 pair triggers again
+    assert ("k2n30", "A", lo + 40) in t and ("k2n30", "A", lo + 20_010) in t and ("k2n30", "A", lo + 100) not in t
+    # k3n30: the third distinct wallet W3 at +100 (W1, W2 within 120 slots before)
+    assert ("k3n30", "A", lo + 100) in t and not any(m == "k3n30" and k == "A" and s > lo + 100 for m, k, s in t)
+    # k2n10 (40 slots): W2 at +40 is exactly 40 slots after W1 -> counts (>= a.slot - 40)
+    assert ("k2n10", "A", lo + 40) in t
+    assert not any(k == "B" for _, k, _ in t)
+
+
+def test_e73_good_set_threshold_is_5_sol_in_lamports(tmp_path):
+    import duckdb
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from wallets.probes import e73
+    # two wallets, 7 positive days each before 2026-09-19: A sums to 4.9 SOL (out), B to 5.1 SOL (in); C has only 4 days (out)
+    rows = []
+    for i in range(7):
+        day = f"2026-09-{12 + i:02d}"
+        rows.append(("A", day, 0.7 * 10**9, 0, 10**8))
+        rows.append(("B", day, int(5.1 * 10**9 / 7) + 1, 0, 10**8))
+        if i < 4:
+            rows.append(("C", day, 10**10, 0, 10**8))
+    rows.append(("Z", "2026-09-19", 10**9, 0, 10**8))   # the measured day exists in the data (Z itself has no history)
+    pq.write_table(pa.table({"wallet": [r[0] for r in rows], "day": [r[1] for r in rows], "cash": [float(r[2]) for r in rows],
+                             "fees": [float(r[3]) for r in rows], "buy_sol": [float(r[4]) for r in rows]}), tmp_path / "wallet-day-0.parquet")
+    con = duckdb.connect()
+    e73.good_days(con, str(tmp_path / "out"), money=str(tmp_path)) if (tmp_path / "out").mkdir() is None else None
+    good = con.execute("SELECT wallet, day FROM good ORDER BY 1, 2").fetchall()
+    assert ("B", "2026-09-19") in good and not any(w == "A" for w, _ in good) and not any(w == "C" for w, _ in good)
+    assert all(d >= "2026-09-19" for _, d in good)

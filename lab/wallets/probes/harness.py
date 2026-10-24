@@ -74,11 +74,34 @@ def moments_from(con, moments_sql, clock):
 
 
 def simulate(con, cost_tx, hi_ext, clock, extra_exit_sql=None):
-    """runners.entries + marks, then the exit rule -> TEMP TABLE ex (one row per entry).
+    """runners.entries, then the marks and the exit rule in two stages with the same result as one pass over H6: first
+    every entry with the mark horizon at 1 h (most exits trigger within minutes), then only the entries still without a
+    trigger at 1 h with the full 6 h horizon. Keeps the marks table small on busy keys (E73). -> TEMP TABLE ex.
+    exit_net / reason / exit_slot are identical to one pass over 6 h; n_marks / max_net of the entries settled in stage 1
+    cover the first hour only (the report does not use them; max_net_1h is exact either way).
 
     extra_exit_sql: optional query (key, moment, t, ord_cut) with an earlier forced exit per entry (E71's agent-free
     cell: the sell at the last mark before ord_cut); applied as a second column set, the primary exit stays."""
     R.entries(con, cost_tx)
+    con.execute("CREATE OR REPLACE TEMP TABLE ent_all AS SELECT * FROM ent")
+    con.execute("CREATE OR REPLACE TEMP TABLE ent AS SELECT * REPLACE (h1 AS h6) FROM ent_all")
+    _marks_and_exits(con, cost_tx, hi_ext, extra_exit_sql)
+    con.execute("CREATE OR REPLACE TEMP TABLE ex_stage1 AS SELECT * FROM ex")
+    # not settled within 1 h: no trigger ('end'), or a trigger whose delayed sell found no mark before the 1 h edge ('end_after_*')
+    con.execute("""CREATE OR REPLACE TEMP TABLE ent AS SELECT a.* FROM ent_all a JOIN ex_stage1 x USING (key, moment, t) WHERE x.reason LIKE 'end%'""")
+    n_open = R._count(con, "ent")
+    if n_open:
+        _marks_and_exits(con, cost_tx, hi_ext, extra_exit_sql)
+        con.execute("""CREATE OR REPLACE TEMP TABLE ex AS
+            SELECT * FROM ex_stage1 WHERE reason NOT LIKE 'end%' UNION ALL SELECT * FROM ex""")
+    else:
+        con.execute("CREATE OR REPLACE TEMP TABLE ex AS SELECT * FROM ex_stage1")
+    con.execute("CREATE OR REPLACE TEMP TABLE ent AS SELECT * FROM ent_all")
+    R.progress(f"probe exits {R._count(con, 'ex')} (stage 2 for {n_open} entries open at 1 h): " + str(con.execute("SELECT reason, count(*) FROM ex GROUP BY 1 ORDER BY 1").fetchall()))
+
+
+def _marks_and_exits(con, cost_tx, hi_ext, extra_exit_sql=None):
+    """runners.marks on the current ent, then the exit rule -> TEMP TABLE ex (one row per entry)."""
     R.marks(con, cost_tx, hi_ext)
     con.execute(f"""CREATE OR REPLACE TEMP TABLE w AS
         SELECT *, max(net) OVER (PARTITION BY key, moment, t ORDER BY ord ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS pmax FROM mk""")
@@ -113,7 +136,6 @@ def simulate(con, cost_tx, hi_ext, clock, extra_exit_sql=None):
                    CASE WHEN c.ord_cut IS NOT NULL AND c.ord_cut <= e.exit_ord THEN CASE WHEN p.net_pre IS NULL THEN 'cut_no_mark' ELSE 'cut' END ELSE e.reason END AS reason_cut
             FROM ex e LEFT JOIN cut c USING (key, moment, t) LEFT JOIN pre p USING (key, moment, t)""")
         con.execute("CREATE OR REPLACE TEMP TABLE ex AS SELECT * FROM ex2")
-    R.progress(f"probe exits {R._count(con, 'ex')}: " + str(con.execute("SELECT reason, count(*) FROM ex GROUP BY 1 ORDER BY 1").fetchall()))
 
 
 def write(con, out_dir, name, lo, size_sol, probe, extra=None):

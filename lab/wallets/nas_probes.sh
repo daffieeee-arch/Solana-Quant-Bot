@@ -86,6 +86,10 @@ for e in $EPOCHS; do
   { [ "$e" -ge 1033 ] && [ "$e" -le 1046 ]; } || red "epoch $e is outside dev 1033-1046 (hold-out 1047-1051 and clean 1055-1063 are closed)"
 done
 case "$STORE" in *clean*) red "the store path names the clean store: refused";; esac
+if [ "$STEP" = e73 ]; then
+  [ -z "${LAB_E73_SAMPLE:-}" ] || red "LAB_E73_SAMPLE is set: a sampled good set is a smoke, never a result"
+  case "${LAB_E73_GOOD:-$OUT/good-days.parquet}" in "$OUT"/*) ;; *) red "LAB_E73_GOOD outside $OUT: the job builds its own good set";; esac
+fi
 maxslot=$("$PY" -c "import duckdb, sys; c = duckdb.connect(sys.argv[1], read_only=True); print(c.execute('SELECT max(slot) FROM blocks').fetchone()[0])" "$STORE")
 [ "$maxslot" -lt "$HOLDOUT_START" ] || red "store reaches slot $maxslot >= hold-out start $HOLDOUT_START"
 log "guards: dev only (max block slot $maxslot), store $STORE, clean.lock untouched"
