@@ -89,6 +89,8 @@ def test_moments_labels_exits_and_mint_tables(tmp_path, monkeypatch):
         assert abs(r[f"peak_{H}"] - e["peak"]) < 1e-9 and abs(r[f"end_{H}"] - e["end"]) < 1e-9
         for rule, x in e["x"].items():
             assert abs(r[f"x_{rule}_{H}"] - x) < 1e-9, (rule, H)
+        # the half exits explicitly (LAB nit on #560): on this path x2 is hit, so half2 = half at the target + half on the trail after it
+        assert abs(r[f"x_half2_{H}"] - e["x"]["half2"]) < 1e-9 and abs(r[f"x_half5_{H}"] - e["x"]["half5"]) < 1e-9, H
     # the 25 SOL buy makes x2 happen; a tp2 with the 2-slot delay sells at a later mark than the undelayed runners x_tp2 when the trigger
     # mark is not the last one of its slot group
     assert r["hit_2_24"] and r["x_tp2_24"] > 0 and r["trig_tp2_24"]
@@ -146,6 +148,42 @@ def test_half_exits_trail_the_whole_position_when_the_target_never_comes(tmp_pat
         assert abs(r[f"x_trail30_{H}"] - trail_fill) < 1e-9
         assert abs(r[f"x_half2_{H}"] - trail_fill) < 1e-9 and abs(r[f"x_half5_{H}"] - trail_fill) < 1e-9, H   # the whole position trails
         assert abs(r[f"x_half2_{H}"] - 0.5 * (trail_fill + r[f"end_{H}"])) > 0.02, "the old half-at-the-end value must not come back"
+
+
+def test_half_exits_at_the_stop_count_both_halves(tmp_path, monkeypatch):
+    """The leg collapse found with Codex finding #4 (#560): when both halves trigger at the same slot they must stay two rows of
+    0.5 in the fill. Path: a 20 SOL buy before the entry leaves enough real reserve that a crash at S + 900 puts the mark under
+    50 % of the cost (the stop; no x2 before it) without draining the curve (the harness caps marks at the real reserve plus
+    our deposit, so a drained curve would not show the stop); the delayed fill is the S + 1500 mark and the end mark lies
+    higher. x_half2 / x_half5 must equal the stop's fill (= x_trail30, which triggers on the same slot), not half of it."""
+    trades = [(S, True, 2 * 10**9, True), (S + 300, True, 20 * 10**9, False), (S + 400, True, 10**9, True), (S + 500, True, 10**9, True),
+              (S + 900, False, 3 * 10**14, True), (S + 1500, True, 10**9, True), (S + 2000, True, 3 * 10**9, True)]
+    rows, states = _curve_rows(trades)
+    _store(tmp_path / "s.duckdb", rows, [])
+    con = duckdb.connect(str(tmp_path / "s.duckdb"))
+    con.execute("ALTER TABLE mints ADD COLUMN create_tx UBIGINT")
+    con.execute("UPDATE mints SET create_tx = 1")
+    con.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    out = tmp_path / "out"
+    X.run(LO, LO + 5_000, str(out), store=str(tmp_path / "s.duckdb"), cfg="/nonexistent.yaml")
+    r = {x["moment"]: x for x in duckdb.connect().execute(f"SELECT * FROM '{out}/labels-{LO}.parquet'").arrow().read_all().to_pylist()}["e10"]
+    pre = states[1][1]
+    fill = V.curve_buy_exact_in(pre, SIZE)
+    marks = [(slot, V.curve_sell(c, fill.tokens).trader_quote - TX) for slot, c in states[2:] if not c.complete]
+    cost = SIZE + TX
+    net = [m for _, m in marks]
+    i_stop = next(i for i in range(len(net)) if net[i] <= 0.5 * cost)
+    assert max(net[:i_stop]) < 2 * cost, "fixture: no x2 before the stop"
+    assert states[2 + i_stop][1].rq > SIZE, "fixture: the real reserve at the stop must exceed our deposit (else the cap, not the price, sets the mark)"
+    stop_fill = net[next(i for i in range(len(net)) if marks[i][0] >= marks[i_stop][0] + 2)] / cost
+    e = _expected(marks, cost, 2, round(24 * 3_600_000 / MS), S + 400)
+    assert abs(e["x"]["half2"] - stop_fill) < 1e-9 and abs(e["end"] - stop_fill) > 0.05
+    for H in ("24", "72"):
+        assert r[f"stop_first_{H}"] and not r[f"hit_2_{H}"]
+        assert abs(r[f"x_trail30_{H}"] - stop_fill) < 1e-9
+        assert abs(r[f"x_half2_{H}"] - stop_fill) < 1e-9 and abs(r[f"x_half5_{H}"] - stop_fill) < 1e-9, H
+        assert abs(r[f"x_half2_{H}"] - 0.5 * stop_fill) > 0.1, "the collapsed half-of-the-stop value must not come back"
 
 
 def test_size_2_sol_run_writes_its_own_file(tmp_path, monkeypatch):

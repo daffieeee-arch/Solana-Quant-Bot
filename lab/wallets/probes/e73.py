@@ -84,7 +84,9 @@ def good_buys_sql(lo, hi):
     """SQL: every token buy in [lo, hi) on a SOL-priced, non-Mayhem venue, as (key, slot, ord, trader): curve buys (is_buy) and
     pool token buys on both orientations. A pool row's token_buy is the store's orientation-aware flag: on a normal pool a token
     buy is kind 'buy', on a reversed pool (WSOL is the base) a token buy is kind 'sell'; filtering on kind = 'buy' dropped every
-    reversed token buy (Codex finding #1, 2026-10-24). key = curve / normal-pool mint, reversed pool address."""
+    reversed token buy (Codex finding #1, 2026-10-24). key = the curve / normal-pool mint; for a reversed pool the pool address,
+    because the harness keys reversed positions by pool (the pool's mint is the quote token, several reversed pools can share
+    it, and the k-wallets-together signal must count per market, not per token)."""
     return f"""
             SELECT c.mint AS key, c.slot, c.slot * 1000000000 + c.tx_index * 100000 + c.outer_ix * 1000 + c.inner_ix AS ord, c.trader
             FROM curve c JOIN mints m ON m.mint = c.mint WHERE c.is_buy AND c.slot >= {lo} AND c.slot < {hi} AND m.quote_mint = '{SYS}' AND NOT COALESCE(m.mayhem, false)
