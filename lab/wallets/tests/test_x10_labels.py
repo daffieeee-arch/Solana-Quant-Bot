@@ -2,6 +2,9 @@
 delayed exits (the sell at the first mark >= trigger slot + d), the per-mint peak and early-buyer tables and the extra
 features, all recomputed in Python from the same engine states the runners test uses."""
 import duckdb
+import pyarrow as pa
+import pyarrow.parquet as pq
+import json
 import pytest
 
 from backtest import venues as V
@@ -274,3 +277,51 @@ def test_labels_forward_flag_is_wired_through_runners_window(tmp_path, monkeypat
     assert runners.CAP == LO + 60_000
     runners.window(duckdb.connect(str(tmp_path / "d.duckdb")), LO, LO + 5_000)   # back to the dev cap for other tests
     assert runners.CAP == common.HOLDOUT_START
+
+
+def test_labels_carry_the_peak_row_kind_and_mixed_tier_flag(tmp_path, monkeypatch):
+    """Since 2026-10-24 every labels row says which kind of state row made its peak and whether that row's slot holds trades of the
+    pool with more than one fee tier -- the only place where the pre-fix slot-ASOF tie could move a mark; ab_labels' tolerance
+    reads them. On the curve-only fixture the peak row is a curve trade (kind NULL: pl has no row) and the flag is false."""
+    trades = [(S, True, 2 * 10**9, True), (S + 300, True, 3 * 10**9, False), (S + 400, True, 10**9, True), (S + 900, True, 25 * 10**9, True),
+              (S + 1500, False, 5 * 10**12, True)]
+    rows, states = _curve_rows(trades)
+    _store(tmp_path / "s.duckdb", rows, [])
+    con = duckdb.connect(str(tmp_path / "s.duckdb"))
+    con.execute("ALTER TABLE mints ADD COLUMN create_tx UBIGINT")
+    con.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    out = tmp_path / "out"
+    X.run(LO, LO + 5_000, str(out), store=str(tmp_path / "s.duckdb"), cfg="/nonexistent.yaml")
+    r = duckdb.connect().execute(f"SELECT peak_kind_24, peak_mixed_24, peak_kind_72, peak_mixed_72 FROM '{out}/labels-{LO}.parquet' WHERE moment = 'e10'").fetchone()
+    assert r[0] is None and r[1] is False and r[2] is None and r[3] is False
+
+
+def test_ab_labels_tier_tie_tolerance(tmp_path):
+    """x10-hertelling-plan v0.5: with --allow-tier-tie-drops a peak_24 drop passes only when it is at most TIE_TOL relative AND the
+    new peak row is a boost / withdraw / deposit row in a mixed-tier slot; it is listed. A larger drop, or a drop on a trade-row
+    peak, stays RED; without the flag every drop is RED as before."""
+    from wallets.x10 import ab_labels as AB
+    base = {"tokens": [100, 100, 100, 100], "cost_sol": [0.5, 0.5, 0.5, 0.5], "hit_2_24": [True, False, False, False], "hit_5_24": [False] * 4, "hit_10_24": [False] * 4,
+            "hit_2_72": [True, False, False, False], "hit_5_72": [False] * 4, "hit_10_72": [False] * 4, "stop_first_24": [False, True, False, False], "stop_first_72": [False, True, False, False],
+            "x_tp2_24": [2.0, 0.3, 0.9, 0.9], "x_trail30_24": [1.5, 0.3, 0.9, 0.9], "x_tp5_24": [1.5, 0.3, 0.9, 0.9], "end_24": [1.0, 0.2, 0.8, 0.8], "depth_sol": [5.0] * 4}
+    keys = {"key": ["A", "B", "C", "D"], "moment": ["e10"] * 4, "t": [1, 2, 3, 4]}
+    old = dict(keys, **base, peak_24=[2.1, 0.4, 1.0, 1.0])
+    # A: unchanged; B: up (the cap); C: down 0.1 % on a boost peak in a mixed slot (allowed); D: down 0.1 % on a trade-row peak (RED)
+    new = dict(keys, **base, peak_24=[2.1, 0.9, 0.999, 0.999], peak_kind_24=[None, None, "boost", "buy"], peak_mixed_24=[False, False, True, False],
+               peak_kind_72=[None] * 4, peak_mixed_72=[False] * 4)
+    pq.write_table(pa.Table.from_pydict(old), str(tmp_path / "old.parquet"))
+    pq.write_table(pa.Table.from_pydict(new), str(tmp_path / "new.parquet"))
+    args = ["--old", str(tmp_path / "old.parquet"), "--new", str(tmp_path / "new.parquet"), "--out", str(tmp_path / "ab"), "--tag", "t"]
+    assert AB.main(args) == 1                                   # no flag: two drops -> RED
+    assert AB.main(args + ["--allow-tier-tie-drops"]) == 1     # D's drop is on a trade-row peak -> still RED
+    res = json.load(open(tmp_path / "ab" / "ab-t.json"))
+    assert [d["key"] for d in res["peak_24_drops_allowed"]] == ["C"] and [d["key"] for d in res["peak_24_drops_red"]] == ["D"]
+    new["peak_kind_24"][3] = "withdraw"; new["peak_mixed_24"][3] = True
+    pq.write_table(pa.Table.from_pydict(new), str(tmp_path / "new.parquet"))
+    assert AB.main(args + ["--allow-tier-tie-drops"]) == 0     # both drops explained and within tolerance -> GREEN, listed
+    md = open(tmp_path / "ab" / "ab-t.md").read()
+    assert "2 peak_24 drops within the tier-tie tolerance" in md and md.count("ALLOWED") == 2
+    new["peak_24"][2] = 0.99                                    # 1 % drop: beyond one tier step -> RED even on a boost peak
+    pq.write_table(pa.Table.from_pydict(new), str(tmp_path / "new.parquet"))
+    assert AB.main(args + ["--allow-tier-tie-drops"]) == 1

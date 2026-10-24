@@ -161,13 +161,14 @@ def legs(con, lo, hi_ext, mayhem_curve=False):
     con.execute(f"""CREATE OR REPLACE TEMP TABLE pl AS
         WITH raw AS (
             SELECT t.key, p.pool, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind, p.b, p.e, p.vault, COALESCE(p.vq, 0) AS vq, p.base, p.e_delta, p.quote_user,
-                   p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps, p.token_buy, p.sol_amount, p.token_amount, p.trader, p.fee_payer, p.farmer, t.orientation
+                   p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps, p.token_buy, p.sol_amount, p.token_amount, p.trader, p.fee_payer, p.farmer, t.orientation,
+                   p.slot * 1000000000 + p.tx_index * 100000 + p.outer_ix * 1000 + p.inner_ix AS ord
             FROM pool p JOIN tok t ON t.pool = p.pool WHERE p.slot >= {lo} AND p.slot < {hi_ext} AND p.kind IN ('buy', 'sell', 'boost', 'withdraw', 'deposit')),
         trades AS (
             SELECT *, b AS b_pre, e AS e_pre, CASE WHEN kind = 'sell' THEN b + base ELSE b - base END AS b_post, e + e_delta AS e_post, vq AS virt,
                    COALESCE(lp_bps, 0) AS lp, COALESCE(protocol_bps, 0) AS pr, COALESCE(creator_bps, 0) AS cr, COALESCE(cashback_bps, 0) AS cb
             FROM raw WHERE kind IN ('buy', 'sell')),
-        virts AS (SELECT key, slot, tx_index, outer_ix, inner_ix, vq AS virt FROM raw WHERE kind IN ('buy', 'sell', 'boost')),
+        virts AS (SELECT key, ord, vq AS virt FROM raw WHERE kind IN ('buy', 'sell', 'boost')),
         others AS (
             SELECT o.*, NULL::BIGINT AS b_pre, NULL::BIGINT AS e_pre,
                    CASE WHEN o.kind = 'deposit' THEN o.b + o.base ELSE o.b - o.base END AS b_post,
@@ -175,10 +176,13 @@ def legs(con, lo, hi_ext, mayhem_curve=False):
                         ELSE o.vault + COALESCE(v.virt, 0) + o.quote_user END AS e_post,
                    CASE WHEN o.kind = 'boost' THEN o.vq ELSE COALESCE(v.virt, 0) END AS virt,
                    COALESCE(t.lp, 0) AS lp, COALESCE(t.pr, 0) AS pr, COALESCE(t.cr, 0) AS cr, COALESCE(t.cb, 0) AS cb
+            -- the fee tiers (and the virtual quote) of a boost / withdraw / deposit row come from the LAST TRADE BEFORE IT in the full
+            -- transaction order (ord), not from any trade in the same slot: an ASOF on the slot alone was a tie among the slot's trades
+            -- and picked one at random per run (E75 A/B, 2026-10-24: three creator tiers in one slot gave peak marks 5 bps apart)
             FROM (SELECT * FROM raw WHERE kind IN ('boost', 'withdraw', 'deposit')) o
-            ASOF LEFT JOIN trades t ON t.key = o.key AND o.slot >= t.slot
-            ASOF LEFT JOIN virts v ON v.key = o.key AND o.slot >= v.slot)
-        SELECT key, 'pool' AS venue, orientation, slot * 1000000000 + tx_index * 100000 + outer_ix * 1000 + inner_ix AS ord, slot, tx_index, kind,
+            ASOF LEFT JOIN trades t ON t.key = o.key AND o.ord > t.ord
+            ASOF LEFT JOIN virts v ON v.key = o.key AND o.ord > v.ord)
+        SELECT key, 'pool' AS venue, orientation, ord, slot, tx_index, kind,
                kind IN ('buy', 'sell') AS trade, token_buy AS is_buy, sol_amount::HUGEINT AS sol, token_amount::HUGEINT AS tokens, trader, fee_payer, COALESCE(farmer, false) AS farmer,
                b_pre::HUGEINT AS b_pre, e_pre::HUGEINT AS e_pre, b_post::HUGEINT AS b_post, e_post::HUGEINT AS e_post, virt::HUGEINT AS virt, lp, pr, cr, cb
         FROM (SELECT * FROM trades UNION ALL SELECT * FROM others)""")

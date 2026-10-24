@@ -361,3 +361,40 @@ def test_forward_window_uses_forward_guard_and_caps_at_the_store_end(tmp_path, m
     # back to the dev rule for other tests: the module cap is reset by the next dev window
     runners.window(duckdb.connect(str(tmp_path / "d.duckdb")), LO, LO + 5_000)
     assert runners.CAP == common.HOLDOUT_START
+
+
+def test_boost_row_takes_the_tiers_of_the_last_trade_before_it_in_tx_order(tmp_path, monkeypatch):
+    """E75 A/B RED (2026-10-24): a boost / withdraw / deposit row has no fee tiers of its own; the harness took them from a trade
+    of the same pool with an ASOF on the slot alone, which is a tie among all trades of that slot and was resolved at random per
+    run (three creator tiers in one slot moved a peak mark by 5 bps between runs). Now the tiers (and the virtual quote) come from
+    the last trade BEFORE the row in the full transaction order, deterministically: two trades in the boost's slot with different
+    creator tiers, the boost between them in tx order -> the earlier trade's tier, the same on a second run."""
+    rows, states = _curve_rows([(S, True, 2 * 10**9, True)])
+    B0, E0 = 10**12, 30 * 10**9
+    p0 = V.Pool(B0, E0, 20, 5, 5, 0)
+    t1 = V.pool_buy_exact_in(p0, 10**9); p1 = t1.state
+    t2 = V.pool_buy_exact_in(p1, 10**9); p2 = t2.state
+    prow = [{"kind": "deposit", "slot": S + 100, "b": 0, "e": 0, "vault": 0, "base": B0, "e_delta": None, "quote_user": E0},
+            {"kind": "buy", "slot": S + 200, "b": p0.b, "e": p0.e, "base": t1.tokens, "e_delta": p1.e - p0.e, "token_buy": True, "sol_amount": 10**9, "token_amount": t1.tokens},
+            {"kind": "boost", "slot": S + 200, "b": p1.b, "e": p1.e, "vault": p1.e, "base": 10**8, "e_delta": 5 * 10**7, "quote_user": None},
+            {"kind": "buy", "slot": S + 200, "b": p2.b, "e": p2.e, "base": t2.tokens, "e_delta": 7 * 10**7, "token_buy": True, "sol_amount": 10**9, "token_amount": t2.tokens}]
+    _store(tmp_path / "s.duckdb", rows, [{"pool": "P1", "mint": M, "create_slot": S + 100, "rows": prow}])
+    w = duckdb.connect(str(tmp_path / "s.duckdb"))
+    # tx order inside slot S + 200: buy A (tx 10, creator 65) < boost (tx 20) < buy B (tx 30, creator 75); the fixture wrote tx 1 for all
+    w.execute(f"UPDATE pool SET tx_index = 10, creator_bps = 65 WHERE kind = 'buy' AND slot = {S + 200} AND base = {t1.tokens}")
+    w.execute(f"UPDATE pool SET tx_index = 20 WHERE kind = 'boost'")
+    w.execute(f"UPDATE pool SET tx_index = 30, creator_bps = 75 WHERE kind = 'buy' AND slot = {S + 200} AND base = {t2.tokens}")
+    w.execute("UPDATE pool SET lp_bps = NULL, protocol_bps = NULL, creator_bps = NULL, cashback_bps = NULL WHERE kind IN ('boost', 'deposit')")  # as the store: no tiers of their own
+    w.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    got = []
+    for _ in range(2):
+        con = runners.connect(str(tmp_path / "s.duckdb"), memory="500MB", threads=2)
+        clock = runners.Clock.from_store(con)
+        runners.setup(con, LO, LO + 5_000, clock)
+        got.append(con.execute("SELECT kind, tx_index, lp, pr, cr, cb FROM pl WHERE slot = ? ORDER BY tx_index", [S + 200]).fetchall())
+        con.close()
+    assert got[0] == got[1], got
+    by_kind = {(k, tx): (lp, pr, cr) for k, tx, lp, pr, cr, cb in got[0]}
+    assert by_kind[("buy", 10)] == (20, 5, 65) and by_kind[("buy", 30)] == (20, 5, 75)
+    assert by_kind[("boost", 20)] == (20, 5, 65), "the boost takes the tiers of the trade before it in tx order (65), never the later 75"
