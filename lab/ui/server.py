@@ -56,6 +56,11 @@ def _load_actions():
 actions = _load_actions()
 
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")
+# The interactive UI (Bediening: pairing, confirmed actions, notes; lab/ui/actions.py) is off unless LAB_UI_ACTIONS=1
+# (the owner's pause, 2026-10-20). Off: no Bediening tab, and /api/action/* answers 404 before the action layer, so
+# nothing is written (no audit line, no session) and the app is read-only as before B0.
+ACTIONS_ON = os.environ.get("LAB_UI_ACTIONS") == "1"
+ACTIONS_OFF = "bediening uit"  # the 404 body of /api/action/* while the switch is off
 ANALYTICS = os.path.join(DATA, "analytics", "analytics.duckdb")
 ALLOWED_HOSTS = {"127.0.0.1", "100.112.193.63"}
 FORBIDDEN_PORTS = {3000, 443, 8443, 8787, 8771}
@@ -134,7 +139,8 @@ def api_meta(q):
         tabs.append("triton")
     if has_table(con, "strategy_summary") and con.execute("SELECT count(*) FROM strategy_summary").fetchone()[0]:
         tabs.insert(0, "strategies")
-    tabs.append("control")  # Bediening: pairing, confirmed actions, the audit log (lab/ui/actions.py)
+    if ACTIONS_ON:
+        tabs.append("control")  # Bediening: pairing, confirmed actions, the audit log (lab/ui/actions.py)
     return {"meta": meta, "tabs": tabs}
 
 
@@ -521,7 +527,8 @@ def api_ui_jobs(q):
 
 def api_paper_trades(q):
     """The paper bot's entries and exits on one token, for its token page: the mint itself (curve trades) and
-    every pool of that mint in the development store (pool trades)."""
+    every pool of that mint in the development store, the paper journal's learned pools and the paper run's store
+    (pool trades; a live position's pool is in neither store of the development data)."""
     mint = (q.get("mint", [""])[0] or "").strip()
     if not (32 <= len(mint) <= 44 and mint.isalnum()):
         raise ValueError("unknown mint")
@@ -529,6 +536,7 @@ def api_paper_trades(q):
         return {"trades": []}
     con = connect(with_dev=True)
     keys = [mint] + [r[0] for r in con.execute("SELECT pool FROM dev.pools WHERE mint = ?", [mint]).fetchall()]
+    keys = list(dict.fromkeys(keys + paper.mint_pools(mint)))
     trades = []
     for k in keys:
         t = paper.key_trades(k)
@@ -677,6 +685,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/action/") and not ACTIONS_ON:
+            return self.send_json(HTTPStatus.NOT_FOUND, {"error": ACTIONS_OFF})
         if path not in ("/api/action/pair", "/api/action/prepare", "/api/action/commit"):
             return self.send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "alleen lezen"})
         try:
@@ -705,6 +715,8 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/stream":
             return self.stream()
         if url.path.startswith("/api/action/"):
+            if not ACTIONS_ON:
+                return self.send_json(HTTPStatus.NOT_FOUND, {"error": ACTIONS_OFF})
             return self.action_get(url.path, parse_qs(url.query))
         if url.path.startswith("/api/"):
             fn = ROUTES.get(url.path)
