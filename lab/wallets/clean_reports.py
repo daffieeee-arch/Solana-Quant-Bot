@@ -28,7 +28,7 @@ PREREG = {
     "H4": ("hypothesis-h4-flow300-organic-2026-10-16.md", "2358103206", "flow300_H6", "flow300-clean"),
     "H5": ("hypothesis-h5-flow300-tp100-organic-2026-10-16.md", "c59c6dfd", "flow300_tp100_H6", "flow300-tp100-clean"),
 }
-PINS = {"E20": "46a0236", "H3": "dbef1b8", "H4": "165bb04", "H5": "15fa3dd"}
+PINS = {"E20": "be47fc4", "H3": "dbef1b8", "H4": "165bb04", "H5": "15fa3dd"}  # E20: erratum 2026-10-24 (#167 issuecomment-6384965518), store-only fix from 46a0236
 # the producer per note, its test key in result.json and the parts it writes beside result.json (the run's F7 pool_reversed
 # rows in the window minus the exclusions)
 PRODUCER = {"H3": ("clean_h3", "H3", "h3-parts"), "H4": ("clean_h4", "H4", "h4-parts"), "H5": ("clean_hx", "test", "run-parts")}
