@@ -56,6 +56,10 @@ def _load_actions():
 actions = _load_actions()
 
 DATA = os.environ.get("LAB_DATA_ROOT", "/home/chupa/Solana-project/data-old-faithful-one/lab")
+# The interactive UI (Bediening: pairing, confirmed actions, notes; lab/ui/actions.py) is off unless LAB_UI_ACTIONS=1
+# (the owner's pause, 2026-10-20). Off: no Bediening tab, and /api/action/* answers 404 before the action layer, so
+# nothing is written (no audit line, no session) and the app is read-only as before B0.
+ACTIONS_ON = os.environ.get("LAB_UI_ACTIONS") == "1"
 ANALYTICS = os.path.join(DATA, "analytics", "analytics.duckdb")
 ALLOWED_HOSTS = {"127.0.0.1", "100.112.193.63"}
 FORBIDDEN_PORTS = {3000, 443, 8443, 8787, 8771}
@@ -134,7 +138,8 @@ def api_meta(q):
         tabs.append("triton")
     if has_table(con, "strategy_summary") and con.execute("SELECT count(*) FROM strategy_summary").fetchone()[0]:
         tabs.insert(0, "strategies")
-    tabs.append("control")  # Bediening: pairing, confirmed actions, the audit log (lab/ui/actions.py)
+    if ACTIONS_ON:
+        tabs.append("control")  # Bediening: pairing, confirmed actions, the audit log (lab/ui/actions.py)
     return {"meta": meta, "tabs": tabs}
 
 
@@ -679,6 +684,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
+        if path.startswith("/api/action/") and not ACTIONS_ON:
+            return self.send_json(HTTPStatus.NOT_FOUND, {"error": "onbekend pad"})
         if path not in ("/api/action/pair", "/api/action/prepare", "/api/action/commit"):
             return self.send_json(HTTPStatus.METHOD_NOT_ALLOWED, {"error": "alleen lezen"})
         try:
@@ -707,6 +714,8 @@ class Handler(BaseHTTPRequestHandler):
         if url.path == "/api/stream":
             return self.stream()
         if url.path.startswith("/api/action/"):
+            if not ACTIONS_ON:
+                return self.send_json(HTTPStatus.NOT_FOUND, {"error": "onbekend pad"})
             return self.action_get(url.path, parse_qs(url.query))
         if url.path.startswith("/api/"):
             fn = ROUTES.get(url.path)

@@ -54,6 +54,8 @@ systemctl --user restart lab-ui-web
 curl -s -o /dev/null -w "%{http_code}\n" http://100.112.193.63:8501/api/paper   # 200
 ```
 
+The interactive UI (Bediening: pairing, actions, notes) is off unless the unit sets `LAB_UI_ACTIONS=1`; off, the app is read-only as before B0 (no tab, `/api/action/*` answers 404, nothing is written).
+
 Roll back the front end with `web.prev`, and the server by checking out the previous commit and restarting.
 
 ## iPhone
