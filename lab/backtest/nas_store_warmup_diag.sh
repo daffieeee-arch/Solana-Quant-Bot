@@ -130,17 +130,19 @@ for f in "$NEW/lab/backtest/store.py 28edae50864a947e" "$NEW/lab/backtest/strate
   [ "$(sha16 "$1")" = "$2" ] || red "$1: sha256 $(sha16 "$1")..., not $2..."
 done
 log "code: store.py 28edae50/5bfa9c66, strategies.py a3c2dfc7, data.py, pda.py and health.py as pinned"
-DV=$("$PY" -P -c 'import duckdb; print(duckdb.__version__)') || red "no duckdb in $PY"
+DV=$("$PY" -P -c 'import duckdb; print(duckdb.__version__)') || red "$PY: no duckdb, or no -P (Python 3.11 or later)"
 log "python $("$PY" -V 2>&1), duckdb $DV"
 [ "$DV" = "$DUCKDB_VERSION" ] || red "duckdb $DV, not $DUCKDB_VERSION"
 [ ! -e "$DATA/locks/disk-low" ] || red "$DATA/locks/disk-low exists (disk guard)"
 
 # Inputs: dev2 is ba322be's dev store; the chunks are the ones dev2 was built from (the VPS manifests, committed).
-run_diff dev2-meta meta "$DEV2" --expect-period dev --expect-commit ba322be60d25 || red "dev2 is not ba322be's dev store (dev2-meta.log)"
+run_diff dev2-meta meta "$DEV2" --expect-period dev --expect-commit ba322be60d25 \
+  || red "dev2 is not ba322be's dev store (dev2-meta.log)"
 log "dev2: $(stat -c %s "$DEV2") bytes; $(tail -1 "$OUT/dev2-meta.log")"
 REF=$DIAG/lab/backtest/dev_chunk_manifests.json
 if [ "$WARMUP" = 1 ]; then
-  run_diff inputs-warmup inputs --ref "$REF" --root "$V1" --lo "$WS" --hi "$FROM_SLOT" || red "warm-up chunks (inputs-warmup.log)"
+  run_diff inputs-warmup inputs --ref "$REF" --root "$V1" --lo "$WS" --hi "$FROM_SLOT" \
+    || red "the warm-up chunks differ from dev2's (inputs-warmup.log)"
   logfile "$OUT/inputs-warmup.log"
 fi
 rc=0

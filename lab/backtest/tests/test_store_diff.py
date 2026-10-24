@@ -122,8 +122,8 @@ def test_c1_an_empty_table_a_missing_table_and_the_u64_gate_are_red(tmp_path):
     assert r["red"] == ["tables differ: only in A ['pool_class_daily'], only in B []"]
     a, _ = F.scenario()
     a["meta"]["excluded_pools_int64"]["pools"] = 1
-    assert full(tmp_path / "3", a, F.s0_like(a))["red"] == ["a: meta.excluded_pools_int64 is " + repr(a["meta"]["excluded_pools_int64"])
-                                                           + ", not 0 pools"]
+    ex = a["meta"]["excluded_pools_int64"]
+    assert full(tmp_path / "3", a, F.s0_like(a))["red"] == [f"a: meta.excluded_pools_int64 is {ex!r}, not 0 pools"]
     a, _ = F.scenario()
     del a["meta"]["excluded_pools_int64"]
     assert not full(tmp_path / "4", a, F.s0_like(a))["green"]  # fail closed: the key must be there
@@ -181,7 +181,8 @@ def test_c2_pool_rows_on_one_side_are_put_in_categories(tmp_path):
     b["pool"].append(F.pool_row("P_NORM", F.LO + 3001, True, SOL, 300 * SOL, "W0", "normal"))  # present, same class
     r = window(tmp_path, a, b)
     assert r["red"] == ["pool differs in the window"]
-    assert r["exact"]["pool"]["one_sided_by_pool"] == {"only_a": {}, "only_b": {"pool absent in A": 1, "pool present, same class": 1}}
+    assert r["exact"]["pool"]["one_sided_by_pool"] == {"only_a": {},
+                                                       "only_b": {"pool absent in A": 1, "pool present, same class": 1}}
     assert r["categories"]["pools"]["b_only_with_rows_in_window"] == 1
 
 
@@ -341,7 +342,8 @@ def test_cli_writes_a_new_report_and_returns_the_verdict(tmp_path, capsys):
     with pytest.raises(FileExistsError):  # a report is never overwritten
         D.main(["full", pa, pb, "--spill", str(tmp_path / "spill"), "--out", str(out)])
     assert D.main(["window", pa, pb, "--lo", str(F.LO), "--hi", str(F.HI), "--spill", str(tmp_path / "spill")]) == 0
-    assert D.main(["meta", pb, "--expect-period", "dev", "--expect-commit", "ba322be60d25", "--spill", str(tmp_path / "spill")]) == 0
+    spill = ["--spill", str(tmp_path / "spill")]
+    assert D.main(["meta", pb, "--expect-period", "dev", "--expect-commit", "ba322be60d25"] + spill) == 0
     assert D.main(["meta", pa, "--expect-period", "dev", "--spill", str(tmp_path / "spill")]) == 1
 
 

@@ -41,7 +41,8 @@ GREEN rule, pinned before any run (the map's C1, C2 and C4 with its checker's co
     mints), pool_stats (only pools B saw entirely inside [S, H)), pool_class_daily (full UTC days with 24 h of A's
     history before them), pool_sweeps and meta (ms per slot, farmer parameters, extractor builds per chunk).
   C4 (triggers): F7 triggers with t in [L, H) from the pinned strategies.f7_signals_sql on each store, with the same
-    (dev_start, dev_end) and one clock (A's ms per slot), keyed (venue, pool or mint, t). GREEN: A has a pool_reversed
+    (dev_start, dev_end) and one clock (A's ms per slot; the regime of L's epoch), keyed (venue, pool or mint, t); the
+    whole window, the tournament's end guard included (triggers look backward only). GREEN: A has a pool_reversed
     (K3) trigger; pool_reversed triggers of in-store pools (created in A's store or at or after S in B, and whose mint
     B did not create before S) equal on every column (mint, depth, orientation, trigger wallet, trigger_farmer,
     flagged); every other pool_reversed difference explained by a pool attribute that differs between the stores:
@@ -69,7 +70,8 @@ HOLDOUT_START = 452_304_000  # week2-defaults windows.holdout.start_slot: nothin
 PERIODS = ("dev", "dev-diag-clean-path")  # the clean-path build's label: clean_test wants 'clean', analytics 'dev'
 KEYS = {"blocks": ("slot",), "mints": ("mint",), "curve": ("mint", "slot", "tx_index", "outer_ix", "inner_ix"),
         "pools": ("pool",), "pool_stats": ("pool",), "pool": ("pool", "slot", "tx_index", "outer_ix", "inner_ix", "kind"),
-        "pool_sweeps": ("pool", "slot", "tx_index", "outer_ix", "inner_ix"), "pool_class_daily": ("day", "quote_class", "mayhem")}
+        "pool_sweeps": ("pool", "slot", "tx_index", "outer_ix", "inner_ix"),
+        "pool_class_daily": ("day", "quote_class", "mayhem")}
 APART = {"pools": ("coin_creator", "part"), "pool_stats": ("last_b", "last_vault", "coin_creator"), "mints": ("pool",)}
 MASK = {("pools", "mint"): 'CASE WHEN "mint_source" IS NULL THEN NULL ELSE "mint" END'}  # any_value over links: apart
 EMPTY_OK = ("pool_sweeps",)
@@ -203,7 +205,8 @@ def keyed_diff(con, src_a, src_b, key, cols, examples=5):
 
     def part(where, s):
         n = con.execute(f"SELECT count(*) FROM d_ WHERE {where}").fetchone()[0]
-        ks = con.execute(f"SELECT {', '.join(f'{s}{i}' for i in k)} FROM d_ WHERE {where} ORDER BY ALL LIMIT {int(examples)}").fetchall()
+        ks = con.execute(f"SELECT {', '.join(f'{s}{i}' for i in k)} FROM d_ WHERE {where} "
+                         f"ORDER BY ALL LIMIT {int(examples)}").fetchall()
         return {"rows": n, "keys": [[str(v) for v in r] for r in ks]}
 
     out = {"only_a": part("br IS NULL", "a"), "only_b": part("ar IS NULL", "b"), "columns": {}}
@@ -241,8 +244,8 @@ def compare(con, table, src_a, src_b, examples=5):
         if table in APART:
             r["apart"] = _apart(con, table, src_a, src_b)
         if x != y:
-            r["diff"] = keyed_diff(con, src_a, src_b, KEYS[table], {c: e for c, e in cols.items() if c not in APART.get(table, ())},
-                                   examples)
+            r["diff"] = keyed_diff(con, src_a, src_b, KEYS[table],
+                                   {c: e for c, e in cols.items() if c not in APART.get(table, ())}, examples)
     return r
 
 
@@ -318,7 +321,8 @@ def window(con, metas, lo, hi, examples=5):
             red.append(f"{t} has no rows in A's window")
         if t == "pool" and "diff" in r:
             r["one_sided_by_pool"] = _pool_one_sided(con, list(columns(con, "pool")[0]).index("pool"))
-    exact["curve"]["remainder_b"] = con.execute(f"SELECT count(*) FROM b.curve WHERE {w}").fetchone()[0] - exact["curve"]["rows_b"]
+    b_curve = con.execute(f"SELECT count(*) FROM b.curve WHERE {w}").fetchone()[0]
+    exact["curve"]["remainder_b"] = b_curve - exact["curve"]["rows_b"]  # B's rows of mints created before S
     cats = {"pools": _pools_categories(con, s, lo, hi), "pool_stats": _pool_stats_contained(con, s, hi, examples),
             "pool_class_daily": _class_daily(con, examples),
             "pool_sweeps": [con.execute(f"SELECT count(*) FROM {d}.pool_sweeps WHERE {w}").fetchone()[0] for d in "ab"],
@@ -354,11 +358,12 @@ def _pools_categories(con, s, lo, hi):
     out = {"a": con.execute("SELECT count(*) FROM a.pools").fetchone()[0],
            "paired": con.execute("SELECT count(*) FROM pm_").fetchone()[0],
            "a_only": con.execute("SELECT count(*) FROM a.pools WHERE pool NOT IN (SELECT pool FROM b.pools)").fetchone()[0],
-           "b_only_with_rows_in_window": con.execute(f"""SELECT count(DISTINCT pool) FROM b.pool WHERE slot >= {lo} AND slot < {hi}
-                AND pool NOT IN (SELECT pool FROM a.pools)""").fetchone()[0],
+           "b_only_with_rows_in_window": con.execute(f"""SELECT count(DISTINCT pool) FROM b.pool
+                WHERE slot >= {lo} AND slot < {hi} AND pool NOT IN (SELECT pool FROM a.pools)""").fetchone()[0],
            "part": "left out (ntile over each store's own pool set)", "columns": {}}
     for c in POOL_COLS:
-        rows = con.execute(f"SELECT grp, cause, count(*) FROM pm_ WHERE a_{c} IS DISTINCT FROM b_{c} GROUP BY ALL ORDER BY ALL").fetchall()
+        rows = con.execute(f"SELECT grp, cause, count(*) FROM pm_ WHERE a_{c} IS DISTINCT FROM b_{c} "
+                           "GROUP BY ALL ORDER BY ALL").fetchall()
         if rows:
             out["columns"][c] = {f"{g}/{k}": n for g, k, n in rows}
     con.execute(f"""CREATE OR REPLACE TEMP TABLE pu_ AS
@@ -414,7 +419,8 @@ def _meta_window(ma, mb):
             "extractor_equal": all(a == b for a, b in ex.values()),
             "manifest_mtime_equal": sum(1 for c in ma.get("chunk_list", [])
                                         if mt.get((c["slots"][0], c["slots"][1])) == c.get("manifest_mtime")),
-            "excluded_pools_int64_a": ma.get("excluded_pools_int64"), "git_commit": [ma.get("git_commit"), mb.get("git_commit")]}
+            "excluded_pools_int64_a": ma.get("excluded_pools_int64"),
+            "git_commit": [ma.get("git_commit"), mb.get("git_commit")]}
 
 
 # ----------------------------------------------------------------------------- C4
@@ -643,7 +649,8 @@ def _summary(r):
     elif r["check"] == "C2":
         for t, x in r["exact"].items():
             print(t, "rows", x["rows_a"], x["rows_b"], "equal" if x["equal"] else "DIFFER", "drift" if x["type_drift"] else "",
-                  f"apart {x['apart']}" if "apart" in x else "", f"remainder_b {x['remainder_b']}" if "remainder_b" in x else "")
+                  f"apart {x['apart']}" if "apart" in x else "",
+                  f"remainder_b {x['remainder_b']}" if "remainder_b" in x else "")
         print("pools", json.dumps(r["categories"]["pools"]["columns"], sort_keys=True)[:2000])
     elif r["check"] == "C4":
         for g, x in r["segments"].items():
@@ -698,7 +705,8 @@ def main(argv=None):
                                 a.spill, a.memory, a.threads, a.examples)
     else:
         con, metas = connect({"a": a.a, "b": a.b}, a.spill, a.memory, a.threads)
-        report = full(con, metas, a.excluded_zero, a.examples) if a.cmd == "full" else window(con, metas, a.lo, a.hi, a.examples)
+        report = (full(con, metas, a.excluded_zero, a.examples) if a.cmd == "full"
+                  else window(con, metas, a.lo, a.hi, a.examples))
     if a.cmd in ("full", "window", "triggers"):
         report["stores"] = {"a": os.path.realpath(a.a), "b": os.path.realpath(a.b)}
     if a.out:

@@ -8,7 +8,7 @@ scenario() gives an S1-like store A (warm-up 1042 + window 1043, period dev-diag
     and mints outside A's store;
   - M_B completes after the window in B only (look-ahead: NULL in A);
   - P_OLD is a reversed pool created before A's start: A has no mint for it (its trigger's mint is the pool id) and
-    no create_slot; B has both (create in 1043 - 1.05 epochs);
+    no create_slot; B has both (its create in 1041);
   - P_REV (reversed, created in A's warm-up) and P_NORM (sol, created in the window) agree;
   - P_REV can boost in B only (a boost after the window), P_GONE trades only before A's start.
 Each of P_REV, P_OLD and P_NORM has one F7 trigger in the window (a 10 SOL token sell 5-20 slots after a 2 SOL token
@@ -113,23 +113,28 @@ def scenario():
     blocks = [block(s) for s in (WS + 10, WS + 5000, LO + 5, LO + 100, LO + 105, LO + 300, LO + 720, LO + 2000, HI - 1)]
     mints = [mint("M_A", LO + 5, "C1", complete_slot=LO + 500, migrate_slot=LO + 600, pool="P_NORM"),
              mint("M_B", WS + 100, "C2")]
-    curves = [curve("M_A", LO + 280, True, SOL, 61 * SOL, 41 * SOL, "T1"), curve("M_A", LO + 300, False, 5 * SOL, 60 * SOL, 40 * SOL, "T2"),
-              curve("M_B", WS + 200, True, SOL, 31 * SOL, 11 * SOL, "T3"), curve("M_B", LO + 50, True, SOL, 32 * SOL, 12 * SOL, "T3")]
+    curves = [curve("M_A", LO + 280, True, SOL, 61 * SOL, 41 * SOL, "T1"),
+              curve("M_A", LO + 300, False, 5 * SOL, 60 * SOL, 40 * SOL, "T2"),
+              curve("M_B", WS + 200, True, SOL, 31 * SOL, 11 * SOL, "T3"),
+              curve("M_B", LO + 50, True, SOL, 32 * SOL, 12 * SOL, "T3")]
     pools = [pools_row("P_NORM", "sol", "normal", "M_A", LO + 600, "C1", True, 0),
              pools_row("P_REV", "reversed", "reversed", "M_R", WS + 300, "CR", True, 1),
              pools_row("P_OLD", "reversed", "reversed", None, None, "CO", False, 2)]
-    rows = [pool_row("P_REV", LO + 100, True, 2 * SOL, 200 * SOL, "W0"), pool_row("P_REV", LO + 105, False, 10 * SOL, 202 * SOL, "W1"),
+    rows = [pool_row("P_REV", LO + 100, True, 2 * SOL, 200 * SOL, "W0"),
+            pool_row("P_REV", LO + 105, False, 10 * SOL, 202 * SOL, "W1"),
             pool_row("P_NORM", LO + 700, True, 2 * SOL, 200 * SOL, "W0", "normal"),
             pool_row("P_NORM", LO + 720, False, 10 * SOL, 202 * SOL, "W2", "normal"),
             pool_row("P_OLD", WS + 5000, True, SOL, 190 * SOL, "W0"),
-            pool_row("P_OLD", LO + 1990, True, 2 * SOL, 200 * SOL, "W0"), pool_row("P_OLD", LO + 2000, False, 10 * SOL, 202 * SOL, "W3")]
+            pool_row("P_OLD", LO + 1990, True, 2 * SOL, 200 * SOL, "W0"),
+            pool_row("P_OLD", LO + 2000, False, 10 * SOL, 202 * SOL, "W3")]
     st = [stats("P_NORM", LO + 700, LO + 720, False, "C1"), stats("P_REV", LO + 100, LO + 105, True, "CR"),
           stats("P_OLD", WS + 5000, LO + 2000, True, "CO")]
-    daily = [{"day": "2025-10-10", "quote_class": "sol", "mayhem": False, "pools": 1, "buys": 1, "sells": 1, "sol_volume": 12 * SOL,
-              "organic_sol_volume": 12 * SOL}]
+    daily = [{"day": "2025-10-10", "quote_class": "sol", "mayhem": False, "pools": 1, "buys": 1, "sells": 1,
+              "sol_volume": 12 * SOL, "organic_sol_volume": 12 * SOL}]
     a = {"blocks": blocks, "mints": mints, "curve": curves, "pools": pools, "pool_stats": st, "pool": rows, "pool_sweeps": [],
          "pool_class_daily": daily,
-         "meta": meta(period="dev-diag-clean-path", slot_start=WS, slot_end_exclusive=HI, chunks=4, chunk_list=chunk_list(WS, HI),
+         "meta": meta(period="dev-diag-clean-path", slot_start=WS, slot_end_exclusive=HI, chunks=4,
+                      chunk_list=chunk_list(WS, HI),
                       ms_per_slot={"1042": 267.83, "1043": 267.93}, window=[LO, HI], warmup_epochs=1,
                       purpose="DEV DIAGNOSTIC (ii) fixture", diagnostic=True, git_commit="be47fc425fc4",
                       excluded_pools_int64={"pools": 0, "reversed": 0, "not_reversed": 0, "no_trade_rows": 0,
@@ -138,13 +143,15 @@ def scenario():
     b["blocks"] += [block(WS - 50), block(HI + 50)]
     b["mints"][1]["complete_slot"] = HI + 100  # look-ahead: completes after the window
     b["mints"] += [mint("M_OLD", WS - 1000, "C3"), mint("M_LATE", HI + 10, "C4")]
-    b["curve"] += [curve("M_OLD", LO + 70, True, SOL, 33 * SOL, 13 * SOL, "T4"), curve("M_A", HI + 5, True, SOL, 62 * SOL, 42 * SOL, "T1")]
+    b["curve"] += [curve("M_OLD", LO + 70, True, SOL, 33 * SOL, 13 * SOL, "T4"),
+                   curve("M_A", HI + 5, True, SOL, 62 * SOL, 42 * SOL, "T1")]
     b["pools"] = [dict(p, part=p["part"] + 5) for p in b["pools"]]  # dev2: 16 parts
     b["pools"][1]["can_boost"] = True  # a boost after the window
     b["pools"][2].update(quote_mint="M_X", mint="M_X", mint_source="create_pool", mayhem_source="create_pool",
                          create_slot=WS - 20_000, b0=10 ** 12, q0=10 ** 11, created_in_period=True)
     b["pools"].append(pools_row("P_GONE", "sol", "normal", "M_G", WS - 30_000, "CG", True, 9))
-    b["pool"] += [pool_row("P_REV", HI + 10, True, SOL, 210 * SOL, "W0"), pool_row("P_GONE", WS - 25_000, True, SOL, 300 * SOL, "W0", "normal")]
+    b["pool"] += [pool_row("P_REV", HI + 10, True, SOL, 210 * SOL, "W0"),
+                  pool_row("P_GONE", WS - 25_000, True, SOL, 300 * SOL, "W0", "normal")]
     b["pool_stats"][1].update(last_slot=HI + 10, can_boost=True)
     b["pool_stats"][2].update(first_slot=WS - 20_000)
     b["pool_stats"].append(stats("P_GONE", WS - 25_000, WS - 25_000, False, "CG"))
