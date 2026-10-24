@@ -113,6 +113,41 @@ def test_moments_labels_exits_and_mint_tables(tmp_path, monkeypatch):
     assert [(e["wallet"], e["first_buy_slot"]) for e in eb] == [("W0", S)]
 
 
+def test_half_exits_trail_the_whole_position_when_the_target_never_comes(tmp_path, monkeypatch):
+    """Codex finding #4 (2026-10-24), the docstring's contract: half2 / half5 sell half at the target and trail the rest; when
+    the target never comes the WHOLE position trails. Path: the mark rises to 1.23x, a large sell drops it to 0.86x (<= 70 % of
+    the peak: the trail fires at S + 900, no -50 % stop, no x2), then a buy lifts the end mark again. Both halves must fill at
+    the trail's delayed mark (S + 1500), so x_half2 = x_half5 = x_trail30 and none of them is the end mark; the old code let
+    the target half wait for the end (0.5 x trail + 0.5 x end)."""
+    trades = [(S, True, 2 * 10**9, True), (S + 300, True, 3 * 10**9, False), (S + 400, True, 10**9, True), (S + 500, True, 4 * 10**9, True),
+              (S + 900, False, 16 * 10**13, True), (S + 1500, True, 5 * 10**8, True), (S + 2000, True, 3 * 10**9, True)]
+    rows, states = _curve_rows(trades)
+    _store(tmp_path / "s.duckdb", rows, [])
+    con = duckdb.connect(str(tmp_path / "s.duckdb"))
+    con.execute("ALTER TABLE mints ADD COLUMN create_tx UBIGINT")
+    con.execute("UPDATE mints SET create_tx = 1")
+    con.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    out = tmp_path / "out"
+    X.run(LO, LO + 5_000, str(out), store=str(tmp_path / "s.duckdb"), cfg="/nonexistent.yaml")
+    r = {x["moment"]: x for x in duckdb.connect().execute(f"SELECT * FROM '{out}/labels-{LO}.parquet'").arrow().read_all().to_pylist()}["e10"]
+    assert r["entry_slot"] == S + 400 and r["d_slots"] == 2
+    pre = states[1][1]
+    fill = V.curve_buy_exact_in(pre, SIZE)
+    marks = [(slot, V.curve_sell(c, fill.tokens).trader_quote - TX) for slot, c in states[2:] if not c.complete]
+    cost = SIZE + TX
+    net = [m for _, m in marks]
+    assert max(net) < 2 * cost and min(net) > 0.5 * cost, "fixture: no target and no stop on this path"
+    e = _expected(marks, cost, 2, round(24 * 3_600_000 / MS), S + 400)
+    trail_fill = net[next(i for i in range(len(net)) if marks[i][0] >= S + 900 + 2)] / cost
+    assert abs(e["x"]["trail30"] - trail_fill) < 1e-9 and abs(e["end"] - trail_fill) > 0.05, "fixture: the trail fills at S + 1500, the end mark lies elsewhere"
+    for H in ("24", "72"):
+        assert not r[f"hit_2_{H}"] and not r[f"stop_first_{H}"]
+        assert abs(r[f"x_trail30_{H}"] - trail_fill) < 1e-9
+        assert abs(r[f"x_half2_{H}"] - trail_fill) < 1e-9 and abs(r[f"x_half5_{H}"] - trail_fill) < 1e-9, H   # the whole position trails
+        assert abs(r[f"x_half2_{H}"] - 0.5 * (trail_fill + r[f"end_{H}"])) > 0.02, "the old half-at-the-end value must not come back"
+
+
 def test_size_2_sol_run_writes_its_own_file(tmp_path, monkeypatch):
     trades = [(S, True, 2 * 10**9, True), (S + 300, True, 3 * 10**9, False), (S + 400, True, 10**9, True), (S + 900, True, 25 * 10**9, True),
               (S + 1500, False, 5 * 10**12, True)]

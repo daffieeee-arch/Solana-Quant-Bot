@@ -216,3 +216,36 @@ def test_e71_run_succeeds_on_a_nonexistent_out_dir(tmp_path, monkeypatch):
     path, info = e71.run(con, LO, LO + 5_000, clock, 0.5, TX, str(out))
     assert out.exists() and (out / f"mint_peaks-{LO}.parquet").exists() and (out / f"run-e71-{LO}.json").exists()
     assert info["rows"] == 1 and info["parity_ok"] and info["base_rates"]["mints"] == 1
+
+
+def test_e73_good_buys_count_token_buys_on_both_pool_orientations():
+    """Codex finding #1 (2026-10-24): the store flags a token buy with token_buy, orientation-aware (store.py: on a reversed
+    pool, WSOL is the base, so a token buy is kind 'sell'). E73's good-wallet buys must take token buys on normal and reversed
+    pools, and leave out token sells, boost / withdraw / deposit rows, non-SOL quotes and Mayhem venues; the curve branch
+    takes is_buy. Checked on tables in the store's own shapes."""
+    import duckdb
+    from wallets.probes import e73
+    con = duckdb.connect()
+    lo = 1040 * 432_000
+    con.execute("CREATE TABLE mints (mint VARCHAR, quote_mint VARCHAR, mayhem BOOLEAN)")
+    con.execute("CREATE TABLE curve (mint VARCHAR, slot UBIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, trader VARCHAR, is_buy BOOLEAN)")
+    con.execute("CREATE TABLE pools (pool VARCHAR, mint VARCHAR, orientation VARCHAR, quote_class VARCHAR, mayhem BOOLEAN)")
+    con.execute("CREATE TABLE pool (pool VARCHAR, slot UBIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, trader VARCHAR, kind VARCHAR, token_buy BOOLEAN)")
+    con.executemany("INSERT INTO mints VALUES (?, ?, ?)", [("Mn", e73.SYS, False), ("Mr", e73.SYS, False), ("Mm", e73.SYS, True), ("Mp", "PUMPquote", False)])
+    con.executemany("INSERT INTO curve VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    [("Mn", lo + 1, 1, 0, 0, "Wc", True), ("Mn", lo + 2, 1, 0, 0, "Wc", False), ("Mm", lo + 3, 1, 0, 0, "Wc", True), ("Mp", lo + 4, 1, 0, 0, "Wc", True)])
+    con.executemany("INSERT INTO pools VALUES (?, ?, ?, ?, ?)",
+                    [("Pn", "Mn", "normal", "sol", False), ("Pr", "Mr", "reversed", "reversed", False), ("Pm", "Mm", "reversed", "reversed", True), ("Po", "Mp", "normal", "other", False)])
+    rows = [  # (pool, slot, kind, token_buy, trader): the store's conventions per orientation
+        ("Pn", lo + 10, "buy", True, "W1"),        # normal pool, token buy
+        ("Pn", lo + 11, "sell", False, "W1"),      # normal pool, token sell
+        ("Pr", lo + 12, "sell", True, "W2"),       # reversed pool, token buy (kind 'sell': WSOL is the base)
+        ("Pr", lo + 13, "buy", False, "W2"),       # reversed pool, token sell
+        ("Pn", lo + 14, "boost", None, "W3"), ("Pn", lo + 15, "withdraw", None, "W3"), ("Pn", lo + 16, "deposit", None, "W3"),
+        ("Pm", lo + 17, "sell", True, "W4"),       # Mayhem reversed pool: out
+        ("Po", lo + 18, "buy", True, "W5"),        # non-SOL quote: out
+        ("Pn", lo + 500, "buy", True, "W6"),       # outside the window
+    ]
+    con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [(p, s, 1, 0, 0, w, k, tb) for p, s, k, tb, w in rows])
+    got = sorted(con.execute(f"SELECT key, slot, trader FROM ({e73.good_buys_sql(lo, lo + 100)})").fetchall())
+    assert got == [("Mn", lo + 1, "Wc"), ("Mn", lo + 10, "W1"), ("Pr", lo + 12, "W2")], got

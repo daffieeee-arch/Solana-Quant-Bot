@@ -80,19 +80,27 @@ def triggers(con, clock):
     con.execute("CREATE OR REPLACE TEMP TABLE trig_all AS " + " UNION ALL ".join(parts))
 
 
+def good_buys_sql(lo, hi):
+    """SQL: every token buy in [lo, hi) on a SOL-priced, non-Mayhem venue, as (key, slot, ord, trader): curve buys (is_buy) and
+    pool token buys on both orientations. A pool row's token_buy is the store's orientation-aware flag: on a normal pool a token
+    buy is kind 'buy', on a reversed pool (WSOL is the base) a token buy is kind 'sell'; filtering on kind = 'buy' dropped every
+    reversed token buy (Codex finding #1, 2026-10-24). key = curve / normal-pool mint, reversed pool address."""
+    return f"""
+            SELECT c.mint AS key, c.slot, c.slot * 1000000000 + c.tx_index * 100000 + c.outer_ix * 1000 + c.inner_ix AS ord, c.trader
+            FROM curve c JOIN mints m ON m.mint = c.mint WHERE c.is_buy AND c.slot >= {lo} AND c.slot < {hi} AND m.quote_mint = '{SYS}' AND NOT COALESCE(m.mayhem, false)
+            UNION ALL
+            SELECT CASE WHEN ps.orientation = 'reversed' THEN p.pool ELSE ps.mint END, p.slot, p.slot * 1000000000 + p.tx_index * 100000 + p.outer_ix * 1000 + p.inner_ix, p.trader
+            FROM pool p JOIN pools ps ON ps.pool = p.pool WHERE p.kind IN ('buy', 'sell') AND p.token_buy AND p.slot >= {lo} AND p.slot < {hi}
+              AND ps.quote_class IN ('sol', 'reversed') AND NOT COALESCE(ps.mayhem, false)"""
+
+
 def run(con, lo, hi, clock, size_sol, cost_tx, out_dir):
     os.makedirs(out_dir, exist_ok=True)
     cached = good_days(con, out_dir)
     R.progress(f"E73 good set: {R._count(con, 'good')} wallet-days from {cached}: " + str(con.execute("SELECT day, count(*) FROM good GROUP BY 1 ORDER BY 1").fetchall()))
     # buys by good wallets in the window, with the day of the buy; key = curve mint / normal-pool mint / reversed pool
     con.execute(f"""CREATE OR REPLACE TEMP TABLE gb AS
-        WITH b AS (
-            SELECT c.mint AS key, c.slot, c.slot * 1000000000 + c.tx_index * 100000 + c.outer_ix * 1000 + c.inner_ix AS ord, c.trader
-            FROM curve c JOIN mints m ON m.mint = c.mint WHERE c.is_buy AND c.slot >= {lo} AND c.slot < {hi} AND m.quote_mint = '{SYS}' AND NOT COALESCE(m.mayhem, false)
-            UNION ALL
-            SELECT CASE WHEN ps.orientation = 'reversed' THEN p.pool ELSE ps.mint END, p.slot, p.slot * 1000000000 + p.tx_index * 100000 + p.outer_ix * 1000 + p.inner_ix, p.trader
-            FROM pool p JOIN pools ps ON ps.pool = p.pool WHERE p.kind = 'buy' AND p.token_buy AND p.slot >= {lo} AND p.slot < {hi}
-              AND ps.quote_class IN ('sol', 'reversed') AND NOT COALESCE(ps.mayhem, false))
+        WITH b AS ({good_buys_sql(lo, hi)})
         SELECT b.key, b.slot, b.ord, b.trader, strftime(make_timestamp(bl.block_time * 1000000), '%Y-%m-%d') AS day
         FROM b JOIN blocks bl ON bl.slot = b.slot JOIN good g ON g.wallet = b.trader AND g.day = strftime(make_timestamp(bl.block_time * 1000000), '%Y-%m-%d')""")
     R.progress(f"E73 good-wallet buys in the window: {R._count(con, 'gb')}")
