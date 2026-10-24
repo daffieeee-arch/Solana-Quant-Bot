@@ -257,11 +257,12 @@ class ActionsOff(Api):
         origin = f"http://127.0.0.1:{self.port}"
         good = {"Content-Type": "application/json", "X-Lab-Action": "1", "Origin": origin}
         for path in ("/api/action/pair", "/api/action/prepare", "/api/action/commit", "/api/action/other"):
-            status, headers, _ = self.post(path, b'{"code": "X"}', good)
-            self.assertEqual(status, 404, path)
+            status, headers, body = self.post(path, b'{"code": "X"}', good)
+            self.assertEqual((status, json.loads(body)), (404, {"error": "bediening uit"}), path)
             self.assertNotIn("Set-Cookie", headers)
         for path in ("/api/action/session", "/api/action/log", "/api/action/notes?day=2026-10-24", "/api/action/result?id=x"):
-            self.assertEqual(self.req(path)[0], 404, path)
+            status, _, body = self.req(path)
+            self.assertEqual((status, json.loads(body)), (404, {"error": "bediening uit"}), path)
         self.assertEqual(self.post("/api/paper")[0], 405)
         for method in ("PUT", "DELETE", "PATCH"):
             self.assertEqual(self.req("/api/paper", method=method)[0], 405, method)
