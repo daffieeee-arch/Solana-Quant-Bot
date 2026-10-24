@@ -398,3 +398,41 @@ def test_boost_row_takes_the_tiers_of_the_last_trade_before_it_in_tx_order(tmp_p
     by_kind = {(k, tx): (lp, pr, cr) for k, tx, lp, pr, cr, cb in got[0]}
     assert by_kind[("buy", 10)] == (20, 5, 65) and by_kind[("buy", 30)] == (20, 5, 75)
     assert by_kind[("boost", 20)] == (20, 5, 65), "the boost takes the tiers of the trade before it in tx order (65), never the later 75"
+
+
+def test_slot_asof_would_pick_the_later_trade_but_ord_asof_picks_the_earlier(tmp_path, monkeypatch):
+    """LAB should-fix on #586: a fixture where the two joins MUST differ. The boost's only same-slot trade comes AFTER it in tx
+    order (creator tier 75, virtual quote 9); the last trade before it sits in an earlier slot (tier 65, virtual quote 7). A
+    slot-only ASOF (o.slot >= t.slot) can only return the same-slot trade -> 75 / 9; the ord ASOF returns the earlier slot's
+    trade -> 65 / 7. The same for a withdraw (placed before the boost, which resets the virtual quote) and a deposit row, and
+    the result is identical over two runs."""
+    rows, states = _curve_rows([(S, True, 2 * 10**9, True)])
+    B0, E0 = 10**12, 30 * 10**9
+    p0 = V.Pool(B0, E0, 20, 5, 5, 0)
+    t1 = V.pool_buy_exact_in(p0, 10**9); p1 = t1.state
+    t2 = V.pool_buy_exact_in(p1, 10**9); p2 = t2.state
+    prow = [{"kind": "deposit", "slot": S + 100, "b": 0, "e": 0, "vault": 0, "base": B0, "e_delta": None, "quote_user": E0},                      # before any trade: no tiers at all
+            {"kind": "buy", "slot": S + 150, "b": p0.b, "e": p0.e, "base": t1.tokens, "e_delta": p1.e - p0.e, "token_buy": True, "sol_amount": 10**9, "token_amount": t1.tokens},   # tier 65, vq 7
+            {"kind": "withdraw", "slot": S + 200, "b": p1.b, "e": p1.e, "vault": p1.e, "base": 10**7, "e_delta": None, "quote_user": 10**6},            # tx 15
+            {"kind": "boost", "slot": S + 200, "b": p1.b, "e": p1.e, "vault": p1.e, "base": 10**8, "e_delta": 5 * 10**7, "quote_user": None},          # tx 20 (a boost resets the virtual quote: it comes after the withdraw)
+            {"kind": "buy", "slot": S + 200, "b": p2.b, "e": p2.e, "base": t2.tokens, "e_delta": 7 * 10**7, "token_buy": True, "sol_amount": 10**9, "token_amount": t2.tokens}]   # tx 30, tier 75, vq 9
+    _store(tmp_path / "s.duckdb", rows, [{"pool": "P1", "mint": M, "create_slot": S + 100, "rows": prow}])
+    w = duckdb.connect(str(tmp_path / "s.duckdb"))
+    w.execute(f"UPDATE pool SET tx_index = 10, creator_bps = 65, vq = 7 WHERE kind = 'buy' AND slot = {S + 150}")
+    w.execute(f"UPDATE pool SET tx_index = 15 WHERE kind = 'withdraw'")
+    w.execute(f"UPDATE pool SET tx_index = 20 WHERE kind = 'boost'")
+    w.execute(f"UPDATE pool SET tx_index = 30, creator_bps = 75, vq = 9 WHERE kind = 'buy' AND slot = {S + 200}")
+    w.execute("UPDATE pool SET lp_bps = NULL, protocol_bps = NULL, creator_bps = NULL, cashback_bps = NULL, vq = NULL WHERE kind IN ('boost', 'withdraw', 'deposit')")
+    w.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    got = []
+    for _ in range(2):
+        con = runners.connect(str(tmp_path / "s.duckdb"), memory="500MB", threads=2)
+        runners.setup(con, LO, LO + 5_000, runners.Clock.from_store(con))
+        got.append(con.execute("SELECT kind, tx_index, lp, pr, cr, cb, virt FROM pl WHERE kind IN ('boost', 'withdraw', 'deposit') ORDER BY slot, tx_index").fetchall())
+        con.close()
+    assert got[0] == got[1], got
+    by = {k: (lp, pr, cr, virt) for k, tx, lp, pr, cr, cb, virt in got[0]}
+    assert by["boost"][:3] == (20, 5, 65), "the boost's only same-slot trade (tier 75) lies after it: the tier must be the earlier slot's 65"
+    assert by["withdraw"][:3] == (20, 5, 65) and int(by["withdraw"][3]) == 7, "withdraw: tiers and virtual quote of the trade before it, not of the later same-slot trade (9)"
+    assert by["deposit"][:3] == (0, 0, 0) and int(by["deposit"][3]) == 0, "a deposit before any trade has no tiers and no virtual quote"
