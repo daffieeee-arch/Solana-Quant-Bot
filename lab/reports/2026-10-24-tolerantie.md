@@ -34,7 +34,7 @@ Een "betere tol" voor paper verandert dus beide benen. Deze proef doet precies d
   - H5 bij 0,10: ≈ +19,5 % per positie, tegen ≈ +10,4 % gemiddeld (afgeleid: SOL/dag × 20 dagen / n, op 0,5 SOL);
   - dat past bij de audit: de geweigerde instappen waren vaak winnaars.
 
-  Maar ze verdringen latere posities in dezelfde pools, die even goed waren: ≈ +22,5 %, want één open positie per pool. Netto blijft er weinig over.
+  Maar ze verdringen latere posities in dezelfde pools, die minstens even goed waren (per stuk 2–5 punten beter): ≈ +22,5 %, want één open positie per pool. Netto blijft er weinig over.
 - **Leeglopers:** het aandeel posities dat > 90 % verliest stijgt nauwelijks, van 18,9 % (0,05) naar 19,1 % / 19,2 % bij H5 en van 20,1 % naar 20,7 % / 21,1 % bij C3. De uitstap-herhalingen dalen van 7 % naar 1,4 % / 0,5 %.
 
 ## 1. Hoe gerekend (plan §1–§5)
@@ -102,7 +102,7 @@ Een "betere tol" voor paper verandert dus beide benen. Deze proef doet precies d
 - **Gemeenschappelijk = het uitstapbeen.** De instapkosten zijn bij geen enkele gemeenschappelijke positie anders. De opbrengst verschuift gemiddeld ±0,1 %. Een lossere uitstap-tolerantie kost dus bijna niets.
 - **Nieuw tegen verloren = de instap-set.**
   - Bij 0,10 / 0,15 komen er posities bij die 5 % weigerde. Per positie (afgeleid: SOL/dag × 20 / n, op 0,5 SOL): H5 ≈ +20 %, C3 ≈ +22–24 %. Dat is boven het gemiddelde en past bij de bevinding van de audit.
-  - Tegelijk vallen er latere posities in dezelfde pools weg, omdat er één open positie per pool is. Die waren per stuk even goed: H5 ≈ +22–23 %, C3 ≈ +27–28 %.
+  - Tegelijk vallen er latere posities in dezelfde pools weg, omdat er één open positie per pool is. Die waren per stuk minstens even goed (2–5 punten beter): H5 ≈ +22–23 %, C3 ≈ +27–28 %.
   - Bij 0,02 is het omgekeerd: er vallen meer winstgevende posities weg dan er bijkomen.
 - **De rest** (fees van mislukte instappen) is ≤ ±0,02 SOL/dag.
 

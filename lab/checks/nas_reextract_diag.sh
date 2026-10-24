@@ -29,6 +29,10 @@
 # sha256s, ix_accounts_json, rewards_unknown_type_skipped 0, the mint list file and its count) -> SHA256SUMS. Its rc 0
 # (GREEN) and 1 (RED) count only with that verdict in out/summary.json; its rc 3 (an exception), a kill or a missing
 # summary is a RED that says "tool or resource failure, not a data finding".
+# The reused start list cannot create a difference in any compared table (LAB review of #583): LAB_PUMP_MINTS acts
+# only on the transfers tables (extract.rs: LAB_TRANSFERS=1 needs it; the pump / pump_amm event tables are not filtered
+# by it), and 0cfc4db2's 1043a has no transfers tables at all (no pump_mints in its manifest), so those tables are
+# new-side only and ignored by chunk_diff. No look-ahead reaches the comparison.
 # Writes $DATA/events/diag-f5dd11df-t1/chunks/450576000-450792000 (its token tables come from a list with later mints:
 # never research; its _learned_mints.txt never feeds a clean-v1 carry-over), /lab/runs/diag-reextract-1043a-<commit7>/
 # (try<n>/: smoke.log, proxy.log, extract.log) and $DATA/reports/diag-reextract-1043a-<commit7>/ (job.log, pytest.log,
