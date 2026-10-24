@@ -1,6 +1,7 @@
 """Breadth-probe harness on the runners mini store: the fixed 3-slot entry, the trail30 / stop exit with the delayed
 sell, the end-of-horizon fallback, the forced-cut (agent-free) exit, and runners.legs' mayhem opt-in."""
 import duckdb
+import pytest
 
 from backtest import venues as V
 from wallets import runners as R
@@ -249,3 +250,36 @@ def test_e73_good_buys_count_token_buys_on_both_pool_orientations():
     con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [(p, s, 1, 0, 0, w, k, tb) for p, s, k, tb, w in rows])
     got = sorted(con.execute(f"SELECT key, slot, trader FROM ({e73.good_buys_sql(lo, lo + 100)})").fetchall())
     assert got == [("Mn", lo + 1, "Wc"), ("Mn", lo + 10, "W1"), ("Pr", lo + 12, "W2")], got
+
+
+def test_probes_run_forward_flag_is_wired_through_the_harness(tmp_path, monkeypatch):
+    """LAB nit on #574: probes.run --forward sets the harness flag and prepare() goes through runners.window(forward=True):
+    a dev store with the flag is refused, a forward store (window inside, start at FORWARD_START) runs with the cap at the
+    store's end; without the flag the forward store is read under the dev guard (its slots are dev slots here)."""
+    import json
+    from wallets import common
+    from wallets.probes import e71, run as PR
+    rows, states = _mini(tmp_path)
+    for name in ("s.duckdb",):
+        w = duckdb.connect(str(tmp_path / name))
+        w.execute("ALTER TABLE mints ADD COLUMN quote_mint VARCHAR")
+        w.execute("ALTER TABLE mints ADD COLUMN symbol VARCHAR")
+        w.execute(f"UPDATE mints SET quote_mint = '{e71.SYS}', symbol = 'TST'")
+        w.close()
+    import shutil
+    shutil.copy(tmp_path / "s.duckdb", tmp_path / "f.duckdb")
+    w = duckdb.connect(str(tmp_path / "f.duckdb"))
+    w.execute("UPDATE meta SET json = ?", [json.dumps({"ms_per_slot": {str(LO // 432_000): 400.0}, "period": "forward", "slot_start": LO, "slot_end_exclusive": LO + 60_000})])
+    w.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    monkeypatch.setattr(common, "FORWARD_START", LO)
+    try:
+        with pytest.raises(ValueError):   # dev store + --forward
+            PR.main(["--probe", "e71", "--from-slot", str(LO), "--to-slot", str(LO + 5_000), "--out", str(tmp_path / "o1"), "--store", str(tmp_path / "s.duckdb"), "--memory", "500MB", "--threads", "1", "--forward"])
+        assert H.FORWARD is True
+        PR.main(["--probe", "e71", "--from-slot", str(LO), "--to-slot", str(LO + 5_000), "--out", str(tmp_path / "o2"), "--store", str(tmp_path / "f.duckdb"), "--memory", "500MB", "--threads", "1", "--forward"])
+        assert (tmp_path / "o2" / f"run-e71-{LO}.json").exists() and R.CAP == LO + 60_000
+        PR.main(["--probe", "e71", "--from-slot", str(LO), "--to-slot", str(LO + 5_000), "--out", str(tmp_path / "o3"), "--store", str(tmp_path / "s.duckdb"), "--memory", "500MB", "--threads", "1"])
+        assert H.FORWARD is False and R.CAP == common.HOLDOUT_START
+    finally:
+        H.FORWARD = False
