@@ -187,3 +187,13 @@ def test_e73_good_set_threshold_is_5_sol_in_lamports(tmp_path):
     good = con.execute("SELECT wallet, day FROM good ORDER BY 1, 2").fetchall()
     assert ("B", "2026-09-19") in good and not any(w == "A" for w, _ in good) and not any(w == "C" for w, _ in good)
     assert all(d >= "2026-09-19" for _, d in good)
+
+
+def test_probe_run_creates_the_out_dir_before_side_files(tmp_path, monkeypatch):
+    """E71 attempt 1 on the NAS failed: mint_peaks was COPY'd before H.write created the out dir (2026-10-24)."""
+    import inspect
+    from wallets.probes import e71, e72, e73, run as PR
+    for mod in (e71, e72, e73):
+        src = inspect.getsource(mod.run)
+        assert src.index("os.makedirs(out_dir, exist_ok=True)") < src.index("H.write"), mod.__name__
+    assert "os.makedirs(a.out, exist_ok=True)" in inspect.getsource(PR.main)

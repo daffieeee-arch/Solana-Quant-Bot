@@ -15,6 +15,8 @@ Also written per window:
 
 import random
 
+import os
+
 from backtest import venues as V
 from .. import runners as R
 from ..common import HOLDOUT_START
@@ -92,6 +94,7 @@ def mint_peaks(con, lo, hi, clock):
 
 
 def run(con, lo, hi, clock, size_sol, cost_tx, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
     tok = H.tok_sql_for_mints(f"COALESCE(m.mayhem, false) AND m.quote_mint = '{SYS}' AND m.create_slot >= {lo} AND m.create_slot < {hi}")
     hi_ext = H.prepare(con, lo, hi, clock, tok, mayhem_curve=True)
     par = parity(con)

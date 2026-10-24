@@ -8,6 +8,8 @@ Cells: 'copy' (primary: ranks 2-5 pooled, trigger e10 of the copy), 'copy2' .. '
 descriptive), 'orig' (secondary: the first create of the cluster, bought at the create slot of the second one).
 """
 
+import os
+
 from .. import runners as R
 from ..markout import ms_case
 from . import harness as H
@@ -41,6 +43,7 @@ def ranks(con, lo, hi, clock):
 
 
 def run(con, lo, hi, clock, size_sol, cost_tx, out_dir):
+    os.makedirs(out_dir, exist_ok=True)
     stats = ranks(con, lo, hi, clock)
     R.progress(f"E72 creates {stats[0]}, copies r2-5 {stats[1]}, of which generic (dropped) {stats[2]}; kept {R._count(con, 'copies')}, originals {R._count(con, 'origs')}")
     tok = H.tok_sql_for_mints("m.mint IN (SELECT mint FROM copies UNION SELECT mint FROM origs)")

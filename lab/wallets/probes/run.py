@@ -29,6 +29,7 @@ def main(argv=None):
     ap.add_argument("--threads", type=int, default=int(os.environ.get("LAB_WALLETS_THREADS", "2")))
     ap.add_argument("--cfg", default=R.DEFAULTS)
     a = ap.parse_args(argv)
+    os.makedirs(a.out, exist_ok=True)  # the probes write side files (mint_peaks, copies, good-days) before H.write
     con, clock = H.open_store(a.store, a.memory, a.threads)
     cost_tx = R.tx_cost(a.cfg)
     mod = importlib.import_module(f"wallets.probes.{a.probe}")
