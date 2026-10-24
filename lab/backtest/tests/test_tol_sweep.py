@@ -3,8 +3,10 @@ tol 0.05 (T1), the drain and exit-retry shares and the paired difference against
 
 import json
 import os
+import subprocess
 
 import duckdb
+import numpy as np
 import pytest
 
 from backtest import capital_ceiling as cc
@@ -17,6 +19,28 @@ TYPES = ("VARCHAR", "VARCHAR", "VARCHAR", "DOUBLE", "VARCHAR", "VARCHAR", "DOUBL
          "VARCHAR", "BOOLEAN", "BOOLEAN", "BIGINT", "BIGINT", "UBIGINT", "UBIGINT", "INTEGER", "DOUBLE", "DOUBLE")
 DAYS = ("2026-09-12", "2026-09-12", "2026-09-13", "2026-09-14")
 POOLS = ("A", "B", "C", "D")
+
+
+def day_of_pairs(pairs):
+    """A SlotDays from (slot, day) pairs in a fixture's own day labels (its change points)."""
+    starts, days = [], []
+    for slot, day in sorted(set(pairs)):
+        if not days or day != days[-1]:
+            starts.append(slot)
+            days.append(day)
+    return cc.SlotDays(starts, days)
+
+
+def write_store(path):
+    """dev2's window in meta and each trigger slot's block time on its DAYS day (the exit days of the daily limit)."""
+    con = duckdb.connect(path)
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"slot_start": cc.DEV[0], "slot_end_exclusive": cc.DEV[1]})])
+    con.execute("CREATE TABLE blocks (slot UBIGINT, block_time BIGINT)")
+    con.executemany("INSERT INTO blocks VALUES (?, ?)", [(LO + 10_000 + i * 1000, int(np.datetime64(d, "s").astype(np.int64)) + 3600)
+                                                         for i, d in enumerate(DAYS)])
+    con.close()
+    return path
 
 
 def write_run(root, name, tol, rows, **cfg):
@@ -62,15 +86,15 @@ def lab(tmp_path):
                     t(pool, t, d, h, paid_buyers_60s)) TO '{keys}' (FORMAT parquet)""")
     con = duckdb.connect()
     cc.load(con, [e63], keys)
-    days, cells = cc.compute(con, False)
+    days, cells = cc.compute(con, False, day_of_pairs(con.execute("SELECT t, day FROM r").fetchall()))
     js = os.path.join(root, "ceiling.json")
-    json.dump({"cells": cells, "days": days}, open(js, "w"), default=str)
-    return {"root": root, "parts": runs + [e63], "keys": keys, "e63_json": js}
+    json.dump({"cells": cells, "days": days, "daily_loss_book": "exit_day"}, open(js, "w"), default=str)
+    return {"root": root, "parts": runs + [e63], "keys": keys, "e63_json": js, "store": write_store(os.path.join(root, "dev2.duckdb"))}
 
 
 def test_the_sweep_and_its_gates(lab):
     out = os.path.join(lab["root"], "out")
-    assert ts.main(["--parts", *lab["parts"], "--e63-json", lab["e63_json"], "--c3-keys", lab["keys"], "--out", out, "--memory", "1GB"]) == 0
+    assert ts.main(["--parts", *lab["parts"], "--e63-json", lab["e63_json"], "--c3-keys", lab["keys"], "--out", out, "--store", lab["store"], "--memory", "1GB"]) == 0
     res = json.load(open(os.path.join(out, "tol.json")))
     assert {k: v["status"] for k, v in res["gates"].items()} == {"T0": "GREEN", "T1": "GREEN", "T2": "GREEN", "T3": "GREEN"}
     assert res["gates"]["T1"]["cells"] == 2 * 2 * 2  # 2 leads x 2 sizes x 2 scenarios
@@ -103,22 +127,65 @@ def test_a_differing_e63_cell_is_red(lab):
     next(c for c in e63["cells"] if c["candidate"] == "H5" and c["d"] == 3)["unlimited"]["sol_day"] += 1e-9
     json.dump(e63, open(lab["e63_json"], "w"))
     out = os.path.join(lab["root"], "out2")
-    assert ts.main(["--parts", *lab["parts"], "--e63-json", lab["e63_json"], "--c3-keys", lab["keys"], "--out", out, "--memory", "1GB"]) == 1
+    assert ts.main(["--parts", *lab["parts"], "--e63-json", lab["e63_json"], "--c3-keys", lab["keys"], "--out", out, "--store", lab["store"], "--memory", "1GB"]) == 1
 
 
-def test_t0_pins_the_engine_and_the_cost_defaults(tmp_path):
-    assert ts.engine_check()["status"] == "GREEN"  # this checkout's engine is E63's (d15ac45)
+def git_ok():
+    return subprocess.run(["git", "-C", os.path.dirname(ts.__file__), "rev-parse", "--git-dir"], capture_output=True).returncode == 0
+
+
+def e70():
+    """E70's commit through its tag (or the sha): a checkout with git must have it (the tag e70-2026-10-24)."""
+    if not git_ok():
+        pytest.skip("no git checkout (an export): the commit mode needs git")
+    for c in (ts.E70_TAG, ts.E70_COMMIT):
+        if subprocess.run(["git", "-C", os.path.dirname(ts.__file__), "cat-file", "-e", f"{c}^{{commit}}"], capture_output=True).returncode == 0:
+            return c
+    pytest.fail(f"neither {ts.E70_TAG} nor {ts.E70_COMMIT} is in this checkout (fetch the tag)")
+
+
+def test_t0_holds_at_e70s_own_commit_and_a_new_hash_there_is_red():
+    c = e70()
+    assert ts.engine_check(commit=c)["status"] == "GREEN"  # E70's run: every pin, nothing allowed to differ
+    # #555's commit has another store.py: at a commit no drift is accepted, the new hash is no proof by itself.
+    res = ts.engine_check(commit="737a932")
+    assert res["status"] == "RED" and res["differ"] == {"store.py": "17bcaa21bde0"} and res["drift"] == {}
+
+
+def test_t0_on_a_tree_passes_only_listed_drift(tmp_path):
+    c = e70()
     here = os.path.dirname(ts.__file__)
+    prefix = subprocess.run(["git", "-C", here, "rev-parse", "--show-prefix"], capture_output=True, text=True).stdout.strip()
+    show = lambda rev, n: subprocess.run(["git", "-C", here, "show", f"{rev}:{prefix}{n}"], capture_output=True, check=True).stdout  # noqa: E731
     copy = tmp_path / "backtest"
     copy.mkdir()
     for n in ts.ENGINE_SHA256:
-        (copy / n).write_bytes(open(os.path.join(here, n), "rb").read())
-    (copy / "venues.py").write_bytes((copy / "venues.py").read_bytes() + b"\n# changed\n")
+        (copy / n).write_bytes(show(c, n))
+    assert ts.engine_check(here=str(copy)) == {**ts.engine_check(here=str(copy)), "status": "GREEN", "differ": {}, "drift": {}}
+    # #555's store.py (17bcaa21): the listed drift, passed with its proof.
+    (copy / "store.py").write_bytes(show("737a932", "store.py"))
+    res = ts.engine_check(here=str(copy))
+    assert res["status"] == "GREEN" and res["differ"] == {} and "#555" in res["drift"]["store.py"]["why"]
+    # Another change of store.py, and a change of an unlisted file: RED.
+    (copy / "store.py").write_bytes(show("737a932", "store.py") + b"\n# another change\n")
+    res = ts.engine_check(here=str(copy))
+    assert res["status"] == "RED" and list(res["differ"]) == ["store.py"] and res["drift"] == {}
+    (copy / "store.py").write_bytes(show(c, "store.py"))
+    (copy / "venues.py").write_bytes(show(c, "venues.py") + b"\n# changed\n")
     res = ts.engine_check(here=str(copy))
     assert res["status"] == "RED" and list(res["differ"]) == ["venues.py"]
     other = tmp_path / "defaults.yaml"
     other.write_text("costs: {}\n")
-    assert "week2-defaults.yaml" in ts.engine_check(defaults=str(other))["differ"]
+    assert "week2-defaults.yaml" in ts.engine_check(here=str(copy), defaults=str(other))["differ"]
+
+
+def test_a_trigger_day_e63_report_is_refused_before_any_work(lab, tmp_path):
+    old = tmp_path / "old-e63.json"
+    old.write_text(json.dumps({k: v for k, v in json.load(open(lab["e63_json"])).items() if k != "daily_loss_book"}))
+    with pytest.raises(cc.Refused, match="exit day"):
+        ts.main(["--parts", *lab["parts"], "--e63-json", str(old), "--c3-keys", lab["keys"], "--out", str(tmp_path / "o"),
+                 "--store", lab["store"], "--memory", "1GB"])
+    assert not os.path.exists(tmp_path / "o")
 
 
 def test_the_split_by_leg_adds_up():

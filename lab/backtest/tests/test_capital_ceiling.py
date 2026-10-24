@@ -14,6 +14,16 @@ from backtest.analysis import _capital_limited
 LO = cc.DEV[0]
 
 
+def day_of_pairs(pairs):
+    """A SlotDays from (slot, day) pairs in a fixture's own day labels (its change points)."""
+    starts, days = [], []
+    for slot, day in sorted(set(pairs)):
+        if not days or day != days[-1]:
+            starts.append(slot)
+            days.append(day)
+    return cc.SlotDays(starts, days)
+
+
 def trades(n=400, seed=1):
     rnd = random.Random(seed)
     out = []
@@ -31,8 +41,9 @@ def trades(n=400, seed=1):
 @pytest.mark.parametrize("start,maxpos,loss", [(10e9, 5, 1e9), (25e9, 5, 2.5e9), (100e9, 5, 10e9), (2e9, 2, 0.3e9)])
 def test_capital_days_is_capital_limited_with_a_day_series(start, maxpos, loss):
     t = trades()
-    got, extra = cc.capital_days(t, start, maxpos, loss, cc.COOLDOWN_MS)
-    assert got == _capital_limited(t, start, maxpos, loss, cc.COOLDOWN_MS)
+    day_of = day_of_pairs((x[0], x[5]) for x in t)
+    got, extra = cc.capital_days(t, start, maxpos, loss, cc.COOLDOWN_MS, day_of=day_of)
+    assert got == _capital_limited(t, start, maxpos, loss, cc.COOLDOWN_MS, day_of=day_of)
     # The day series adds up to the change of capital (final SOL is rounded to 3 decimals), and the taken trades per
     # day to the taken count.
     assert abs(sum(extra["day_pnl"].values()) / 1e9 - (got[6] - start / 1e9)) <= 0.0005 + 1e-9
@@ -45,10 +56,85 @@ def test_a_ruined_account_takes_no_entry_that_will_fail():
     t = [(LO, LO + 5, int(1e9), int(-1e9), False, "2026-09-12", "a", 0, 400.0)]
     t += [(LO + 10 + i, None, 0, -505_000, True, "2026-09-13", f"f{i}", 0, 400.0) for i in range(3)]
     t += [(LO + 20, LO + 30, int(1e9), int(0.1e9), False, "2026-09-13", "g", int(1.1e9), 400.0)]
-    old, _ = cc.capital_days(t, 1e9, 5, 10e9, cc.COOLDOWN_MS)
-    new, extra = cc.capital_days(t, 1e9, 5, 10e9, cc.COOLDOWN_MS, size=int(1e9))
+    day_of = day_of_pairs((x[0], x[5]) for x in t)
+    old, _ = cc.capital_days(t, 1e9, 5, 10e9, cc.COOLDOWN_MS, day_of=day_of)
+    new, extra = cc.capital_days(t, 1e9, 5, 10e9, cc.COOLDOWN_MS, size=int(1e9), day_of=day_of)
     assert old[1] == 4 and old[6] < 0  # _capital_limited's twin: the three failing entries 'taken', cash below 0
     assert new[1] == 1 and new[6] == 0.0 and extra["ruin_day"] == "2026-09-13"
+
+
+D1, D2 = "2026-09-12", "2026-09-13"
+OVER_MIDNIGHT = cc.SlotDays([LO, LO + 200], [D1, D2])  # slots LO..LO+199: D1, from LO+200: D2
+
+
+def sims(t, loss=1e9):
+    """Both capital simulations on trades t (start 100 SOL, 5 open, the daily loss limit `loss`)."""
+    a, ea = cc.capital_days(t, 100e9, 5, loss, cc.COOLDOWN_MS, day_of=OVER_MIDNIGHT)
+    b = _capital_limited(t, 100e9, 5, loss, cc.COOLDOWN_MS, day_of=OVER_MIDNIGHT)
+    assert a == b
+    return a, ea
+
+
+def trade(entry, exit_, pnl, day, pool, cost=int(1e9)):
+    return (entry, exit_, cost, int(pnl), False, day, pool, cost + int(pnl), 400.0)
+
+
+def test_the_daily_loss_counts_a_loss_on_the_day_it_is_realized():
+    # A opens on D1 and loses 2 SOL at its exit on D2; B's trigger is on D2 after that exit: D2's limit (1 SOL) is spent.
+    t = [trade(LO + 100, LO + 300, -2e9, D1, "a"), trade(LO + 400, LO + 450, 0.1e9, D2, "b")]
+    out, extra = sims(t)
+    assert (out[1], out[4]) == (1, 1)  # taken, skip_daily_limit: B is not taken
+    assert extra["exit_day_pnl"] == {D2: -2e9} and extra["day_pnl"] == {D1: -2e9}  # the limit's book vs the trigger cohort
+    # A failed entry's fee is realized at its entry slot: on D2 here, so it counts against D2's limit.
+    f = [(LO + 250, None, 0, -int(2e9), True, D1, "f", 0, 400.0), trade(LO + 400, LO + 450, 0.1e9, D2, "b")]
+    out, extra = sims(f)
+    assert (out[1], out[4]) == (1, 1) and extra["exit_day_pnl"] == {D2: -2e9}
+
+
+def test_a_gain_realized_on_a_day_offsets_that_days_losses():
+    # A opens on D1 and gains 2 SOL at its exit on D2; C loses 2.5 SOL on D2. D2's realized P&L is -0.5 SOL, above the
+    # -1 SOL limit, so B (D2, after both exits) is taken. Booked on A's trigger day, D2 alone would be -2.5 SOL.
+    t = [trade(LO + 100, LO + 300, 2e9, D1, "a"), trade(LO + 210, LO + 250, -2.5e9, D2, "c"), trade(LO + 400, LO + 450, 0.1e9, D2, "b")]
+    out, extra = sims(t)
+    assert (out[1], out[4]) == (3, 0)
+    assert extra["exit_day_pnl"] == {D2: -0.5e9 + 0.1e9}
+
+
+def test_a_daily_loss_limit_needs_the_exit_day():
+    t = [trade(LO + 100, LO + 300, -2e9, D1, "a")]
+    with pytest.raises(ValueError, match="day_of"):
+        cc.capital_days(t, 100e9, 5, 1e9, cc.COOLDOWN_MS)
+    with pytest.raises(ValueError, match="day_of"):
+        _capital_limited(t, 100e9, 5, 1e9, cc.COOLDOWN_MS)
+    assert cc.capital_days(t, 100e9, 5, float("inf"), cc.COOLDOWN_MS)[0][1] == 1  # no limit: no day needed
+
+
+def test_slot_days_is_tournaments_day_of_a_slot():
+    import numpy as np
+    con = duckdb.connect()
+    con.execute("CREATE SCHEMA st")
+    # A gap, a NULL time and a block time that runs back over midnight.
+    con.execute("CREATE TABLE st.blocks AS SELECT * FROM (VALUES (10, 86399), (11, 86400), (12, NULL), (13, 86500), (14, 86398), "
+                "(15, 172800)) t(slot, block_time)")
+    day_of = cc.slot_days(con)
+    b = con.execute("SELECT slot, block_time FROM st.blocks WHERE block_time IS NOT NULL ORDER BY slot").fetchnumpy()
+    bs, bt = b["slot"].astype(np.int64), b["block_time"].astype(np.int64)
+    for s in range(5, 20):  # tournament._days: the UTC day of the last block at or before the slot
+        i = min(max(int(np.searchsorted(bs, s, side="right")) - 1, 0), len(bs) - 1)
+        assert day_of(s) == str((bt[i] // 86_400).astype("datetime64[D]")), s
+
+
+def test_slot_days_refuses_slots_outside_the_stores_window():
+    con = duckdb.connect()
+    con.execute("CREATE SCHEMA st")
+    con.execute("CREATE TABLE st.meta (json VARCHAR)")
+    con.execute("INSERT INTO st.meta VALUES (?)", [json.dumps({"slot_start": 1_000, "slot_end_exclusive": 2_000})])
+    con.execute("CREATE TABLE st.blocks AS SELECT * FROM (VALUES (1000, 86399), (1500, 86400)) t(slot, block_time)")
+    day_of = cc.slot_days(con)
+    assert (day_of(1_000), day_of(2_000 + cc.SLOT_DAYS_SLACK)) == ("1970-01-01", "1970-01-02")
+    for bad in (999, 2_001 + cc.SLOT_DAYS_SLACK):  # another store's rows: refused, not given this store's first or last day
+        with pytest.raises(cc.Refused, match="outside the store's window"):
+            day_of(bad)
 
 
 def test_unsold_conventions():
@@ -63,8 +149,9 @@ def test_a_never_freed_unsold_position_keeps_its_place():
     # Five unsold positions fill every place: under 'never' the sixth signal finds no place, under 'entry' it does.
     rows = [(LO + 10 * i, None, LO + 10 * i + 5, 3, int(0.5e9), int(-0.5e9), False, "2026-09-12", f"p{i}", 0, 400.0) for i in range(6)]
     days = ["2026-09-12"]
-    never = cc.limited(rows, days, 100, 0.5, "never")
-    entry = cc.limited(rows, days, 100, 0.5, "entry")
+    day_of = cc.SlotDays([LO], days)
+    never = cc.limited(rows, days, 100, 0.5, "never", day_of)
+    entry = cc.limited(rows, days, 100, 0.5, "entry", day_of)
     assert (never["taken"], never["skip_full_or_cash"]) == (5, 1)
     assert entry["taken"] == 6
 
@@ -125,7 +212,7 @@ def test_rows_candidates_and_keys(run):
     con = duckdb.connect()
     info = cc.load(con, [d], keys)
     assert info["c3_keys"] == 2  # paid_buyers_60s >= 2 at d 2 / 5 m: A and C
-    days, cells = cc.compute(con, False)
+    days, cells = cc.compute(con, False, day_of_pairs(con.execute("SELECT t, day FROM r").fetchall()))
     assert days == ["2026-09-12", "2026-09-13", "2026-09-14"]
     k3 = next(c for c in cells if (c["candidate"], c["size"], c["d"], c["scenario"]) == ("K3", 0.5, 3, "base"))
     h5 = next(c for c in cells if (c["candidate"], c["size"], c["d"], c["scenario"]) == ("H5", 0.5, 3, "base"))

@@ -4,7 +4,7 @@ with C, the engine's own fills against the real reserves at that size (a tournam
 risk rules scaled with C, the network costs of costs.settle_sql and the delay d of the run; and the size at which
 the price impact eats the edge.
 
-  python -m backtest.capital_ceiling --parts RUN_DIR [RUN_DIR ...] --c3-keys PARQUET --out DIR [--store dev2.duckdb]
+  python -m backtest.capital_ceiling --parts RUN_DIR [RUN_DIR ...] --c3-keys PARQUET --out DIR --store dev2.duckdb
                                      [--parity REF_RUN_DIR]
 
 - Rows: the runs' F7 pool_reversed positions at q 0.5, overlay none, not skipped. For a (variant, size, d) the first
@@ -18,7 +18,8 @@ the price impact eats the edge.
   day bootstrap (10,000 draws, seed 7).
 - With limits (plan section 1): paper's risk.yaml scaled with C (size 5 % of C, primary; 10 %, sensitivity; at most
   5 open, daily loss 10 % of C, 24 h cooldown after a total loss, one open position per pool) through
-  capital_days, the day-series twin of analysis._capital_limited. A position holds its place from the trigger slot
+  capital_days, the day-series twin of analysis._capital_limited (the daily loss counted on the exit slot's UTC day
+  from the store's blocks, as paper; the day series stay the trigger cohort). A position holds its place from the trigger slot
   t; an unsold one (exit_slot NULL) is freed at exit_decision_slot + d (primary, the rule's deadline), never
   (paper as it runs) or at its entry (the analysis tools).
 - The sandwich flag of analysis.f7_candidate section 4 (size x 1e9 > (lp + protocol + creator bps) / 1e4 x depth),
@@ -28,6 +29,7 @@ Writes ceiling.json (every cell) and ceiling.md (the headline per candidate and 
 """
 
 import argparse
+import bisect
 import heapq
 import json
 import os
@@ -82,11 +84,63 @@ def boot_days(vals, draws=DRAWS, seed=SEED):
     return float(a.mean()), float(np.percentile(m, 2.5)), float(np.percentile(m, 97.5))
 
 
-def capital_days(trades, start, max_positions, daily_loss, cooldown_ms, size=None):
+class SlotDays:
+    """day_of(slot): the UTC day of a slot as tournament._days gives a row's day (the day of the last block at or
+    before it), from the slots where the blocks' UTC day changes; plain lists, so it pickles to spawned workers. With
+    the store's window [lo, hi], a slot outside it is refused: rows of another store's window must not get its last
+    day silently (that would switch the daily limit off)."""
+
+    def __init__(self, starts, days, lo=None, hi=None):
+        if not starts:
+            raise Refused("no block times for the days")
+        self.starts, self.days, self.lo, self.hi = list(starts), list(days), lo, hi
+
+    def __call__(self, slot):
+        if self.lo is not None and not self.lo <= slot <= self.hi:
+            raise Refused(f"slot {slot} is outside the store's window [{self.lo}, {self.hi}]: the rows are not this store's")
+        return self.days[max(bisect.bisect_right(self.starts, slot) - 1, 0)]
+
+
+SLOT_DAYS_SLACK = 10_000  # slots past the store's end an exit may lie (a deadline + d, the 'never' convention's end)
+
+
+def slot_days(con, blocks="st.blocks"):
+    """SlotDays of the store's blocks (attached; its blocks table), bounded by its meta window when it has one."""
+    lo = hi = None
+    where = blocks.rsplit(".", 1)[0] if "." in blocks else None
+    has_meta = con.execute("""SELECT count(*) FROM duckdb_tables() WHERE table_name = 'meta'
+                              AND (? IS NULL OR database_name = ? OR schema_name = ?)""", [where, where, where]).fetchone()[0]
+    if has_meta:
+        m = json.loads(con.execute(f"SELECT json FROM {where + '.' if where else ''}meta").fetchone()[0])
+        if m.get("slot_start") is not None and m.get("slot_end_exclusive") is not None:
+            lo, hi = int(m["slot_start"]), int(m["slot_end_exclusive"]) + SLOT_DAYS_SLACK
+    rows = con.execute(f"""SELECT slot, dd FROM (SELECT slot, block_time // 86400 AS dd, lag(block_time // 86400) OVER (ORDER BY slot) AS prev
+                                                 FROM {blocks} WHERE block_time IS NOT NULL)
+                           WHERE prev IS DISTINCT FROM dd ORDER BY slot""").fetchall()
+    return SlotDays([int(r[0]) for r in rows], [str(np.datetime64(int(r[1]), "D")) for r in rows], lo, hi)
+
+
+def require_exit_day(e63_json):
+    """E63's report as a gate reference for E65 / E70: only one computed with the daily loss on the exit day (Codex
+    review #5); checked before any work."""
+    with open(e63_json) as f:
+        book = json.load(f).get("daily_loss_book")
+    if book != "exit_day":
+        raise Refused(f"{e63_json} predates the daily loss on the exit day (Codex review #5): use nas_capital_exitday.sh's "
+                      "e63/ceiling.json")
+
+
+def capital_days(trades, start, max_positions, daily_loss, cooldown_ms, size=None, day_of=None):
     """analysis._capital_limited with its day series: the same simulation (one open position per pool, no entries on
     a UTC day once its realized P&L reaches -daily_loss, a pool cooldown after a total loss, max_positions, cash) and
     the same 12-tuple, plus a dict of the extras: day_pnl {day: lamports}, taken per day, the peak of open positions
     and the ruin day. trades: (entry, exit, cost, pnl, failed, day, pool, proceeds, ms_per_slot), in lamports, sorted.
+
+    Two day books (Codex review #5, 2026-10-24). The daily loss limit counts a position's P&L on the UTC day it is
+    realized, as paper books it: its exit slot's day (day_of(exit); an unsold one freed at its entry, or a failed entry:
+    that slot's day), checked on the trigger day of the new entry. day_pnl and the day columns of the 12-tuple stay the
+    trigger-cohort series (each position's P&L on its trigger day: the reports' per-day series); exit_day_pnl is the
+    limit's book. day_of (slot_days) is required with a finite daily_loss.
 
     size=None is _capital_limited exactly. With size (lamports, the order size) an entry that will fail needs the cash
     too: _capital_limited takes it without (a failed row has cost 0), but that it fails is known only afterwards, so
@@ -95,7 +149,10 @@ def capital_days(trades, start, max_positions, daily_loss, cooldown_ms, size=Non
     exit can bring cash back: the account is done)."""
     cash, open_, locked, peak, mdd = start, [], 0, start, 0.0
     taken = skipped = skip_pool = skip_day = skip_cool = 0
-    day_pnl = defaultdict(float)
+    if daily_loss != float("inf") and trades and day_of is None:
+        raise ValueError("capital_days: a daily loss limit needs day_of (the exit day's UTC day)")
+    day_pnl = defaultdict(float)  # the trigger cohort: each position's P&L on its trigger day (the reported series)
+    exit_day_pnl = defaultdict(float)  # the limit's book: P&L on the day it is realized
     day_taken = defaultdict(int)
     open_pools, cool_until = defaultdict(int), {}
     peak_open = 0
@@ -108,6 +165,8 @@ def capital_days(trades, start, max_positions, daily_loss, cooldown_ms, size=Non
             cash, locked = cash + back, locked - cost
             open_pools[pool] -= 1
             day_pnl[day] += pnl
+            if day_of is not None:
+                exit_day_pnl[day_of(exit_slot)] += pnl
             if rug_until:
                 cool_until[pool] = max(cool_until.get(pool, 0), rug_until)
             peak = max(peak, cash + locked)
@@ -118,7 +177,7 @@ def capital_days(trades, start, max_positions, daily_loss, cooldown_ms, size=Non
         days.add(day)
         settle_until(entry)
         cost, pnl = cost or 0, pnl or 0
-        if day_pnl[day] <= -daily_loss:
+        if exit_day_pnl.get(day, 0.0) <= -daily_loss:
             skip_day += 1
             continue
         if cool_until.get(pool, -1) > entry:
@@ -138,6 +197,8 @@ def capital_days(trades, start, max_positions, daily_loss, cooldown_ms, size=Non
         if failed:
             cash += pnl
             day_pnl[day] += pnl
+            if day_of is not None:
+                exit_day_pnl[day_of(entry)] += pnl
             if size is not None:
                 peak = max(peak, cash + locked)
                 mdd = max(mdd, 1 - (cash + locked) / peak)
@@ -152,7 +213,8 @@ def capital_days(trades, start, max_positions, daily_loss, cooldown_ms, size=Non
     vals = [day_pnl.get(d, 0.0) / 1e9 for d in sorted(days)]
     out = (len(trades), taken, skip_pool, skip_cool, skip_day, skipped, round(cash / 1e9, 3), round(mdd * 100, 1),
            sum(v > 0 for v in vals), len(vals), round(min(vals), 3) if vals else None, round(sum(vals) / len(vals), 3) if vals else None)
-    return out, {"day_pnl": dict(day_pnl), "day_taken": dict(day_taken), "peak_open": peak_open, "ruin_day": ruin_day}
+    return out, {"day_pnl": dict(day_pnl), "exit_day_pnl": dict(exit_day_pnl), "day_taken": dict(day_taken),
+                 "peak_open": peak_open, "ruin_day": ruin_day}
 
 
 def exit_of(row, unsold):
@@ -266,11 +328,12 @@ def unlimited(rows, days):
             "sol_day": mean, "lo": lo, "hi": hi}
 
 
-def limited(rows, days, capital, size, unsold):
+def limited(rows, days, capital, size, unsold, day_of):
     trades = [(r[0], exit_of((r[1], r[2], r[3]), unsold), r[4], r[5], r[6], r[7], r[8], r[9], r[10]) for r in rows]
     trades.sort(key=lambda x: (x[0], x[1] if x[1] is not None else -1))
-    out, extra = capital_days(trades, capital * 1e9, MAX_OPEN, DAILY_LOSS * capital * 1e9, COOLDOWN_MS, size=int(round(size * 1e9)))
-    vals = [extra["day_pnl"].get(x, 0.0) / 1e9 for x in days]
+    out, extra = capital_days(trades, capital * 1e9, MAX_OPEN, DAILY_LOSS * capital * 1e9, COOLDOWN_MS, size=int(round(size * 1e9)),
+                              day_of=day_of)
+    vals = [extra["day_pnl"].get(x, 0.0) / 1e9 for x in days]  # the trigger cohort (the limit counts exit days)
     mean, lo, hi = boot_days(vals)
     keys = ("signals", "taken", "skip_pool", "skip_cooldown", "skip_daily_limit", "skip_full_or_cash", "final_sol",
             "max_drawdown_pct", "positive_days_traded", "days_traded", "worst_day_traded", "mean_day_traded")
@@ -305,7 +368,7 @@ def arm_unmatched(con, variant, size, d):
         FROM b""").fetchone()))
 
 
-def compute(con, flags):
+def compute(con, flags, day_of):
     days = [r[0] for r in con.execute("SELECT DISTINCT day FROM r ORDER BY 1").fetchall()]
     cells = []
     for name, variant, farm, arm in CANDIDATES:
@@ -323,7 +386,7 @@ def compute(con, flags):
                 for mapping, frac in MAPPINGS:
                     cap = round(size / frac, 6)
                     for unsold in UNSOLD:
-                        lim = limited(rows, days, cap, size, unsold)
+                        lim = limited(rows, days, cap, size, unsold, day_of)
                         lim.update({"mapping": mapping, "named_capital": cap in CAPITALS})
                         c["limited"].append(lim)
                 cells.append(c)
@@ -504,7 +567,8 @@ def main(argv=None):
     ap.add_argument("--parts", nargs="+", required=True, help="tournament run dirs (config.json + parts/), in priority order")
     ap.add_argument("--c3-keys", required=True, help="wallets/paidflow-dev-vps/markout-f7rev-txdelay.parquet")
     ap.add_argument("--out", required=True)
-    ap.add_argument("--store", help="dev2.duckdb for the sandwich flag (optional)")
+    ap.add_argument("--store", required=True,
+                    help="dev2.duckdb: the sandwich flag and the UTC day of each exit slot (the daily loss limit's day)")
     ap.add_argument("--parity", help="a reference run (families-v2-1033-1046) for tp4_T600 at 0.5 / 1 / 2 SOL")
     ap.add_argument("--memory", default=os.environ.get("LAB_DUCKDB_MEM", "2GB"))
     ap.add_argument("--threads", type=int, default=2)
@@ -515,8 +579,8 @@ def main(argv=None):
     if tmp:
         con.execute(f"SET temp_directory = '{tmp}'")
     info = load(con, a.parts, a.c3_keys, a.store)
-    days, cells = compute(con, info["sandwich_flags"])
-    out = {"plan": PLAN, "plan_sha256": PLAN_SHA, "days": days, "c3_keys": info["c3_keys"], "provenance": info["provenance"],
+    days, cells = compute(con, info["sandwich_flags"], slot_days(con))
+    out = {"plan": PLAN, "plan_sha256": PLAN_SHA, "daily_loss_book": "exit_day", "days": days, "c3_keys": info["c3_keys"], "provenance": info["provenance"],
            "primary": PRIMARY, "capitals": CAPITALS, "mappings": dict(MAPPINGS), "max_open": MAX_OPEN, "daily_loss_share": DAILY_LOSS,
            "cells": cells, "max_useful": {name: max_useful(cells, name) for name, *_ in CANDIDATES}, "w8b": W8B, "gap": GAP}
     if a.parity:

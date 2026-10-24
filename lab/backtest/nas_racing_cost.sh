@@ -16,7 +16,8 @@
 #   3. its own spill dir, removed at the end and on the kill path.
 # Needs $DATA/store/dev2.duckdb and, copied from the VPS where missing (each pinned):
 #   E63's run $E63 (default $DATA/backtests/capital-ceiling-d15ac45: parts/ and config.json c5fcd78e...) and its report
-#   $E63_JSON (default $E63/ceiling-report-b149a7d/ceiling.json, 8adfda64...: main's capital_ceiling, gate G4);
+#   $E63_JSON (default $E63/ceiling-report-b149a7d/ceiling.json, 8adfda64...: main's capital_ceiling, gate G4; since Codex
+#   review #5 refused: pass the exit-day report of nas_capital_exitday.sh with E63_JSON_SHA);
 #   the C3 keys $C3_KEYS (default $DATA/wallets/paidflow-dev-vps/markout-f7rev-txdelay.parquet, 1a274ec6...);
 #   route (ii)'s rows $ROUTE_II (default $DATA/backtests/route-ii-full-547f422/entry-rows/part-000000.parquet, b4f4be7b...).
 # Overrides: WORKERS (4), DRAWS (200), MEMORY (DuckDB, 8GB), START_DEADLINE, KILL_AT, RANGE (a dry run's lo:hi for the two
@@ -140,7 +141,12 @@ pin() {  # file sha256 what
   [ "$(sha256sum "$1" | cut -d' ' -f1)" = "$2" ] || red "$3 at $1 is not sha256 $2"
 }
 pin "$E63/config.json" c5fcd78ef083b67fe0bb326bee4b546fe11d937354f83ed7b18dfa6607e246be "E63's run config"
-pin "$E63_JSON" 8adfda647cf914c4c6c04537418726ea8a36280862777f120fea2cefa1de0c6e "E63's report (ceiling-report-b149a7d)"
+pin "$E63_JSON" "${E63_JSON_SHA:-8adfda647cf914c4c6c04537418726ea8a36280862777f120fea2cefa1de0c6e}" "E63's report"
+# Since Codex review #5 the gate reference must be an E63 report with the daily loss on the exit day: the original
+# ceiling-report-b149a7d (8adfda64) is refused here, before any run; pass nas_capital_exitday.sh's e63/ceiling.json.
+"$PY" -c 'import json, sys; sys.exit(json.load(open(sys.argv[1])).get("daily_loss_book") != "exit_day")' "$E63_JSON" \
+  || red "E63_JSON $E63_JSON predates the daily loss on the exit day: E63_JSON=<capital-exitday-*/e63/ceiling.json> E63_JSON_SHA=<its sha256>"
+
 pin "$C3_KEYS" 1a274ec60a5610f8abf22b70aed23266feaad8559fd79df77f35d8862fb10a23 "the C3 keys"
 pin "$ROUTE_II" b4f4be7b09030075e8732b17e5f93a7bd9d26563505bd7999dea29e415106a5c "route (ii)'s rows"
 ls "$E63"/parts/*.parquet > /dev/null 2>&1 || red "no parts in $E63"
