@@ -223,6 +223,14 @@ def mint_tables(con, clock, lo):
 def assemble(con, clock, lo):
     """One row per entry: identity, fill, labels, exits, runners features, extra features."""
     n = R.assemble(con, clock, lo)   # out: the runners columns (mult_1h, mult_6h = 72 h here, x_tp2 / x_tr30 / x_tr50 without delay, features)
+    # the state row behind each peak: its kind (buy / sell / boost / withdraw / deposit) and whether its slot holds trades of the
+    # pool with more than one fee tier -- the only place where the pre-2026-10-24 slot-ASOF tie could move a mark (ab_labels tolerance)
+    con.execute("""CREATE OR REPLACE TEMP TABLE mixed AS
+        SELECT key, slot, count(DISTINCT (lp, pr, cr, cb)) > 1 AS mixed FROM pl WHERE kind IN ('buy', 'sell') GROUP BY 1, 2""")
+    con.execute("""CREATE OR REPLACE TEMP TABLE peakrow AS
+        SELECT l.key, l.moment, l.t, p24.kind AS peak_kind_24, COALESCE(m24.mixed, false) AS peak_mixed_24, p72.kind AS peak_kind_72, COALESCE(m72.mixed, false) AS peak_mixed_72
+        FROM lab2 l LEFT JOIN pl p24 ON p24.key = l.key AND p24.ord = l.peak_ord_24 LEFT JOIN mixed m24 ON m24.key = l.key AND m24.slot = l.peak_slot_24
+                    LEFT JOIN pl p72 ON p72.key = l.key AND p72.ord = l.peak_ord_72 LEFT JOIN mixed m72 ON m72.key = l.key AND m72.slot = l.peak_slot_72""")
     lab_cols = []
     for H in HORIZONS:
         for m in TARGETS:
@@ -235,9 +243,11 @@ def assemble(con, clock, lo):
         SELECT o.*, (o.entry_slot // 432000)::INTEGER AS epoch, hour(epoch_ms(b.block_time * 1000)) AS hour_utc, isodow(epoch_ms(b.block_time * 1000)) AS weekday,
                l.d_slots, (l.slot_stop - l.entry_slot) * ({ms_case(clock, 'l.entry_slot')}) / 60000.0 AS t_stop_min,
                {', '.join(lab_cols)}, {ex_cols},
+               pk.peak_kind_24, pk.peak_mixed_24, pk.peak_kind_72, pk.peak_mixed_72,
                fx.* EXCLUDE (key, moment, t)
         FROM out o JOIN blocks b ON b.slot = o.entry_slot
         JOIN lab2 l ON l.key = o.key AND l.moment = o.moment AND l.t = o.t
+        LEFT JOIN peakrow pk ON pk.key = o.key AND pk.moment = o.moment AND pk.t = o.t
         JOIN ex e ON e.key = o.key AND e.moment = o.moment AND e.t = o.t
         LEFT JOIN fx ON fx.key = o.key AND fx.moment = o.moment AND fx.t = o.t""")
     return _count(con, "out2")
