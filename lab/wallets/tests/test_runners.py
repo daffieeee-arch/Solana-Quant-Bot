@@ -266,7 +266,7 @@ def test_thin_normal_pool_mark_includes_our_own_deposit(tmp_path, monkeypatch):
     pg2 = _max_payout(b2, e2, fill.tokens, real2)   # reference: the most any sell of <= our tokens can take out of real + q_in
     assert real2 - pg2 <= 1 and pg2 <= real2, "with a thin pool the reference pays out the whole real reserve (to the lamport)"
     f2 = V._fees(V.Pool(b2, e2, 20, 5, 5, 0, VIRT), pg2)[1]
-    assert abs(int(marks[S + 200]) - (pg2 - f2 - TX)) <= 2
+    assert abs(int(marks[S + 200]) - (pg2 - f2 - TX)) <= 2   # +-2 lamports: the reference and the SQL floor at different steps (one per fee tier)
     assert pg2 > n * 9 // 10, "the drain branch pays out about real + our deposit, not real alone"
 
 
