@@ -24,13 +24,16 @@ def _store(path):
     con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"ms_per_slot": {str(E): MS}})])
     con.execute("CREATE TABLE blocks (slot UBIGINT, block_time BIGINT)")
     con.execute(f"INSERT INTO blocks SELECT r, {T0} + floor((r - {S}) * {MS} / 1000)::BIGINT FROM range({S - 20_000}, {S + 440_000}) t(r)")
-    con.execute("CREATE TABLE mints (mint VARCHAR, create_slot UBIGINT, creator VARCHAR, migrate_slot UBIGINT)")
-    con.execute("INSERT INTO mints VALUES ('A', ?, 'CR', ?), ('B', ?, 'CR', NULL), ('C', ?, 'CR', NULL), ('D', ?, 'OTHER', NULL), ('X', ?, 'Z', NULL)",
-                [S + 100, S + 300, S + 1000, S + 5000, S + 2000, S - 9_500])   # X: a create in the hour before the entry hour
+    con.execute("CREATE TABLE mints (mint VARCHAR, create_slot UBIGINT, creator VARCHAR, migrate_slot UBIGINT, quote_mint VARCHAR)")
+    sol = "11111111111111111111111111111111"
+    con.execute(f"INSERT INTO mints VALUES ('A', ?, 'CR', ?, '{sol}'), ('B', ?, 'CR', NULL, '{sol}'), ('C', ?, 'CR', NULL, '{sol}'), ('D', ?, 'OTHER', NULL, '{sol}'), "
+                f"('X', ?, 'Z', NULL, '{sol}'), ('P', ?, 'Z', NULL, 'pumpCmXqMfrsvdsP2Y3SmrrsoP2sQEm6QvJrcDhDB2ez')",
+                [S + 100, S + 300, S + 1000, S + 5000, S + 2000, S - 9_500, S - 9_600])   # X: a create in the hour before the entry hour; P: PUMP-quoted
     con.execute("CREATE TABLE curve (mint VARCHAR, slot UBIGINT, is_buy BOOLEAN, q HUGEINT)")
-    # the entry hour starts at T0 + 3600 k; entries at S + 5010 (2004 s) lie in hour T0 // 3600 ... build buys one hour earlier
-    con.execute("INSERT INTO curve VALUES ('X', ?, true, 1000000000), ('X', ?, true, 3000000000), ('X', ?, false, 5000000000), ('A', ?, true, 7000000000)",
-                [S - 9_500, S - 9_400, S - 9_300, S + 150])
+    # the entry hour starts at T0 + 3600 k; entries at S + 5010 (2004 s) lie in hour T0 // 3600 ... build buys one hour earlier;
+    # P's buy logs q in PUMP units and must not be summed as SOL (quote filter)
+    con.execute("INSERT INTO curve VALUES ('X', ?, true, 1000000000), ('X', ?, true, 3000000000), ('X', ?, false, 5000000000), ('A', ?, true, 7000000000), ('P', ?, true, 9000000000000)",
+                [S - 9_500, S - 9_400, S - 9_300, S + 150, S - 9_450])
     con.close()
 
 
@@ -92,7 +95,8 @@ def test_families_are_point_in_time(tmp_path):
     # creator OTHER: one coin (D itself), no history
     assert e3["cr_prior_coins"] == 0 and e3["cr_prior_x2"] == 0 and e3["cr_days_since_prev"] is None
     # market context: the hour before the entry's hour holds the two X buys (1 + 3 SOL, the sell does not count) and the X create
-    assert abs(e1["mkt_buy_sol"] - 4.0) < 1e-9 and e1["mkt_buys"] == 2 and e1["mkt_creates"] == 1
+    # P's 9,000 PUMP-unit buy in the same hour is not SOL and must not count (quote filter, 2026-10-24); its create does count
+    assert abs(e1["mkt_buy_sol"] - 4.0) < 1e-9 and e1["mkt_buys"] == 2 and e1["mkt_creates"] == 2
     # purge: epoch 1040 is train; the entry at S + 430,000 has its 24 h window (216,000 slots) over the 1041 boundary
     assert all(r["block"] == "train" for r in rows) and e1["censored_24"] is False and e3["censored_24"] is True and e3["next_boundary"] == 1041 * 432_000
     assert info["censored_24"] == {"train": 1} and info["blocks"] == {"train": 3} and e1["censored_72"] is True   # 72 h = 648,000 slots: over the boundary
