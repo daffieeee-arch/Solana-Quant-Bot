@@ -230,6 +230,11 @@ def test_a_run_on_another_grid_than_e63s_is_refused(tmp_path, lab):
     narrow = write_run(str(tmp_path), "narrow", rows_for((1,), ret), variants=("hold300",))
     with pytest.raises(cc.Refused, match="variants"):
         rc.grid_check([narrow, lab["e"]])
+    loose = write_run(str(tmp_path), "loose", rows_for((1,), ret))
+    cfg = json.load(open(os.path.join(loose, "config.json")))
+    json.dump(dict(cfg, slippage_tol=0.10), open(os.path.join(loose, "config.json"), "w"))
+    with pytest.raises(cc.Refused, match="slippage_tol"):  # the tournament's name for --tol
+        rc.grid_check([loose, lab["e"]])
 
 
 def test_a_differing_e63_cell_is_red(lab):
