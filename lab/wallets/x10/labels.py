@@ -45,7 +45,7 @@ import sys
 import time
 
 from wallets import runners as R
-from wallets.common import HOLDOUT_START, OUT_ROOT, SOL, Clock, connect, git_commit
+from wallets.common import HOLDOUT_START, OUT_ROOT, SOL, Clock, connect, git_commit, guard
 from wallets.markout import ms_case
 
 H24_MS = 24 * 3_600_000
@@ -243,15 +243,16 @@ def assemble(con, clock, lo):
     return _count(con, "out2")
 
 
-def run(lo, hi, out_dir, size_sol=0.5, cfg=R.DEFAULTS, store=None, memory=None, threads=None):
-    if hi > HOLDOUT_START:
-        raise ValueError(f"slot {hi} reaches into the hold-out (starts at {HOLDOUT_START})")
+def run(lo, hi, out_dir, size_sol=0.5, cfg=R.DEFAULTS, store=None, memory=None, threads=None, forward=False):
+    if not forward:
+        guard(hi)
     t0 = time.time()
     saved = (R.SIZE, R.H6_MS)   # module globals the runners functions read at call time; restored for other callers
     R.SIZE = int(round(size_sol * SOL))
     con = connect(store or os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"),
                   memory or os.environ.get("LAB_WALLETS_MEMORY", "1GB"), int(threads or os.environ.get("LAB_WALLETS_THREADS", "2")))
     try:
+        R.window(con, lo, hi, forward)
         clock = Clock.from_store(con)
         cost = R.tx_cost(cfg)
         hi_ext = setup(con, lo, hi, clock)
@@ -270,7 +271,7 @@ def run(lo, hi, out_dir, size_sol=0.5, cfg=R.DEFAULTS, store=None, memory=None, 
     if size_sol == 0.5:
         con.execute(f"COPY mint_peaks TO '{out_dir}/mint_peaks-{lo}.parquet' (FORMAT PARQUET)")
         con.execute(f"COPY early_buyers TO '{out_dir}/early_buyers-{lo}.parquet' (FORMAT PARQUET)")
-    info = {"lo": lo, "hi": hi, "hi_ext": hi_ext, "size_sol": size_sol, "entries": n, "moments": _count(con, "mom"), "tokens": _count(con, "tok"),
+    info = {"lo": lo, "hi": hi, "forward": forward, "cap": R.CAP, "hi_ext": hi_ext, "size_sol": size_sol, "entries": n, "moments": _count(con, "mom"), "tokens": _count(con, "tok"),
             "marks": _count(con, "mk"), "tx_cost_lamports": cost, "commit": git_commit(), "seconds": round(time.time() - t0, 1),
             "per_moment": {m: c for m, c in con.execute("SELECT moment, count(*) FROM out2 GROUP BY 1").fetchall()},
             "hits": {k: v for k, v in con.execute("SELECT moment, {} FROM out2 GROUP BY 1".format(
@@ -291,8 +292,11 @@ def main(argv=None):
     ap.add_argument("--size-sol", type=float, default=float(os.environ.get("LAB_X10_SIZE_SOL", "0.5")))
     ap.add_argument("--cfg", default=R.DEFAULTS)
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "x10-labels"))
+    ap.add_argument("--forward", action="store_true", help="a forward store from epoch 1064 on (common.forward_guard) instead of the dev-only guard; needs its own --out")
     a = ap.parse_args(argv)
-    info = run(a.from_slot, a.to_slot, a.out, a.size_sol, a.cfg)
+    if a.forward and a.out == ap.get_default("out"):
+        ap.error("--forward writes into its own --out, never the development x10-labels")
+    info = run(a.from_slot, a.to_slot, a.out, a.size_sol, a.cfg, forward=a.forward)
     print(json.dumps({k: v for k, v in info.items() if k not in ("per_moment", "hits")}, default=str))
 
 

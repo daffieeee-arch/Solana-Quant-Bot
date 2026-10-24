@@ -28,9 +28,12 @@ DATA=${LAB_DATA_ROOT:-/home/chupa/Solana-project/data-old-faithful-one/lab}
 PY=${LAB_PY:-/home/chupa/.local/share/solana-quant/toolchains/lab-py/bin/python}
 STORE=${LAB_STORE:-$DATA/store/dev2.duckdb}
 COMMIT=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || cat "$REPO/COMMIT")
+OUT_SET=${OUT:-}
 OUT=${OUT:-$DATA/wallets/probes-$STEP-${COMMIT:0:7}}
 LOG=$OUT/log
 EPOCHS=${EPOCHS:-$(seq 1033 1046 | tr '\n' ' ')}
+FORWARD=${FORWARD:-0}   # 1: a released forward store (epoch >= 1064; owner 2026-10-24): wallets.probes.run --forward (common.forward_guard); needs EPOCHS, LAB_STORE and a new OUT
+FORWARD_START=459648000
 SIZES=${SIZES:-"0.5 1.25 5"}
 START_DEADLINE=${START_DEADLINE:-2026-10-24T09:00:00Z}
 KILL_AT=${KILL_AT:-2026-10-24T09:45:00Z}
@@ -51,13 +54,13 @@ if [ "${1:-}" = "--pipeline" ]; then
   grep -Eq "^[0-9]+ passed" <(tail -1 "$LOG/pytest.log") || red "no 'N passed' line"
   for e in $EPOCHS; do
     lo=$((e * 432000)); hi=$(((e + 1) * 432000))
-    [ "$hi" -le "$HOLDOUT_START" ] || red "epoch $e reaches the hold-out"
+    if [ "$FORWARD" = 1 ]; then [ "$lo" -ge "$FORWARD_START" ] || red "epoch $e lies before 1064 (FORWARD=1)"; else [ "$hi" -le "$HOLDOUT_START" ] || red "epoch $e reaches the hold-out"; fi
     if [ "$STEP" = e74 ] && [ "$e" -lt 1035 ]; then log "epoch $e before the PUMP reference pool: skipped"; continue; fi
     for size in $SIZES; do
       tag="$lo-s$size"
       if [ -f "$OUT/$STEP-$tag.parquet" ]; then log "$STEP-$tag.parquet exists, skipped"; continue; fi
       rc=0
-      nice -n 10 "$PY" -u -m wallets.probes.run --probe "$STEP" --from-slot "$lo" --to-slot "$hi" --size-sol "$size" --out "$OUT/s$size" > "$LOG/$STEP-$tag.log" 2>&1 || rc=$?
+      nice -n 10 "$PY" -u -m wallets.probes.run --probe "$STEP" --from-slot "$lo" --to-slot "$hi" --size-sol "$size" --out "$OUT/s$size" "${fwd[@]}" > "$LOG/$STEP-$tag.log" 2>&1 || rc=$?
       [ "$rc" = 0 ] || { tail -5 "$LOG/$STEP-$tag.log" | tee -a "$LOG/nas_probes.log"; red "$STEP $tag failed (rc $rc)"; }
       ln -sf "s$size/$STEP-$lo.parquet" "$OUT/$STEP-$tag.parquet"
       log "$STEP $tag: $(tail -1 "$LOG/$STEP-$tag.log" | cut -c1-300)"
@@ -82,16 +85,30 @@ now=$(date -u +%s); start_by=$(date -u -d "$START_DEADLINE" +%s); kill_at=$(date
 log "start step=$STEP commit=$COMMIT store=$STORE epochs='$EPOCHS' sizes='$SIZES' out=$OUT memory=$LAB_WALLETS_MEMORY threads=$LAB_WALLETS_THREADS start_deadline=$START_DEADLINE kill_at=$KILL_AT"
 [ "$now" -le "$start_by" ] || red "start deadline $START_DEADLINE passed (set START_DEADLINE / KILL_AT for a later slot)"
 [ "$kill_at" -gt "$now" ] || red "KILL_AT $KILL_AT is in the past"
+fwd=(); [ "$FORWARD" = 1 ] && fwd=(--forward)
 for e in $EPOCHS; do
-  { [ "$e" -ge 1033 ] && [ "$e" -le 1046 ]; } || red "epoch $e is outside dev 1033-1046 (hold-out 1047-1051 and clean 1055-1063 are closed)"
+  if [ "$FORWARD" = 1 ]; then
+    [ "$e" -ge 1064 ] || red "epoch $e is before 1064 (FORWARD=1 reads released forward stores only)"
+  else
+    { [ "$e" -ge 1033 ] && [ "$e" -le 1046 ]; } || red "epoch $e is outside dev 1033-1046 (hold-out 1047-1051 and clean 1055-1063 are closed)"
+  fi
 done
+if [ "$FORWARD" = 1 ]; then
+  [ -n "${LAB_STORE:-}" ] || red "FORWARD=1 needs LAB_STORE (a forward store)"
+  [ -n "${OUT_SET:-}" ] || red "FORWARD=1 needs its own OUT (never the development probes output)"
+fi
 case "$STORE" in *clean*) red "the store path names the clean store: refused";; esac
 if [ "$STEP" = e73 ]; then
   [ -z "${LAB_E73_SAMPLE:-}" ] || red "LAB_E73_SAMPLE is set: a sampled good set is a smoke, never a result"
   case "${LAB_E73_GOOD:-$OUT/good-days.parquet}" in "$OUT"/*) ;; *) red "LAB_E73_GOOD outside $OUT: the job builds its own good set";; esac
 fi
 maxslot=$("$PY" -c "import duckdb, sys; c = duckdb.connect(sys.argv[1], read_only=True); print(c.execute('SELECT max(slot) FROM blocks').fetchone()[0])" "$STORE")
-[ "$maxslot" -lt "$HOLDOUT_START" ] || red "store reaches slot $maxslot >= hold-out start $HOLDOUT_START"
+if [ "$FORWARD" = 1 ]; then
+  minslot=$("$PY" -c "import duckdb, sys; c = duckdb.connect(sys.argv[1], read_only=True); print(c.execute('SELECT min(slot) FROM blocks').fetchone()[0])" "$STORE")
+  [ "$minslot" -ge "$FORWARD_START" ] || red "store starts at slot $minslot, before epoch 1064 (FORWARD=1); the probe job checks the store meta too (forward_guard)"
+else
+  [ "$maxslot" -lt "$HOLDOUT_START" ] || red "store reaches slot $maxslot >= hold-out start $HOLDOUT_START"
+fi
 log "guards: dev only (max block slot $maxslot), store $STORE, clean.lock untouched"
 
 setsid bash "$0" --pipeline &

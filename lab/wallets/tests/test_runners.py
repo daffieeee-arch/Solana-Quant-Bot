@@ -5,6 +5,7 @@ A mayhem twin of the token (same rows) gets no curve entry: the Mayhem agent res
 trades, so a replay cannot price through its legs."""
 
 import json
+import pytest
 import os
 
 import duckdb
@@ -323,3 +324,40 @@ def test_pool_mark_is_min_of_output_and_real_reserve():
     assert vals == sorted(vals) and vals[0] == 0 and vals[-1] == 400_000_000
     deps = [int(con.execute(f"SELECT ({H(6 * 10**11, 10**12, 12 * 10**8, 10**9, q)})::HUGEINT").fetchone()[0]) for q in (0, 10**8, 2 * 10**8, 3 * 10**8)]
     assert deps == [200_000_000, 300_000_000, 400_000_000, 450_000_000]
+
+
+def test_forward_window_uses_forward_guard_and_caps_at_the_store_end(tmp_path, monkeypatch):
+    """Released forward stores (owner 2026-10-24): run(..., forward=True) goes through common.forward_guard (store period
+    'forward', start at or after FORWARD_START, window inside the store) and caps mark horizons at the store's end instead of
+    the hold-out start; without the flag a forward store is refused by the dev guard, and a dev store is refused with the flag.
+    The fixture's slots are dev slots, so FORWARD_START is lowered to the fixture start for the wiring test only."""
+    from wallets import common
+    rows, states = _curve_rows([(S, True, 2 * 10**9, True), (S + 300, True, 3 * 10**9, False), (S + 400, True, 10**9, True), (S + 900, True, 2 * 10**9, True)])
+    _store(tmp_path / "f.duckdb", rows, [])
+    w = duckdb.connect(str(tmp_path / "f.duckdb"))
+    w.execute("UPDATE meta SET json = ?", [json.dumps({"ms_per_slot": {str(E): MS}, "period": "forward", "slot_start": LO, "slot_end_exclusive": LO + 60_000})])
+    w.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    # without --forward: the dev guard sees a window past... no, the window itself is dev-sized here; make it reach the hold-out
+    with pytest.raises(ValueError):
+        runners.run(LO, common.HOLDOUT_START + 1, str(tmp_path / "o0"), store=str(tmp_path / "f.duckdb"), memory="500MB", threads=1)
+    # with --forward on real slots the store start (a dev slot) is before FORWARD_START: refused
+    with pytest.raises(ValueError):
+        runners.run(LO, LO + 5_000, str(tmp_path / "o1"), store=str(tmp_path / "f.duckdb"), memory="500MB", threads=1, forward=True)
+    # a dev store (no period) with --forward: refused
+    _store(tmp_path / "d.duckdb", rows, [])
+    monkeypatch.setattr(common, "FORWARD_START", LO)
+    with pytest.raises(ValueError):
+        runners.run(LO, LO + 5_000, str(tmp_path / "o2"), store=str(tmp_path / "d.duckdb"), memory="500MB", threads=1, forward=True)
+    # a window outside the store: refused
+    with pytest.raises(ValueError):
+        runners.run(LO, LO + 70_000, str(tmp_path / "o3"), store=str(tmp_path / "f.duckdb"), memory="500MB", threads=1, forward=True)
+    # the wiring: forward store, window inside, horizons capped at the store end, nothing cut by the hold-out
+    info = runners.run(LO, LO + 5_000, str(tmp_path / "o4"), store=str(tmp_path / "f.duckdb"), memory="500MB", threads=1, forward=True)
+    assert info["forward"] is True and info["store_period"] == "forward" and info["cap"] == LO + 60_000 and info["hi_ext"] <= LO + 60_000
+    assert info["entries"] >= 1
+    con = duckdb.connect()
+    assert con.execute(f"SELECT bool_or(cut) FROM '{tmp_path}/o4/entries-{LO}.parquet'").fetchone()[0] is False
+    # back to the dev rule for other tests: the module cap is reset by the next dev window
+    runners.window(duckdb.connect(str(tmp_path / "d.duckdb")), LO, LO + 5_000)
+    assert runners.CAP == common.HOLDOUT_START
