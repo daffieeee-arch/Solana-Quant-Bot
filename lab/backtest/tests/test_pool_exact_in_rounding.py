@@ -54,3 +54,24 @@ def test_unproven_cashback_keeps_legacy_model():
 def test_unfunded_net_refused(budget):
     _, p = inputs(ROWS[0])
     assert V.pool_buy_exact_in(p, budget) is None
+
+
+@pytest.mark.parametrize('rule', [None, 1, 99])
+def test_old_or_wrong_extension_is_not_silently_used(rule):
+    import os
+    import subprocess
+    import sys
+
+    code = f"""
+import sys, types
+sys.modules['labcore'] = types.SimpleNamespace(POOL_EXACT_IN_RULE={rule!r})
+try:
+    import backtest.venues_core
+except RuntimeError as error:
+    assert 'exact-in rule mismatch' in str(error)
+else:
+    raise AssertionError('incompatible extension accepted')
+"""
+    env = dict(os.environ, LAB_CORE='python')
+    result = subprocess.run([sys.executable, '-c', code], env=env, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
