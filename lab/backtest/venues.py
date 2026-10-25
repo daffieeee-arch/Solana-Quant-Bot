@@ -1,7 +1,7 @@
 """Exact integer fill math for the pump.fun bonding curve and PumpSwap pools.
 
-Every formula here reproduces the logged amounts of all historical trades in the week-1
-dataset (see validate_math.py: curve 99.99-100%, PumpSwap 100%):
+Integer rules checked against recorded trades (see validate_math.py and the source-bound
+exact-in regressions). This is not a claim of coverage of every protocol variant:
 
   curve sell             q = floor(t * Vq / (Vt + t))
   curve buy, exact out   q = floor(t * Vq / (Vt - t)) + 1
@@ -23,6 +23,8 @@ opposite directions and leave E unchanged, so (B, E) is the pricing state. The v
 from dataclasses import dataclass, replace
 
 BPS = 10_000
+# Separate from settlement costs: reviewed PumpSwap zero-cashback exact-in correction (#595).
+POOL_EXACT_IN_RULE = 2
 
 
 def fee(amount, bps):
@@ -142,15 +144,24 @@ def _fees(p, x):
 
 def pool_buy_exact_in(p, budget):
     """Spend at most `budget` quote (fees included), like buy_exact_quote_in."""
-    if p.b <= 0 or p.e <= 0:
+    if budget <= 0 or p.b <= 0 or p.e <= 0:
         return None
-    n = net_for_budget(budget, p.fee_list)
+    if p.cashback_bps == 0:
+        # PumpSwap SDK buyQuoteInput (pinned source in the fixture README): fees are
+        # fixed on the initial quotient, BEFORE shaving its rounding excess.
+        # Maximising an affordable net or recomputing fees after shaving differs.
+        n = budget * BPS // (BPS + sum(p.fee_list))
+        lp, f = _fees(p, n)
+        n -= max(0, n + f - budget)
+    else:
+        # Cashback is outside this correction's source evidence. Preserve its model.
+        n = net_for_budget(budget, p.fee_list)
+        lp, f = _fees(p, n)
     if n <= 1:
         return None
     b = p.b * (n - 1) // (p.e + n - 1)
     if b <= 0 or b >= p.b:
         return None
-    lp, f = _fees(p, n)
     return Fill(b, n, f, n + f, replace(p, b=p.b - b, e=p.e + n + lp))
 
 
