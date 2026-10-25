@@ -386,6 +386,57 @@ class DecisionBoundary(unittest.TestCase):
         self.assertEqual(got[None][1], got["1"][1])
         self.assertEqual(got["2"][1] - got["1"][1], self.COSTS["failed_tx"])  # the write-off's last failed attempt
 
+    def test_mixed_settle_rules_match_report_and_ui_without_rewriting_pnl(self):
+        """An upgraded journal retains old NULL/rule-1 settlements beside new rule-2 settlements."""
+        import re
+        from unittest.mock import patch
+
+        _, report = lab_paper()
+        j = self.journal("mixed-rules", 0)
+        j.db.execute("UPDATE exits SET exit_attempts = 1")  # isolate the three write-offs' failed fees
+        for i, rule in enumerate((None, 1, 2)):
+            t = 460_030_000 + i * 100
+            pnl = -self.SOL // 2 - (2 if rule == 2 else 1) * self.COSTS["failed_tx"]
+            j.put("orders", family="F7", variant="tp4_T600", key=f"W{i}", t=t, day="2026-10-28",
+                  entry_slot=t + 3, size=self.SOL // 2, status="filled")
+            j.put("exits", family="F7", variant="tp4_T600", key=f"W{i}", t=t, day="2026-10-28",
+                  entry_slot=t + 3, exit_slot=t + 90, exit_reason="written_off", tokens=5,
+                  cost=self.SOL // 2, proceeds=0, pnl=pnl, exit_attempts=2, settle_rule=rule)
+        j.commit()
+        stored = j.db.execute("SELECT key, pnl, settle_rule FROM exits ORDER BY key").fetchall()
+        assessments = []
+        assess = report.assessment
+
+        def capture_assessment(*args, **kwargs):
+            a = assess(*args, **kwargs)
+            assessments.append(a)
+            return a
+
+        with patch.object(report, "assessment", side_effect=capture_assessment):
+            report.daily_report(j, "2026-11-04")
+        with open(os.path.join(j.dir, "2026-11-04", "report.md")) as f:
+            md = f.read()
+        path = os.path.join(j.dir, "journal.sqlite")
+        j.close()
+        s = paper.journal_view(path, now=1_793_793_600)["stop_rule"]
+        b = s["assessment"]["basis"]
+        self.assertEqual(len(assessments), 1)
+        reported = assessments[0]["basis"]
+        self.assertEqual((b["settle_rule"], b["settle_rules"]), ("mixed", [1, 2]))
+        self.assertEqual((reported["settle_rule"], reported["settle_rules"]), ("mixed", [1, 2]))
+        self.assertEqual(b["costs_lamports"], reported["costs_lamports"])
+        self.assertEqual(b["costs_lamports"]["failed_exit_attempts"], 4 * self.COSTS["failed_tx"])
+        self.assertEqual(b["costs_lamports"]["failed_entries"], self.COSTS["failed_tx"])
+        self.assertEqual(re.search(r"failed exit attempts ([\d.]+)", md).group(1),
+                         f"{4 * self.COSTS['failed_tx'] / self.SOL:.4f}")
+        expected_net = sum(p for _, p, _ in self.pnls(0)) - 3 * (self.SOL // 2) - 4 * self.COSTS["failed_tx"]
+        self.assertEqual((b["filled_trades"], b["failed_entries"]), (213, 1))
+        self.assertEqual(b["mean_lamports"], expected_net / 213)
+        self.assertEqual(b["mean_lamports"], reported["mean_lamports"])
+        self.assertEqual(b["ci95_lamports"], reported["ci95_lamports"])
+        with sqlite3.connect(path) as db:
+            self.assertEqual(db.execute("SELECT key, pnl, settle_rule FROM exits ORDER BY key").fetchall(), stored)
+
 
 class TokenNames(unittest.TestCase):
     """Names come from the data we hold, in layers: the paper run's store (pools -> mint, mints' name), the journal's

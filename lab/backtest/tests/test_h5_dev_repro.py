@@ -153,12 +153,19 @@ def descriptives(rows, half):
 @pytest.fixture
 def lab(tmp_path, monkeypatch):
     """A fresh lab (its configs hold its own paths) with the module's archived constants set to its files."""
+    bind_fixture_analysis(monkeypatch)
     p = make_lab(str(tmp_path))
     monkeypatch.setattr(h5, "HALF", DAYS[2])
     monkeypatch.setattr(h5, "DESCRIPTIVES", descriptives(parts_rows(), DAYS[2]))
     monkeypatch.setattr(h5, "check_engine", lambda d: "stub")  # the snapshot check: test_the_snapshot_must_be_the_pins_tree
     shas(p, monkeypatch)
     return p
+
+
+def bind_fixture_analysis(monkeypatch):
+    """Synthetic runs use this checkout's analysis; this never changes the archived production pins."""
+    here = os.path.dirname(cc.__file__)
+    monkeypatch.setattr(h5, "ANALYSIS", {name: h5.git_blob(os.path.join(here, name)) for name in h5.ANALYSIS})
 
 
 def shas(p, monkeypatch):
@@ -569,11 +576,20 @@ def test_e63s_jsons_must_be_of_e63s_run_alone(lab, monkeypatch, which, change):
 
 
 def test_lab_core_other_than_python_is_refused(monkeypatch):
+    bind_fixture_analysis(monkeypatch)
     monkeypatch.setenv("LAB_CORE", "rust")
     with pytest.raises(cc.Refused, match="LAB_CORE"):
         h5.check_analysis()
     monkeypatch.setenv("LAB_CORE", "python")
     h5.check_analysis()
+
+
+def test_frozen_analysis_refuses_the_changed_failed_entry_timing():
+    # The newer risk-day implementation must not silently reproduce an archived E63 comparison.
+    # Use the preserved production pins here, unlike the self-contained synthetic fixture above.
+    assert h5.git_blob(cc.__file__) != h5.ANALYSIS["capital_ceiling.py"]
+    with pytest.raises(cc.Refused, match="analysis code changed"):
+        h5.check_analysis()
 
 
 def test_step0_refuses_an_incomplete_job_87(lab, monkeypatch):

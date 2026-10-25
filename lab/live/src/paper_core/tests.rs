@@ -26,7 +26,15 @@ fn columns() -> HashMap<String, Vec<String>> {
         .unwrap()
         .iter()
         .map(|t| {
-            let cols = t["cols"].as_str().unwrap().split(", ").map(|c| c.split(' ').next().unwrap().to_owned()).collect();
+            // These frozen rule-1 goldens predate per-exit version metadata. The production
+            // journal still uses the complete schema; only this historical projection omits it.
+            let cols = t["cols"]
+                .as_str()
+                .unwrap()
+                .split(", ")
+                .map(|c| c.split(' ').next().unwrap().to_owned())
+                .filter(|c| t["name"] != "exits" || c != "settle_rule")
+                .collect();
             (t["name"].as_str().unwrap().to_owned(), cols)
         })
         .collect()

@@ -186,6 +186,66 @@ def row(variant, size, d, t, day, pool, farm="organic", failed=False, ret=0.1, u
             cost if not failed else 0, proceeds, None if unsold or failed else t + 100, t + 90, 1, 270.0 * d, 200e9)
 
 
+@pytest.mark.parametrize("unsold", cc.UNSOLD)
+def test_loaded_failed_entry_crosses_midnight_at_its_attempt_not_its_trigger(tmp_path, monkeypatch, unsold):
+    # Real report path: parquet -> load -> cell_rows -> limited. Failure F is decided on D1, but its
+    # attempt is at D2's slot 201. The triggers at 199 and 200 precede that fee and must stay eligible;
+    # the trigger at 202 must see D2's spent daily budget. No outcome is moved into the trigger day.
+    records = [row("tp4_T600", 0.5, 3, LO + 198, D1, "F", failed=True),
+               row("tp4_T600", 0.5, 3, LO + 199, D1, "before_midnight"),
+               row("tp4_T600", 0.5, 3, LO + 200, D2, "before_attempt"),
+               row("tp4_T600", 0.5, 3, LO + 202, D2, "after_attempt")]
+    run = write_run(str(tmp_path), "cross-midnight", records)
+    keys = str(tmp_path / "keys.parquet")
+    with duckdb.connect() as con:
+        con.execute(f"COPY (SELECT 'F' AS pool, {LO + 198}::UBIGINT AS t, 2 AS d, '5m' AS h, "
+                    f"2 AS paid_buyers_60s) TO '{keys}' (FORMAT parquet)")
+        cc.load(con, [run], keys)
+        rows = cc.cell_rows(con, "tp4_T600", None, False, 0.5, 3, "base")
+    fee = -rows[0][5]
+    assert fee > 0 and rows[0][6] and rows[0][1] is None
+    monkeypatch.setattr(cc, "DAILY_LOSS", (fee - 1) / (10 * 1e9))
+    result = cc.limited(rows, [D1, D2], 10, 0.5, unsold, OVER_MIDNIGHT)
+    assert (result["taken"], result["skip_daily_limit"]) == (3, 1)
+
+    trades = cc.trades_of(rows, unsold)
+    assert [t[0] for t in trades] == [LO + i for i in (198, 199, 200, 202)]
+    assert trades[0][9] == LO + 201
+    out, extra = cc.capital_days(trades, 10e9, 5, fee - 1, cc.COOLDOWN_MS, day_of=OVER_MIDNIGHT)
+    assert out == _capital_limited(trades, 10e9, 5, fee - 1, cc.COOLDOWN_MS, day_of=OVER_MIDNIGHT)
+    assert extra["day_taken"] == {D1: 2, D2: 1}
+    assert extra["day_pnl"] == {D1: rows[0][5] + rows[1][5], D2: rows[2][5]}
+    assert extra["exit_day_pnl"] == {D2: sum(r[5] for r in rows[:3])}
+
+
+def test_deferred_failed_fee_does_not_spend_cash_before_its_attempt():
+    failure = (LO + 100, None, 0, -2_000_000_000, True, D1, "failed", 0, 400.0, LO + 110)
+    before_fee = trade(LO + 105, LO + 120, 0, D1, "before", cost=9_000_000_000) + (LO + 108,)
+    # Reserving a fee immediately at the earlier trigger would wrongly reject the 9 SOL order.
+    out, extra = cc.capital_days([failure, before_fee], 10e9, 5, float("inf"), 0,
+                                 size=9_000_000_000, day_of=OVER_MIDNIGHT)
+    assert (out[1], out[5], out[6]) == (2, 0, 8.0)
+    assert extra["day_pnl"] == {D1: -2_000_000_000}
+
+
+def test_analysis_checks_actual_decision_day_instead_of_earlier_cohort_day():
+    # analysis callers already pass the attempted entry as the first slot. A pre-midnight signal
+    # keeps cohort D1, but an entry considered on D2 must respect losses already realized on D2.
+    t = [(LO + 200, None, 0, -2_000_000_000, True, D1, "failed", 0, 400.0),
+         trade(LO + 205, LO + 220, 0, D1, "later")]
+    out, _ = sims(t)
+    assert (out[1], out[4]) == (1, 1)
+
+
+@pytest.mark.parametrize("attempt", [None, LO - 1])
+def test_attempt_before_decision_or_missing_is_refused(attempt):
+    t = [(LO, None, 0, -505_000, True, D1, "failed", 0, 400.0, attempt)]
+    with pytest.raises(ValueError, match="attempt slot"):
+        cc.capital_days(t, 10e9, 5, 1e9, 0, day_of=OVER_MIDNIGHT)
+    with pytest.raises(ValueError, match="attempt slot"):
+        _capital_limited(t, 10e9, 5, 1e9, 0, day_of=OVER_MIDNIGHT)
+
+
 @pytest.fixture
 def run(tmp_path):
     rows = []

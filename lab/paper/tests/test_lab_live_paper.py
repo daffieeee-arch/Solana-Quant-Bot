@@ -365,7 +365,10 @@ def engine_args():
 def _python(lo, hi, journal, log):
     import sys
 
-    return _start([sys.executable, "-m", "paper.engine", "--from", str(lo), "--to", str(hi), *engine_args(), "--store", STORE,
+    # This harness verifies the frozen Rust rule-1 port. Do not compare it with
+    # new Python rule-2 settlements, or silently waive that financial difference.
+    reference = "from functools import partial; from paper import engine; engine.Engine = partial(engine.Engine, settle_rule=1); engine.main()"
+    return _start([sys.executable, "-c", reference, "--from", str(lo), "--to", str(hi), *engine_args(), "--store", STORE,
                    "--journal", journal], log, cwd=LAB, env={**os.environ, "PYTHONPATH": LAB})
 
 
