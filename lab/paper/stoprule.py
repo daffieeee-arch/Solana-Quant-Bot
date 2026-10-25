@@ -191,8 +191,9 @@ def assessment(traded, mean, lo, hi, verdict_, clock_st, scn=None, group=None, f
          "text": "landing is simulated" + (f": each transaction lands with probability {land:g}, failed attempts "
                                            "cost the failed-transaction fee" if land else "")},
         {"key": "delay", "d_ms": d_ms, "q": q,
-         "text": f"the entry is {d_ms} ms after the trigger" + (f", at position {q:g} in its slot" if q is not None else "")
-                 if d_ms is not None else "the entry delay is the engine's configuration"},
+         "text": (f"the simulated entry is {d_ms} ms after the trigger" + (f", at position {q:g} in its slot" if q is not None else "")
+                 if d_ms is not None else "the simulated entry delay is the engine's configuration")
+                 + "; segment latency does not prove actionable stream latency or an executable fill"},
         {"key": "regime", "after_switch": after, "trades": len(traded),
          "text": f"{after} of {len(traded)} trades are after the Alpenglow switch (epoch 1064)"},
     ]
