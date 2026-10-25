@@ -196,6 +196,19 @@ def test_the_expectation_is_exact():
     assert abs(e1["sol_day"] - (990 + 0.25 * 1990 + 0.75 * 290) / 1e9) < 1e-15
 
 
+def test_racing_trades_keep_failed_attempt_timing_for_each_delay():
+    # d=0's miss is immediate; a d=1 fallback failure is only known next slot, on the next day.
+    d0 = (LO + 199, None, None, 0, 0, -505_000, True, "2026-09-12", "A", 0, 270.0)
+    d1 = (LO + 199, None, None, 1, 0, -505_000, True, "2026-09-12", "A", 0, 270.0)
+    assert rc.trades_of([d0])[0][9] == LO + 199
+    assert rc.trades_of([d1])[0][9] == LO + 200
+    day_of = cc.SlotDays([LO, LO + 200], ["2026-09-12", "2026-09-13"])
+    for row_, expected_day in ((d0, "2026-09-12"), (d1, "2026-09-13")):
+        _, _, extra = rc.run_days(rc.trades_of([row_]), day_of.days, 10, 0.5, day_of)
+        assert extra["exit_day_pnl"] == {expected_day: -505_000}
+        assert extra["day_pnl"] == {"2026-09-12": -505_000}
+
+
 def test_breakeven():
     assert rc.breakeven([(0, 9, 9), (1, 3, 1), (2, 2, -1), (3, -1, -2), (5, 1, -3)]) == {
         "grid": [1, 2, 3, 5], "first_non_positive_d": 3, "beyond_grid": False, "lower_bound_positive_up_to_d": 1}

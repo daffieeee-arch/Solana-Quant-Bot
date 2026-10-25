@@ -218,7 +218,7 @@ class Engine:
     def __init__(self, feed, journal, risk_path, *, variants=F7_GRID, d=1, q=0.5, tol=0.05, tau="empirical",
                  dev_bounds=None, n2_k=1, ignore_risk=False, cfg=None, clock=None, backup=True, segments=None,
                  farm="all", watchlist=None, d_ms=None, name="K3", groups=(), restart=False, wall_clock=None,
-                 burn_in_ms=BURN_IN_MS, end_guard_ms=END_GUARD_MS):
+                 burn_in_ms=BURN_IN_MS, end_guard_ms=END_GUARD_MS, settle_rule=ENGINE_SETTLE_RULE):
         """The arguments up to d_ms are the primary group's (name: its name; groups: further Group objects).
         restart (live): every minute's commit journals its high-water mark, and a start on a journal with one replays
         up to it with the journal's decisions (paper/restart.py). wall_clock (live, e.g. time.time): while the engine's
@@ -232,6 +232,9 @@ class Engine:
         hour before t (the backtest's `farm` label), 'all' trades every trigger (the label is journaled);
         watchlist: a paper.watchlist_live.LiveWatchlist fed with the pool trades seen (live: it writes the
         recorder's watchlist-current.json every minute)."""
+        if type(settle_rule) is not int or settle_rule not in (1, 2):
+            raise ValueError("unsupported paper settlement rule")
+        self.settle_rule = settle_rule
         self.feed, self.j, self.watch = feed, journal, watchlist
         self.primary = Group(name, list(variants), farm=farm, segments=segments, d=d, d_ms=d_ms, q=q, n2_k=n2_k,
                              risk_path=risk_path)
@@ -944,13 +947,14 @@ class Engine:
                    size=size, status=status, reason=r.exit_reason if status != "filled" else None)
         if status != "filled":
             if r.entry_failed:  # the transaction landed and failed: it costs the failed-tx fee
-                pnl, _, _ = settle(r, self.scn, ENGINE_SETTLE_RULE)
+                pnl, _, _ = settle(r, self.scn, self.settle_rule)
                 self._book_loss(p, pnl)
                 self._wallet_tx(p, "buy", slot, pnl, settled=pnl)
                 self.j.put("exits", family=p.family, variant=p.variant, key=p.key, t=p.t, day=self.day, entry_slot=slot,
                            exit_decision_slot=None, exit_slot=None, exit_reason=r.exit_reason, tokens=0, cost=0, proceeds=0,
                            pnl=pnl, ret=None, exit_attempts=0, cf_graduation=0, seed_pool=0, vault_capped=0,
-                           reverted_direct=0, reverted_router=0, sells_dropped=0, sells_scaled=0, **_windows(rule))
+                           reverted_direct=0, reverted_router=0, sells_dropped=0, sells_scaled=0,
+                           settle_rule=self.settle_rule, **_windows(rule))
             self.busy[(p.family, p.variant, p.key)] = p.t
             return
         self.j.put("fills", family=p.family, variant=p.variant, key=p.key, t=p.t, side="buy", day=self.day, slot=slot,
@@ -1047,7 +1051,7 @@ class Engine:
         p, r = o.p, o.r
         if self.replaying:
             return self._replayed_exit(o, slot)
-        pnl, ret, _ = settle(r, self.scn, ENGINE_SETTLE_RULE)
+        pnl, ret, _ = settle(r, self.scn, self.settle_rule)
         self.j.put("fills", family=p.family, variant=p.variant, key=p.key, t=p.t, side="sell", day=self.day,
                    slot=r.exit_slot, tokens=r.tokens, quote=r.proceeds)
         self.j.put("exits", family=p.family, variant=p.variant, key=p.key, t=p.t, day=self.day, entry_slot=r.entry_slot,
@@ -1055,7 +1059,7 @@ class Engine:
                    tokens=r.tokens, cost=r.cost, proceeds=r.proceeds, pnl=pnl, ret=ret, exit_attempts=r.exit_attempts,
                    cf_graduation=int(r.cf_graduation), seed_pool=int(r.seed_pool), vault_capped=int(r.vault_capped),
                    reverted_direct=r.reverted_direct, reverted_router=r.reverted_router, sells_dropped=r.sells_dropped,
-                   sells_scaled=r.sells_scaled, **_peak(r), **_windows(o.rule))
+                   sells_scaled=r.sells_scaled, settle_rule=self.settle_rule, **_peak(r), **_windows(o.rule))
         self.j.delete("positions", family=p.family, variant=p.variant, key=p.key, t=p.t)
         self._exit_effects(p, pnl, r.exit_slot, r.tokens, r.proceeds, r.cost, slot)
         self._drop(o)
@@ -1066,9 +1070,8 @@ class Engine:
         rule's max_slots: from there on every exit rule says exit), that decision's fill failed (pending None) and no
         sale is possible now (sell() None: a pool whose liquidity was withdrawn). A slippage miss is no write-off: the
         position sells at its next decision. exit_reason 'written_off' at the failed attempt's slot (decision + d),
-        proceeds 0, settled like the backtest's unsold row (settle under ENGINE_SETTLE_RULE: the exit's modelled close
-        returns the rent; rule 1, until the paper deploy switches it, charges every failed attempt but the last, rule 2
-        every one); the normal exit path frees its place, books its loss on the
+        proceeds 0, settled like the backtest's unsold row (the exit's modelled close returns the rent; rule 2 charges
+        every failed attempt, with the rule recorded on the exit); the normal exit path frees its place, books its loss on the
         day, starts the pool's cooldown and sets busy. True when written off."""
         sim, r = o.sim, o.r
         if (sim is None or sim.done or o.grad or sim.pending is not None or sim.deadline is None
@@ -1292,7 +1295,7 @@ class Engine:
                    exit_decision_slot=slot, exit_slot=slot, exit_reason="restart_lost", tokens=tokens, cost=cost,
                    proceeds=proceeds, pnl=net - total, ret=net / total - 1, exit_attempts=0, cf_graduation=0, seed_pool=0,
                    vault_capped=0, reverted_direct=0, reverted_router=0, sells_dropped=0, sells_scaled=0, peak_mark=None,
-                   peak_slot=None, n_flow_slots=None, cap_slots=None)
+                   peak_slot=None, n_flow_slots=None, cap_slots=None, settle_rule=self.settle_rule)
         self.j.delete("positions", family=p.family, variant=p.variant, key=p.key, t=p.t)
         if unconfigured:
             self.rs.counts["restart_lost_of_unconfigured_variants"] += 1
