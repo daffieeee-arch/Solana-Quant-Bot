@@ -10,6 +10,7 @@ NAS job turns that into RED before stage B.
 
 import argparse
 import json
+import math
 import os
 import sys
 
@@ -17,7 +18,23 @@ import duckdb
 
 HITS = ("hit_2_24", "hit_5_24", "hit_10_24", "hit_2_72", "hit_5_72", "hit_10_72", "stop_first_24", "stop_first_72")
 MEANS = ("x_tp2_24", "x_trail30_24", "x_tp5_24", "peak_24", "end_24")
-TIE_TOL = 0.0015  # one fee-tier step is at most 10 bps of the gross sale; the net peak is below the gross, so its relative drop stays under 0.15 %; plan v0.5
+TIE_TOL = 0.0015  # plan v0.5: maximum relative drop permitted by this exception, not a general fee-impact bound
+
+
+def _relative_drop(old, new):
+    """The tier-tie exception is defined only for finite, strictly positive peaks.
+
+    A zero/negative net mark can occur after costs; dividing a loss by a negative
+    old mark would turn a deterioration into a negative, apparently tiny drop.
+    Such drops stay RED rather than receiving this relative tolerance.
+    """
+    if any(v is None or not math.isfinite(v) or v <= 0 for v in (old, new)):
+        return None
+    return (old - new) / old
+
+
+def _display(value):
+    return f"{value:.3f}" if value is not None and math.isfinite(value) else "UNAVAILABLE"
 
 
 def compare(old, new):
@@ -48,6 +65,10 @@ def compare(old, new):
     changed = con.execute("SELECT count(*) FROM o JOIN n USING (key, moment, t) WHERE " + " OR ".join(f"o.{h} <> n.{h}" for h in HITS if h in cols_o and h in cols_n)).fetchone()[0]
     res["rows_with_a_changed_label"] = changed
     if "peak_24" in cols_o:
+        res["invalid_peak_24_rows"] = [dict(zip(("key", "moment", "t"), r)) for r in con.execute(
+            "SELECT o.key, o.moment, o.t FROM o JOIN n USING (key, moment, t) "
+            "WHERE o.peak_24 IS NULL OR n.peak_24 IS NULL OR NOT isfinite(o.peak_24) OR NOT isfinite(n.peak_24) "
+            "ORDER BY 1, 2, 3").fetchall()]
         up, down = con.execute("SELECT sum((n.peak_24 > o.peak_24)::INT), sum((n.peak_24 < o.peak_24)::INT) FROM o JOIN n USING (key, moment, t)").fetchone()
         res["direction"] = {"peak_24_up": int(up or 0), "peak_24_down": int(down or 0)}
         # every peak_24 drop, with the new run's peak-row kind and mixed-tier flag when the new file carries them (labels since
@@ -55,7 +76,7 @@ def compare(old, new):
         # peak row is a boost / withdraw / deposit row in a slot with more than one fee tier, and is at most one tier step (TIE_TOL)
         has_kind = "peak_kind_24" in cols_n and "peak_mixed_24" in cols_n
         kind_cols = ", n.peak_kind_24, n.peak_mixed_24" if has_kind else ", NULL, NULL"
-        res["peak_24_drops"] = [{"key": r[0], "moment": r[1], "t": r[2], "old": r[3], "new": r[4], "rel": (r[3] - r[4]) / r[3] if r[3] else None,
+        res["peak_24_drops"] = [{"key": r[0], "moment": r[1], "t": r[2], "old": r[3], "new": r[4], "rel": _relative_drop(r[3], r[4]),
                                  "peak_kind_24": r[5], "peak_mixed_24": r[6]}
                                 for r in con.execute(f"SELECT o.key, o.moment, o.t, o.peak_24, n.peak_24{kind_cols} FROM o JOIN n USING (key, moment, t) WHERE n.peak_24 < o.peak_24 ORDER BY 1, 2, 3").fetchall()]
     return res
@@ -79,9 +100,11 @@ def main(argv=None):
         red.append(f"rows differ old/new/matched {res['rows']}")
     if res["entries_identical"] != res["rows"][2]:
         red.append(f"entries not identical: {res['entries_identical']} of {res['rows'][2]}")
+    if res.get("invalid_peak_24_rows"):
+        red.append(f"peak_24 missing or nonfinite on {len(res['invalid_peak_24_rows'])} rows")
     drops = res.get("peak_24_drops", [])
     if a.allow_tier_tie_drops:
-        allowed = [d for d in drops if d["rel"] is not None and d["rel"] <= TIE_TOL and d["peak_kind_24"] in ("boost", "withdraw", "deposit") and d["peak_mixed_24"]]
+        allowed = [d for d in drops if d["rel"] is not None and 0 < d["rel"] <= TIE_TOL and d["peak_kind_24"] in ("boost", "withdraw", "deposit") and d["peak_mixed_24"]]
         res["peak_24_drops_allowed"] = allowed
         res["peak_24_drops_red"] = [d for d in drops if d not in allowed]
         if res["peak_24_drops_red"]:
@@ -95,8 +118,8 @@ def main(argv=None):
              "| moment | n | " + " | ".join(f"{h} old→new" for h in HITS) + " | depth < cost |", "|---|---|" + "---|" * (len(HITS) + 1)]
     for m, d in res["by_moment"].items():
         lines.append(f"| {m} | {d['n']} | " + " | ".join(f"{d[h]['old']}→{d[h]['new']}" if h in d else "–" for h in HITS) + f" | {d['share_depth_below_cost']} |")
-    lines += ["", "means old → new: " + ", ".join(f"{c} {v['old']:.3f}→{v['new']:.3f}" for c, v in res["means"].items() if v["old"] is not None), f"direction: {res['direction']}",
-              *[f"- peak_24 down: {d['key']} {d['moment']} {d['t']}: {d['old']:.6f} -> {d['new']:.6f} (rel {d['rel']:.6f}), peak row {d['peak_kind_24']} mixed {d['peak_mixed_24']}"
+    lines += ["", "means old → new: " + ", ".join(f"{c} {_display(v['old'])}→{_display(v['new'])}" for c, v in res["means"].items()), f"direction: {res['direction']}",
+              *[f"- peak_24 down: {d['key']} {d['moment']} {d['t']}: {d['old']:.6f} -> {d['new']:.6f} (rel {format(d['rel'], '.6f') if d['rel'] is not None else 'UNAVAILABLE'}), peak row {d['peak_kind_24']} mixed {d['peak_mixed_24']}"
                 + (" ALLOWED" if d in res.get("peak_24_drops_allowed", []) else "") for d in res.get("peak_24_drops", [])[:200]],
               # the verdict is always the last line (the NAS job and the tests read it)
               ("RED: " + "; ".join(red)) if red else ("GREEN: rows equal, entries identical, no peak_24 down" if not res.get("peak_24_drops_allowed")

@@ -8,6 +8,7 @@ on the same key). Every cell is reported; the primary cell decides.
 """
 
 import argparse
+import datetime as dt
 import glob
 import json
 import os
@@ -23,9 +24,29 @@ PARTS = "/home/chupa/Solana-project/data-old-faithful-one/lab/backtests/capital-
 SIZES = {10: 0.5, 25: 1.25, 100: 5.0}
 SLOTS_OPEN = 5
 DAY_BASIS = {"e74": 17, "e71": 20, "e72": 20, "e73": 13}   # plan section 1 / 4.1 / 5.1
+# Frozen development plan v0.2, sections 1 and 4.1. This calendar is fixed
+# before signal inspection; no-signal days must not disappear from the CI.
+E73_CALENDAR = tuple((dt.date(2026, 9, 19) + dt.timedelta(days=i)).isoformat() for i in range(13))
+E73_CALENDAR_SOURCE = {"plan": "research/breedte-proeven-plan-2026-10-24.md", "version": "0.2", "sections": ["1", "4.1"],
+                       "sha256": "7bbd1aa112bdad00bba8ff504749d6bb04cf1af99b4ee9fd3ae9d70b590490b1"}
 PRIMARY = {"e74": "e10", "e71": "e10", "e72": "copy", "e73": "k2n30"}
 MIN_TRADES_PER_DAY = 3.0
 WINDOW_S = 60
+
+
+def calendar_days(probe, rows):
+    """Use E73's preregistered calendar, not the dates that produced signals.
+
+    This report has no approved forward E73 calendar: out-of-period or missing
+    dates are errors, not extra days or rows to discard from the denominator.
+    Other probes retain their existing reporting contract.
+    """
+    observed = {r["day"] for r in rows}
+    if probe == "e73":
+        if not observed <= set(E73_CALENDAR):
+            raise ValueError("E73 report dates must belong to its preregistered 2026-09-19..2026-10-01 calendar")
+        return list(E73_CALENDAR)
+    return sorted(observed)
 
 
 def load(in_dir, probe):
@@ -87,6 +108,9 @@ def cell(rows, probe, boot, net_col="exit_net", all_days=()):
     """One cell: per capital the capacity pass, margin, CI (0.5 SOL), SOL/day."""
     out = {}
     basis = DAY_BASIS[probe]
+    if probe == "e73":
+        all_days = calendar_days(probe, rows)
+        basis = len(all_days)
     for cap, size in SIZES.items():
         rs = [r for r in rows if abs(float(r["size_sol"]) - size) < 1e-9]
         taken = capacity(rs)
@@ -110,7 +134,8 @@ def cell(rows, probe, boot, net_col="exit_net", all_days=()):
             h1 = {d: v[0] for d, v in by_day([r for r in taken if r["day"] < "2026-09-22"], net_col).items()}
             h2 = {d: v[0] for d, v in by_day([r for r in taken if r["day"] >= "2026-09-22"], net_col).items()}
             c["net_sol_block_1_9"], c["net_sol_block_10_20"] = sum(h1.values()) / SOL, sum(h2.values()) / SOL
-            c["daily_net_sol"] = {d: v[0] / SOL for d, v in sorted(dt.items())}
+            daily = {**{d: [0.0, 0.0, 0] for d in all_days}, **dt} if probe == "e73" else dt
+            c["daily_net_sol"] = {d: v[0] / SOL for d, v in sorted(daily.items())}
             c["go"] = bool(c["ci"] and c["ci"]["lo"] > 0 and c["trades_per_day"] >= MIN_TRADES_PER_DAY)
         out[str(cap)] = c
     return out
@@ -182,9 +207,11 @@ def main(argv=None):
     out_dir = a.out or a.in_dir
     rows, n_skipped = load(a.in_dir, a.probe)
     moments = sorted({r["moment"] for r in rows})
-    all_days = sorted({r["day"] for r in rows})  # every UTC day with a signal in any cell / size: zero rows for cells without a trade that day
+    all_days = calendar_days(a.probe, rows)
     res = {"probe": a.probe, "rows": len(rows), "rows_skipped_null_cost": n_skipped, "moments": moments, "primary_moment": PRIMARY[a.probe],
-           "days_with_signals": all_days, "cells": {}}
+           "days_with_signals": sorted({r["day"] for r in rows}), "bootstrap_calendar_days": all_days, "cells": {}}
+    if a.probe == "e73":
+        res["calendar_source"] = E73_CALENDAR_SOURCE
     for m in moments:
         res["cells"][m] = cell([r for r in rows if r["moment"] == m], a.probe, a.boot, all_days=all_days)
         if a.probe == "e71":
@@ -226,6 +253,9 @@ def main(argv=None):
     with open(os.path.join(out_dir, f"report-{a.probe}.json"), "w") as f:
         json.dump(res, f, indent=1, default=str)
     lines = [f"# {a.probe}: {res['verdict']}", "", "| cel | kapitaal | signalen | genomen | trades/dag | marge | CI 95 % (0,5 SOL) | SOL/dag | ≥ 90 % verlies | mediaan hold (slots) |", "|---|---|---|---|---|---|---|---|---|---|"]
+    if a.probe == "e73":
+        lines[2:2] = [f"Vaste UTC-dagbasis: {all_days[0]} t/m {all_days[-1]} ({len(all_days)} dagen, inclusief dagen zonder signalen). "
+                      f"Plan v0.2 §1/4.1, SHA256 {E73_CALENDAR_SOURCE['sha256']}.", ""]
     for m, cs in res["cells"].items():
         for cap, c in cs.items():
             ci = c.get("ci")

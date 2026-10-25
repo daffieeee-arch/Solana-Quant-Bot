@@ -20,9 +20,8 @@ from dataclasses import dataclass
 
 LAMPORTS = 1_000_000_000
 SETTLE_RULE = 2  # every landed failed exit attempt pays (Codex review #6); 1: exit_attempts - 1 (before 24 Oct)
-# The engine's rule: 1 until the paper deploy switches it with a rule per journaled row (LAB review on #6, Q6: a restart
-# replays journaled exits and must settle each under the rule it was journaled with).
-ENGINE_SETTLE_RULE = 1
+# New paper exits carry their own rule; replayed journal exits retain their stored P&L and historical rule.
+ENGINE_SETTLE_RULE = 2
 
 
 @dataclass(frozen=True)

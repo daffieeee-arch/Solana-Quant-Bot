@@ -9,9 +9,12 @@ import contextlib
 import json
 import os
 import sqlite3
+from dataclasses import asdict
+from types import SimpleNamespace
 
 import pytest
 
+from backtest.costs import Scenario, settle
 from paper import journal_diff, parity
 from paper import restart as RS
 from paper.engine import Engine
@@ -42,7 +45,8 @@ def drained(c, label, t, at=5):
 def settled(eng, x):
     """The P&L settle() gives an unsold row: the modelled close (rent back), each earlier failed attempt's fee."""
     s = eng.scn
-    return s.exit_net(0) - max(0, x["exit_attempts"] - 1) * s.failed_tx - s.entry_total(x["cost"])
+    rule = x.get("settle_rule") or eng.settle_rule
+    return s.exit_net(0) - max(0, x["exit_attempts"] - int(rule == 1)) * s.failed_tx - s.entry_total(x["cost"])
 
 
 def test_a_drained_pool_is_written_off_at_its_failed_deadline_attempt():
@@ -289,13 +293,21 @@ def _exit(**over):
     return row
 
 
+SCENARIO = Scenario("fixture", 7, 3, 5, 0.5, 20, "refunded", 0.1)
+
+
+def _settled_exit(row, rule=1):
+    pnl, ret, _ = settle(SimpleNamespace(entry_failed=False, **row), SCENARIO, rule)
+    return {**row, "pnl": pnl, "ret": ret, "settle_rule": rule}
+
+
 def test_journal_diff_names_the_write_off_and_the_freed_pool(tmp_path):
-    scn = json.dumps({"failed_tx": 505_000})
+    scn = json.dumps(asdict(SCENARIO))
     a, b = str(tmp_path / "a"), str(tmp_path / "b")
     sell = dict(family="F7", variant="tp4_T600", key="P", t=100, side="sell", day="2026-09-22", tokens=5, quote=0)
-    _journal(a, [_exit(day="2026-09-23")], [dict(sell, slot=None)], {"cost_scenario": scn},
+    _journal(a, [_settled_exit(_exit(day="2026-09-23"))], [dict(sell, slot=None)], {"cost_scenario": scn},
              signals=[_signal(status="skipped", reason="busy")])
-    _journal(b, [_exit(exit_slot=703, exit_reason="written_off", exit_attempts=2),
+    _journal(b, [_settled_exit(_exit(exit_slot=703, exit_reason="written_off", exit_attempts=2)),
                  _exit(t=900, entry_slot=902, exit_decision_slot=950, exit_slot=952, exit_reason="take_profit", proceeds=600, pnl=99)],
              [dict(sell, slot=703)], {"cost_scenario": scn}, signals=[_signal()])
     causes = journal_diff.writeoff_causes(a, b)
@@ -305,7 +317,7 @@ def test_journal_diff_names_the_write_off_and_the_freed_pool(tmp_path):
     assert journal_diff.compare(a, b)["unexplained"] == 4
     # Main sold it later (the pool got liquidity again): written_off_later_sold, listed apart.
     d = str(tmp_path / "d")
-    _journal(d, [_exit(day="2026-09-23", exit_slot=900, exit_decision_slot=898, proceeds=400, pnl=-150, exit_reason="stop_loss")],
+    _journal(d, [_settled_exit(_exit(day="2026-09-23", exit_slot=900, exit_decision_slot=898, proceeds=400, exit_reason="stop_loss"))],
              [dict(sell, slot=900, quote=400)], {"cost_scenario": scn}, signals=[_signal(status="skipped", reason="busy")])
     res = journal_diff.compare(d, b, causes=journal_diff.writeoff_causes(d, b))
     assert res["unexplained"] == 0 and res["explained"] == {"written_off_later_sold": 2, "busy_freed": 2}, res["explained"]
@@ -377,8 +389,9 @@ def test_parity_explains_a_write_off_only_with_its_farm_and_the_failed_attempts_
     assert not parity.written_off_row(bt, {k: {**en[k], "farm": "flagged"}}, k, 505_000)
     _, diffs, _ = parity.compare(bt, {k: {**en[k], "pnl": en[k]["pnl"] - 1}}, 0, 1_000)
     assert [len(x) for x in parity._split(diffs, bt, {k: {**en[k], "pnl": en[k]["pnl"] - 1}}, 505_000)] == [1, 0, 0, 0]
+    # A late exit slot alone is insufficient: these synthetic P&Ls have no verified settlement scenario.
     sold = {k: {**bt[k], "exit_slot": 900, "proceeds": 400}}
-    assert parity.written_off_later_sold(sold, en, k) and not parity.written_off_later_sold(sold, {k: {**en[k], "farm": "flagged"}}, k)
+    assert not parity.written_off_later_sold(sold, en, k)
 
 
 def test_parity_compares_a_key_either_side_labels_organic_and_a_backtest_sale_before_the_engines_end():
@@ -404,10 +417,87 @@ def test_parity_explains_a_written_off_row_and_its_busy_window():
     _, diffs, _ = parity.compare(bt, en, 0, 1_000)
     unexplained, busy, wo, later = parity._split(diffs, bt, en)
     assert (len(unexplained), len(busy), len(wo), len(later)) == (0, 1, 1, 0)
-    # The backtest sold it later (a pool with liquidity again): explained too, listed apart.
+    # A claimed later sale without cost/attempt evidence stays unexplained.
     sold = {**bt, k1: {**bt[k1], "exit_slot": 900, "proceeds": 400}, k2: {"status": "busy"}}  # held to 900: k2 busy there too
-    assert parity.written_off_later_sold(sold, en, k1) and not parity.written_off_row(sold, en, k1)
+    assert not parity.written_off_later_sold(sold, en, k1) and not parity.written_off_row(sold, en, k1)
     _, diffs, _ = parity.compare(sold, en, 0, 1_000)
-    assert [len(x) for x in parity._split(diffs, sold, en)] == [0, 0, 0, 1]
+    assert [len(x) for x in parity._split(diffs, sold, en)] == [1, 0, 0, 0]
     # After the write-off the engine's pool is free: a trigger past it is no unsold_busy.
     assert not parity.unsold_busy(bt, {**en, k1: {**en[k1], "exit_slot": 250}}, k2)
+
+
+def _late_pair(sale_rule=1, writeoff_rule=1):
+    # Independently calculated from SCENARIO: per_tx 15; entry total 585; sale net 365 minus two failed fees = 355.
+    # The write-off recovers rent less closing cost (5), then rule 2 additionally charges its failed attempt (5).
+    sale = _exit(exit_slot=900, exit_decision_slot=898, exit_reason="stop_loss", proceeds=400, exit_attempts=3,
+                 pnl=-230, ret=355 / 585 - 1, settle_rule=sale_rule)
+    net_writeoff = 5 if writeoff_rule == 1 else 0
+    writeoff = _exit(exit_slot=703, exit_reason="written_off", proceeds=0, exit_attempts=1,
+                     pnl=net_writeoff - 585, ret=net_writeoff / 585 - 1, settle_rule=writeoff_rule)
+    return sale, writeoff
+
+
+def _late_journals(tmp_path, sale, writeoff, *, fill_quote=400, scenario=SCENARIO, state_rule=None):
+    a, b = str(tmp_path / "a"), str(tmp_path / "b")
+    fill = dict(family="F7", variant="tp4_T600", key="P", t=100, side="sell", day="2026-09-22", tokens=5)
+    state = {"cost_scenario": json.dumps(asdict(scenario))}
+    if state_rule is not None:
+        state["settle_rule"] = str(state_rule)
+    _journal(a, [sale], [dict(fill, slot=900, quote=fill_quote)], state)
+    _journal(b, [writeoff], [dict(fill, slot=703, quote=0)], state)
+    return journal_diff.compare(a, b, causes=journal_diff.writeoff_causes(a, b))
+
+
+@pytest.mark.parametrize("sale_rule,writeoff_rule", [(1, 1), (2, 2), (1, 2)])
+def test_later_sale_waiver_proves_each_cost_rule_and_fill(tmp_path, sale_rule, writeoff_rule):
+    sale, writeoff = _late_pair(sale_rule, writeoff_rule)
+    res = _late_journals(tmp_path, sale, writeoff)
+    assert res["green"] and res["explained"] == {"written_off_later_sold": 2}, res
+    k = ("P", 100)
+    bt = {k: {**sale, "status": "filled", "farm": "organic"}}
+    en = {k: {**writeoff, "status": "filled", "farm": "organic"}}
+    _, diffs, _ = parity.compare(bt, en, 0, 1_000)
+    assert [len(x) for x in parity._split(diffs, bt, en, SCENARIO.failed_tx, SCENARIO)] == [0, 0, 0, 1]
+
+
+@pytest.mark.parametrize("side,field,value", [
+    (0, "pnl", 1_000_000_000), (1, "pnl", -1), (0, "proceeds", 410), (0, "exit_attempts", 4),
+    (1, "exit_attempts", 2), (0, "ret", 7.0), (0, "settle_rule", 99), (0, "cost", None),
+])
+def test_later_sale_bad_arithmetic_is_not_explained(tmp_path, side, field, value):
+    rows = list(_late_pair(2, 2))
+    rows[side] = {**rows[side], field: value}
+    res = _late_journals(tmp_path, *rows)
+    assert not res["green"] and res["tables"]["exits"]["unexplained"] == 1, res
+    assert res["tables"]["fills"]["unexplained"] == 1, res  # the fill cannot independently waive a bad parent
+    if field != "ret":  # backtest parity compares lamport P&L, not the journal's redundant return column
+        k = ("P", 100)
+        bt, en = ({k: {**r, "status": "filled", "farm": "organic"}} for r in rows)
+        _, diffs, _ = parity.compare(bt, en, 0, 1_000)
+        assert [len(x) for x in parity._split(diffs, bt, en, SCENARIO.failed_tx, SCENARIO)] == [1, 0, 0, 0]
+
+
+def test_later_sale_equal_pnl_corruption_and_wrong_fill_are_not_waived(tmp_path):
+    sale, writeoff = _late_pair(2, 2)
+    both = [{**r, "pnl": r["pnl"] + 123} for r in (sale, writeoff)]
+    res = _late_journals(tmp_path / "both", *both)
+    assert res["unexplained"] == 2  # a correct difference does not prove either absolute P&L
+    res = _late_journals(tmp_path / "fill", sale, writeoff, fill_quote=401)
+    assert not res["green"] and res["tables"]["fills"]["unexplained"] == 1
+
+
+@pytest.mark.parametrize("rule", [1, 2])
+def test_later_sale_legacy_rows_use_the_original_journal_rule(tmp_path, rule):
+    rows = [{k: v for k, v in r.items() if k != "settle_rule"} for r in _late_pair(rule, rule)]
+    res = _late_journals(tmp_path, *rows, state_rule=rule if rule == 2 else None)
+    assert res["green"] and res["explained"] == {"written_off_later_sold": 2}
+
+
+def test_later_sale_unknown_or_different_cost_scenario_stays_unexplained(tmp_path):
+    sale, writeoff = _late_pair()
+    _late_journals(tmp_path, sale, writeoff)
+    a, b = str(tmp_path / "a"), str(tmp_path / "b")
+    with sqlite3.connect(f"{b}/journal.sqlite") as db:
+        db.execute("UPDATE state SET v = ? WHERE k = 'cost_scenario'", (json.dumps({"failed_tx": 5}),))
+    res = journal_diff.compare(a, b, causes=journal_diff.writeoff_causes(a, b))
+    assert not res["green"] and "cost_scenario" in res["state_mismatch"] and res["unexplained"] == 2

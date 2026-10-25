@@ -313,13 +313,15 @@ def _capital_limited(trades, start, max_positions, daily_loss, cooldown_ms, day_
     """The candidate's capital simulation: at most one open position per pool, no new entries on a
     UTC day once its realized P&L reaches -daily_loss, and no entry in a pool for cooldown_ms after
     a total loss there (exit proceeds below 10% of the entry cost). trades: (entry_slot, exit_slot,
-    cost, pnl, failed, day, pool, proceeds, ms_per_slot), in lamports. The limit books a position's
+    cost, pnl, failed, day, pool, proceeds, ms_per_slot[, attempt_slot]), in lamports. A caller whose
+    first slot is an earlier decision supplies attempt_slot separately. The limit books a position's
     P&L on the UTC day it is realized (day_of(exit), required with a finite daily_loss; Codex review
     #5); the day columns stay the trigger-cohort series (capital_ceiling.capital_days)."""
     import heapq
     from collections import defaultdict
 
     cash, open_, locked, peak, mdd = start, [], 0, start, 0.0
+    failed_fees = []
     taken = skipped = skip_pool = skip_day = skip_cool = 0
     if daily_loss != float("inf") and trades and day_of is None:
         raise ValueError("_capital_limited: a daily loss limit needs day_of (the exit day's UTC day)")
@@ -329,7 +331,14 @@ def _capital_limited(trades, start, max_positions, daily_loss, cooldown_ms, day_
 
     def settle_until(slot):
         nonlocal cash, locked, peak, mdd
-        while open_ and open_[0][0] <= slot:
+        while (open_ and open_[0][0] <= slot) or (failed_fees and failed_fees[0][0] <= slot):
+            if failed_fees and (not open_ or failed_fees[0][0] <= open_[0][0]):
+                attempt, day, pnl = heapq.heappop(failed_fees)
+                cash += pnl
+                day_pnl[day] += pnl
+                if day_of is not None:
+                    exit_day_pnl[day_of(attempt)] += pnl
+                continue
             exit_slot, cost, back, pool, day, pnl, rug_until = heapq.heappop(open_)
             cash, locked = cash + back, locked - cost
             open_pools[pool] -= 1
@@ -342,11 +351,16 @@ def _capital_limited(trades, start, max_positions, daily_loss, cooldown_ms, day_
             mdd = max(mdd, 1 - (cash + locked) / peak)
 
     days = set()
-    for entry, exit_, cost, pnl, failed, day, pool, proceeds, mps in trades:
+    for trade in trades:
+        entry, exit_, cost, pnl, failed, day, pool, proceeds, mps = trade[:9]
+        attempt = trade[9] if len(trade) == 10 else entry
+        if len(trade) not in (9, 10) or attempt is None or attempt < entry:
+            raise ValueError("_capital_limited: invalid entry attempt slot")
         days.add(day)
         settle_until(entry)
         cost, pnl = cost or 0, pnl or 0
-        if exit_day_pnl.get(day, 0.0) <= -daily_loss:
+        decision_day = day_of(entry) if day_of is not None else day
+        if exit_day_pnl.get(decision_day, 0.0) <= -daily_loss:
             skip_day += 1
             continue
         if cool_until.get(pool, -1) > entry:
@@ -360,10 +374,8 @@ def _capital_limited(trades, start, max_positions, daily_loss, cooldown_ms, day_
             continue
         taken += 1
         if failed:
-            cash += pnl
-            day_pnl[day] += pnl
-            if day_of is not None:
-                exit_day_pnl[day_of(entry)] += pnl
+            heapq.heappush(failed_fees, (attempt, day, pnl))
+            settle_until(entry)
             continue
         x = exit_ or entry
         rug = (proceeds or 0) < 0.1 * cost

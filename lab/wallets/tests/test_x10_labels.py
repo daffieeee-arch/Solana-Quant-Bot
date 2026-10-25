@@ -325,3 +325,33 @@ def test_ab_labels_tier_tie_tolerance(tmp_path):
     new["peak_24"][2] = 0.99                                    # 1 % drop: beyond one tier step -> RED even on a boost peak
     pq.write_table(pa.Table.from_pydict(new), str(tmp_path / "new.parquet"))
     assert AB.main(args + ["--allow-tier-tie-drops"]) == 1
+
+
+@pytest.mark.parametrize("old_peak,new_peak", [
+    (-0.0005, -0.0010),  # a doubled loss used to pass because the relative drop was negative
+    (-0.001, -0.001001), (0.0, -0.001), (0.001, 0.0),
+    (float("inf"), 1.0), (1.0, float("-inf")), (float("nan"), 1.0),
+    (1.0, float("nan")), (float("inf"), float("inf")), (1.0, None), (None, 1.0),
+])
+def test_ab_labels_tier_exception_rejects_invalid_or_nonpositive_peaks(tmp_path, old_peak, new_peak):
+    """Exercise the actual Parquet/CLI gate, including NaNs that do not look like ordinary drops."""
+    from wallets.x10 import ab_labels as AB
+    base = {"key": ["A"], "moment": ["e10"], "t": [1], "tokens": [100], "cost_sol": [0.5], "hit_2_24": [False]}
+    for name, value in (("old", old_peak), ("new", new_peak)):
+        pq.write_table(pa.table(dict(base, peak_24=pa.array([value], type=pa.float64()),
+                                     peak_kind_24=["boost"], peak_mixed_24=[True])), tmp_path / f"{name}.parquet")
+    assert AB.main(["--old", str(tmp_path / "old.parquet"), "--new", str(tmp_path / "new.parquet"),
+                    "--out", str(tmp_path), "--allow-tier-tie-drops"]) == 1
+    res = json.loads((tmp_path / "ab-ab.json").read_text())
+    assert res["red"] and res["peak_24_drops_allowed"] == []
+    assert (tmp_path / "ab-ab.md").read_text().strip().splitlines()[-1].startswith("RED:")
+
+
+def test_ab_labels_unchanged_finite_negative_peak_needs_no_exception(tmp_path):
+    """A loss is valid model output; only a decrease needs a narrowly justified exception."""
+    from wallets.x10 import ab_labels as AB
+    row = {"key": ["A"], "moment": ["e10"], "t": [1], "tokens": [100], "cost_sol": [0.5],
+           "hit_2_24": [False], "peak_24": [-0.001]}
+    pq.write_table(pa.table(row), tmp_path / "same.parquet")
+    assert AB.main(["--old", str(tmp_path / "same.parquet"), "--new", str(tmp_path / "same.parquet"),
+                    "--out", str(tmp_path), "--allow-tier-tie-drops"]) == 0

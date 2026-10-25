@@ -18,7 +18,7 @@ d_ms 600, against the backtest with busy over the organic triggers only (as the 
 organic trigger) and with the tournament's busy over every trigger (equal on the organic triggers of pools without
 a flagged trigger; the others are the documented difference, counted).
 
-Both sides settle under the engine's rule (costs.ENGINE_SETTLE_RULE, 1 until the paper deploy switches it; Codex review
+Both sides settle under the engine's rule (costs.ENGINE_SETTLE_RULE, now 2; Codex review
 #6, LAB review Q4). A known difference that this comparison does not fix: a position in a pool that cannot pay after its
 deadline. The batch replay re-decides and re-attempts at every later event slot of the pool, and stays unsold
 (exit_slot NULL, n attempts). Since #533 the paper writes it off at its first failed attempt after the deadline
@@ -41,6 +41,7 @@ from backtest.tournament import STORE, delay_slots, exit_rule_for, work_items
 from .engine import Engine, variant
 from .feed import ReplayFeed
 from .journal import Journal
+from .journal_diff import settlement_matches
 
 VARIANT, SIZE, D, Q, TOL = (0.04, 600), 0.5, 1, 0.5, 0.05
 WARMUP = 2_000  # slots before `from`: triggers there are traded but not compared (busy state)
@@ -84,7 +85,8 @@ def backtest_side(con, cfg, clock, a, b, var=VARIANT, d=D, d_ms=None, segments=N
                                "status": "skipped" if r.skipped else "entry_failed" if r.entry_failed else "filled",
                                "tokens": r.tokens, "cost": r.cost, "exit_decision_slot": r.exit_decision_slot,
                                "exit_slot": r.exit_slot, "exit_reason": r.exit_reason, "proceeds": r.proceeds,
-                               "exit_attempts": r.exit_attempts, "pnl": pnl}
+                               "exit_attempts": r.exit_attempts, "pnl": pnl, "entry_slot": r.entry_slot,
+                               "settle_rule": ENGINE_SETTLE_RULE}
     return out
 
 
@@ -111,14 +113,16 @@ def engine_side(store, a, b, journal_dir, clock, var=VARIANT, d=D, d_ms=None, se
         if st in ("filled", "entry_failed") and x:
             rec.update(tokens=x["tokens"], cost=x["cost"], exit_decision_slot=x["exit_decision_slot"],
                        exit_slot=x["exit_slot"], exit_reason=x["exit_reason"], proceeds=x["proceeds"],
-                       exit_attempts=x["exit_attempts"], pnl=x["pnl"], entry_slot=x["entry_slot"], cap_slots=x.get("cap_slots"))
+                       exit_attempts=x["exit_attempts"], pnl=x["pnl"], entry_slot=x["entry_slot"], cap_slots=x.get("cap_slots"),
+                       settle_rule=int(x.get("settle_rule") or j.state("settle_rule") or 1))
         out[k] = rec
     return out, eng.events_seen
 
 
 def compare(bt, en, a, b):
     keys = sorted(k for k in set(bt) | set(en) if a <= k[1] < b)
-    fields = ["status", "farm", "tokens", "cost", "exit_decision_slot", "exit_slot", "exit_reason", "proceeds", "exit_attempts", "pnl"]
+    fields = ["status", "farm", "tokens", "cost", "exit_decision_slot", "exit_slot", "exit_reason", "proceeds", "exit_attempts", "pnl",
+              "settle_rule"]
     diffs, counts = [], defaultdict(int)
     for k in keys:
         x, y = bt.get(k), en.get(k)
@@ -175,14 +179,18 @@ def written_off_row(bt, en, k, failed_tx=None):
                      == ((x.get("exit_attempts") or 0) - (y.get("exit_attempts") or 0)) * failed_tx))
 
 
-def written_off_later_sold(bt, en, k):
+def written_off_later_sold(bt, en, k, scenario=None, rule=ENGINE_SETTLE_RULE):
     """The engine wrote the position off at its rule's deadline (no sale possible then); the backtest sold it later,
-    after the pool got liquidity again: the late sale the write-off forgoes by the owner's rule. Explained, listed apart."""
+    after the pool got liquidity again. Both P&Ls must match their own explicit cost rule and the same known scenario;
+    an arbitrary profit difference or missing arithmetic is never an explained late sale."""
     x, y = bt.get(k), en.get(k)
     return bool(x and y and x["status"] == y["status"] == "filled" and y.get("exit_reason") == "written_off"
                 and not y.get("proceeds") and x.get("farm") == y.get("farm") and _at_deadline(y, k)
-                and (x.get("tokens"), x.get("cost")) == (y.get("tokens"), y.get("cost"))
-                and x.get("exit_slot") is not None and y.get("exit_slot") is not None and x["exit_slot"] > y["exit_slot"])
+                and (x.get("tokens"), x.get("cost"), x.get("entry_slot")) == (y.get("tokens"), y.get("cost"), y.get("entry_slot"))
+                and x.get("exit_slot") is not None and y.get("exit_slot") is not None and x["exit_slot"] > y["exit_slot"]
+                and x.get("exit_reason") not in ("written_off", "end_of_data", "window_end")
+                and settlement_matches(x, scenario, x.get("settle_rule", rule))
+                and settlement_matches(y, scenario, y.get("settle_rule", rule)))
 
 
 def organic(k, bt, en):
@@ -201,11 +209,11 @@ def open_at_end(en, bt, end):
     return {k for k, v in en.items() if v.get("exit_reason") == "end_of_data" and not sold_inside(bt.get(k))}
 
 
-def _split(diffs, bt, en, failed_tx=None):
+def _split(diffs, bt, en, failed_tx=None, scenario=None):
     """(unexplained diffs, explained unsold_busy diffs, explained written_off diffs, explained written_off_later_sold
     diffs): the two write-off causes apart, so a forgone late sale shows (LAB review on #533)."""
     wo = [d for d in diffs if "diff" in d and written_off_row(bt, en, tuple(d["key"]), failed_tx)]
-    later = [d for d in diffs if "diff" in d and d not in wo and written_off_later_sold(bt, en, tuple(d["key"]))]
+    later = [d for d in diffs if "diff" in d and d not in wo and written_off_later_sold(bt, en, tuple(d["key"]), scenario)]
     expl = [d for d in diffs if "diff" in d and d not in wo and d not in later and unsold_busy(bt, en, tuple(d["key"]))]
     return [d for d in diffs if d not in expl and d not in wo and d not in later], expl, wo, later
 
@@ -226,11 +234,11 @@ def arm_parity(store, a, b, arm, journal_dir, con=None, tail=ARM_TAIL, d_ms=600,
     org = {k for k in set(bt_org) | set(en) if a <= k[1] < b and organic(k, bt_org, en)}
     keys1 = sorted(k for k in org if k not in held_at_end)
     _, d1, c1 = compare({k: bt_org[k] for k in keys1 if k in bt_org}, {k: en[k] for k in keys1 if k in en}, a, b)
-    failed_tx = Scenario.from_cfg("base", cfg).failed_tx  # both sides settle at base (backtest_side, the engine's journal)
-    d1, e1, w1, s1 = _split(d1, bt_org, en, failed_tx)
+    scenario = Scenario.from_cfg("base", cfg)  # both sides settle at base (backtest_side, the engine's journal)
+    d1, e1, w1, s1 = _split(d1, bt_org, en, scenario.failed_tx, scenario)
     keys2 = sorted(k for k in keys1 if k[0] not in flagged_pools)
     _, d2, c2 = compare({k: bt_tour[k] for k in keys2 if k in bt_tour}, {k: en[k] for k in keys2 if k in en}, a, b)
-    d2, e2, w2, s2 = _split(d2, bt_tour, en, failed_tx)
+    d2, e2, w2, s2 = _split(d2, bt_tour, en, scenario.failed_tx, scenario)
     in_flagged = [k for k in keys1 if k[0] in flagged_pools]
     _, d3, _ = compare({k: bt_tour[k] for k in in_flagged if k in bt_tour}, {k: en[k] for k in in_flagged if k in en}, a, b)
     pnl = lambda side, ks: sum((side.get(k) or {}).get("pnl") or 0 for k in ks)  # noqa: E731
