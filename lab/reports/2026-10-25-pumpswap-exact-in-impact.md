@@ -32,7 +32,10 @@ Baseline `44f9da2690be7535ed3bea7967f491b2e34be899`; geteste implementatie
 - Broncontrole: eerste 512 expliciete exact-in buys per SOL-pooloriëntatie in de bestaande
   DEVELOPMENT-chunk `[450576000,450792000)`, in chainvolgorde, zonder cashback.
   Geen selectie op afwijking of opbrengst. Oudere extracties hebben geen mint-accountkolommen;
-  oriëntatie komt uit de bestaande store. De onvoltooide eerste query bleef bewaard.
+  oriëntatie komt uit de bestaande store. Een controle vond twee niet-SOL-pools in de
+  eerste oriëntatiequery. De definitieve bronquery vereist ook `quote_class=sol`;
+  de kleine broncontrole is daarvoor herhaald, zonder planwijziging of nieuwe economische
+  replay. Alle eerdere query-uitvoer blijft bewaard. De tabel hieronder gebruikt de v2-bronselectie.
 - Economisch: eerste 32 verschillende F7 `(t,pool)`-signalen in de eerste bestaande
   DEVELOPMENT-partitie, zonder uitkomstfilter: 8 pools, slots 446531016–446568010.
   K3 blijft 0,5 SOL, TP 4%, maximaal 600 seconden, 600 ms gesimuleerde vertraging,
@@ -118,11 +121,15 @@ worden niet herschreven en de paperklok wordt niet gereset. Deze taak voert die 
   NAS `rustc 1.97.1` compileerde de actuele bronnen met bestaande proptest/PyO3-artefacten;
   beide Cargo.lock-bestanden zijn identiek aan hun artefactbron. Overflowchecks bleven aan.
   Het complete Rusttestprogramma en de werkelijke Pythonextension zijn uitgevoerd.
+- De eerste PR-policycheck weigerde de genegeerde mapnaam `tests/data`. De bytegelijke
+  fixtures staan nu onder `tests/fixtures`; beleid en fixtureverwijzingen zijn opnieuw gecontroleerd.
+  Geen policy- of CI-versoepeling.
 
 Bewijs buiten Git: `lab/research/pumpswap-exact-in-impact-20261025/` onder de OF1-root.
-`report.html` is de private leesweergave; `impact.json`, beide Pythonarmen en `new-rust.json`
-bevatten de exacte vergelijking. `REPRODUCE.md`, bronhashes en NAS-logs leggen de route vast.
-Impact-JSON SHA256: `b4e65d49ead2664eb4706a2b8f83cbb35540e8ed0de253b720a67d682902f718`.
+`report-v2.html` is de private leesweergave; `impact-v2.json`, de drie
+`*-source-v2.json`-bronarmen, beide economische Pythonarmen en `new-rust.json`
+bevatten de exacte vergelijking. `REPRODUCE-v2.md`, bronhashes en NAS-logs leggen de route vast.
+Impact-JSON SHA256: `10518c3a5ff26be16c0fe44357be3ffe7d9f038255dbef995103cb169802b99f`.
 
 **Oordeel:** echte afrondingsfout hersteld en bronpariteit aangetoond. De beperkte K3-selectie
 verandert economisch niet. Andere onderzoeksresultaten zijn hiermee niet universeel
