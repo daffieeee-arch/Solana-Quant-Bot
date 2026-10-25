@@ -93,13 +93,15 @@ def test_analytics_settles_with_the_same_failed_exits():
 def test_a_vault_capped_exit_with_dust_gets_the_rent_back():
     """Codex on c29c545, decided 2026-10-19: the exit burns the remainder and closes the account (costs.exit_net's doc),
     so a vault_capped exit settles as any other, in settle and in settle_sql. The dust case: a reversed pool (80 SOL,
-    3e14 tokens, fees 25+5 bps) sells all but 1 raw unit of 1,850,000,000,203 tokens; lab/core costs.rs
-    a_vault_capped_exit_with_dust_gets_the_rent_back pins the same numbers (Rust = Python)."""
+    3e14 tokens, fees 25+5 bps) sells all but 1 raw unit of 1,849,999,999,801 tokens; lab/core costs.rs
+    a_vault_capped_exit_with_dust_gets_the_rent_back pins the same numbers. Under exact-in rule 2,
+    initial net 1,844,466,600,000 + fees 4,611,166,500 + 922,233,300 leaves one unit.
+    The former input 1,850,000,000,203 now spends everything; no cost rule changes."""
     import struct
 
     from backtest.venues import Pool, rev_sell_token
 
-    held = 1_850_000_000_203
+    held = 1_849_999_999_801
     f = rev_sell_token(Pool(b=80_000_000_000, e=300_000_000_000_000, lp_bps=25, protocol_bps=5, creator_bps=0), held)
     assert (held - f.tokens, f.trader_quote) == (1, 488_852_188)  # vault_capped: f.tokens < held
     base = SCENARIOS[1]

@@ -56,8 +56,8 @@ class Scenario:
 
         The model's exit closes the token account (Codex review of c29c545, decided 2026-10-19): it burns any remainder
         and closes the account in the exit transaction, so the rent comes back and the remainder is worth 0. A remainder
-        is mostly fee dust (venues.rev_sell_token leaves 1-3 raw units in about sum(bps)/10,000 of reversed-pool exits,
-        flagged vault_capped). On-chain a non-native account closes only at a zero token amount, and the owner may burn
+        can be fee dust (venues.rev_sell_token can leave unspent raw units, flagged vault_capped). The earlier
+        1-3-unit frequency estimate used exact-in rule 1 and is not a claim about the corrected rule 2. On-chain a non-native account closes only at a zero token amount, and the owner may burn
         the rest first (SPL Token interface/src/instruction.rs CloseAccount, Burn); Token-2022 withheld transfer fees
         need the permissionless HarvestWithheldTokensToMint first (token-2022 interface/src/instruction.rs). So settle
         and settle_sql treat every exit as full, vault_capped or not; full_exit=False is for tests only."""
