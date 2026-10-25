@@ -1,5 +1,5 @@
 //! Exact integer fill math for the pump.fun bonding curve and PumpSwap pools: backtest/venues.py, byte for
-//! byte. Every formula there reproduces the logged amounts of all historical trades (validate_math.py):
+//! byte. Checked against recorded trades, not a claim of coverage of every protocol variant:
 //!
 //!   curve sell             q = floor(t * Vq / (Vt + t))
 //!   curve buy, exact out   q = floor(t * Vq / (Vt - t)) + 1
@@ -14,6 +14,9 @@
 //! after a fill keeps every other field of the state before it (Python's `dataclasses.replace`).
 
 pub const BPS: i128 = 10_000;
+/// Separate from settlement costs: rule 2 corrects zero-cashback PumpSwap exact-in only.
+/// Cashback retains its existing model, without a new source-parity claim.
+pub const POOL_EXACT_IN_RULE: u8 = 2;
 
 /// Python's `a // b`: the floor of the quotient, for either sign.
 pub fn floor_div(a: i128, b: i128) -> i128 {
@@ -166,10 +169,21 @@ impl Pool {
 
 /// Spend at most `budget` quote (fees included), like buy_exact_quote_in.
 pub fn pool_buy_exact_in(p: &Pool, budget: i128) -> Option<Fill<Pool>> {
-    if p.b <= 0 || p.e <= 0 {
+    if budget <= 0 || p.b <= 0 || p.e <= 0 {
         return None;
     }
-    let n = net_for_budget(budget, &p.fee_list());
+    let (n, lp, f) = if p.cashback_bps == 0 {
+        // Fees are fixed on the initial quotient BEFORE shaving the rounding excess.
+        // Source: pinned SDK buyQuoteInput and recorded events in tests/data/README.md.
+        let n = floor_div(budget * BPS, BPS + p.fee_list().iter().sum::<i128>());
+        let (lp, f) = p.fees(n);
+        (n - (n + f - budget).max(0), lp, f)
+    } else {
+        // Cashback is not established by that evidence; preserve its existing model.
+        let n = net_for_budget(budget, &p.fee_list());
+        let (lp, f) = p.fees(n);
+        (n, lp, f)
+    };
     if n <= 1 {
         return None;
     }
@@ -177,7 +191,6 @@ pub fn pool_buy_exact_in(p: &Pool, budget: i128) -> Option<Fill<Pool>> {
     if b <= 0 || b >= p.b {
         return None;
     }
-    let (lp, f) = p.fees(n);
     Some(Fill { tokens: b, curve_quote: n, fees: f, trader_quote: n + f, state: p.with(p.b - b, p.e + n + lp), completes: false })
 }
 
@@ -282,6 +295,33 @@ mod tests {
 
     fn pf(f: Option<Fill<Pool>>) -> Option<(i128, i128, i128, i128, i128, i128)> {
         f.map(|f| (f.tokens, f.curve_quote, f.fees, f.trader_quote, f.state.b, f.state.e))
+    }
+
+    #[test]
+    fn recorded_exact_in_source_amounts() {
+        let source = include_str!("../tests/data/pumpswap-exact-in.tsv");
+        let mut count = 0;
+        for row in source.lines().skip(1) {
+            let cols: Vec<_> = row.split('\t').collect();
+            let n = |i: usize| cols[i].parse::<i128>().unwrap();
+            let p = pool(n(7), n(8), n(10), n(11), n(12), 0, n(9));
+            let f = pool_buy_exact_in(&p, n(13)).unwrap();
+            assert_eq!((f.tokens, f.curve_quote, f.fees, f.trader_quote, f.state.b, f.state.e),
+                       (n(14), n(15), n(16) + n(17) + n(18), n(19), n(20), n(21)), "{row}");
+            assert_eq!(f.state.virt, p.virt);
+            count += 1;
+        }
+        assert_eq!(count, 18);
+    }
+
+    #[test]
+    fn cashback_retains_legacy_model_not_a_source_parity_claim() {
+        let p = pool(123305752584269, 151538264082, 20, 5, 95, 5, 17504872179);
+        assert_eq!(pf(pool_buy_exact_in(&p, 2585182)),
+                   Some((2077539380, 2553264, 31918, 2585182, 123303675044889, 151540822453)));
+        for budget in [-1, 0, 1, 2] {
+            assert!(pool_buy_exact_in(&Pool { cashback_bps: 0, ..p }, budget).is_none());
+        }
     }
 
     /// The values backtest/venues.py gives for the same inputs (computed 2026-10-16).
