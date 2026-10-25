@@ -246,7 +246,7 @@ class SameAsTheDailyReport(unittest.TestCase):
         self.assertIsNotNone(m, md)
         self.assertEqual((s["trades"], s["entry_failed"], s["days"]), tuple(int(x) for x in m.group(1, 2, 3)))
         self.assertEqual(f"{s['mean_sol_per_trade']:+.4f}", m.group(4))
-        self.assertEqual(s["verdict"], m.group(7))
+        self.assertEqual(s["verdict"] if s["assessment"]["applies"] else "no formal verdict", m.group(7))
         # One bootstrap (paper/stoprule.py) for both: the same interval, not one within a tolerance.
         self.assertEqual((f"{s['ci_lo']:+.4f}", f"{s['ci_hi']:+.4f}"), m.group(5, 6))
         m = re.search(r"- final ([\d.]+) SOL, max drawdown ([\d.]+)%, trades (\d+), skipped (\d+)", md)
