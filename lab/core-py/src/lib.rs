@@ -82,6 +82,7 @@ fn pool_withdraw(b: i128, e: i128, lp_bps: i128, protocol_bps: i128, creator_bps
 
 #[pymodule]
 fn labcore(m: &Bound<'_, PyModule>) -> PyResult<()> {
+    m.add("POOL_EXACT_IN_RULE", v::POOL_EXACT_IN_RULE)?;
     m.add_function(wrap_pyfunction!(fee, m)?)?;
     m.add_function(wrap_pyfunction!(net_for_budget, m)?)?;
     m.add_function(wrap_pyfunction!(curve_buy_exact_in, m)?)?;
