@@ -65,12 +65,18 @@ def clock_lines(clock, day, n_filled, verdict_):
 def assessment_lines(a):
     """The verdict's basis, assumptions and uncertainty (stoprule.assessment) as report lines."""
     b = a["basis"]
-    sol = lambda x: f"{x / 1e9:+.4f}"  # noqa: E731
+    sol = lambda x: "UNAVAILABLE" if x is None else f"{x / 1e9:+.4f}"  # noqa: E731
     ci = f"{sol(b['ci95_lamports'][0])} … {sol(b['ci95_lamports'][1])}" if b["ci95_lamports"] else "–"
-    lines = ["", "### What the verdict rests on", "",
+    lines = ["", "### What the verdict rests on" if a["applies"] else "### Descriptive measurement, no formal verdict", "",
              f"- {b['filled_trades']} filled trades (failed entries {b['failed_entries']}), {b['trading_days']} trading days"
              + (f", clock day {b['clock_day']}" if b["clock_day"] else "") + f"; net {sol(b['mean_lamports'])} SOL per "
              f"filled trade, 95 % interval {ci} SOL (day bootstrap, {b['draws']:,} draws, seed {b['seed']})"]
+    rule = b.get("settle_rule")
+    rules = b.get("settle_rules") or ([rule] if rule in (1, 2) else [])
+    lines.append("- recorded settlement rules: " + (", ".join(map(str, rules)) or "UNAVAILABLE")
+                 + (" (mixed historical models)" if rule == "mixed" else "")
+                 + "; historical P&L is unchanged. Rule 1 and rule 2 are not equivalent cost models; "
+                   "the Rust route still uses rule 1.")
     c = b["costs_lamports"]
     if c:
         expected = set(b.get("costs_expected") or ())
@@ -323,12 +329,13 @@ def daily_report(journal, day, watch_log=None):
     since = f"from the clock start {clock['date']}" if clock else "all paper days so far"
     lines += ["", f"## Stop-rule counter ({since}" + (f"; {', '.join(sorted(primary))} only" if primary else "") + ")", "",
               *([] if feed == "live" else ["- **a replay journal (a test), not live paper trading: a count, no decision**"]),
-              *clock_lines(clock, day, n_filled, verdict_),
+              *clock_lines(clock, day, n_filled, verdict_ if feed == "live" else "not applicable (replay/test)"),
               f"- trades {n_filled} (failed entries {len(traded) - n_filled}, their cost included), days {len(by_day)}, "
               f"net {'' if mean is None else f'{mean / 1e9:+.4f}'} SOL/trade, "
-              f"95% CI {ci}: **{verdict_}**",
-              *(assessment_lines(judged) if verdict_ in ("GO", "ADJUST", "STOP") else
-                [f"- the verdict comes with {MIN_TRADES} filled trades and {MIN_DAYS_CI} trading days"]),
+              f"95% CI {ci}: " + (f"**{verdict_}**" if judged["applies"] else
+                "**no formal verdict** — " + ("replay/test measurement" if feed != "live" else
+                 "warmup; no clock decision" if clock is None else "the clock/count requirements are not yet met")),
+              *assessment_lines(judged),
               "", f"## Capital simulation ({CAPITAL_SOL:g} SOL, at most {MAX_POSITIONS} positions; {since})", "",
               f"- final {final / 1e9:.3f} SOL, max drawdown {mdd * 100:.1f}%, trades {taken}, skipped {skipped}",
               "", "## Heartbeat", "",

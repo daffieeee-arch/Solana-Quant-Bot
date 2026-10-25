@@ -105,6 +105,32 @@ def test_the_verdict_shows_once_it_is_there_and_the_clock_ends_at_six_weeks(tmp_
         c, "2026-12-06", 150, "too few trades")[1]
 
 
+@pytest.mark.parametrize("feed,clock_start,formal", [
+    ("live", None, False), ("live", "2026-10-26", False),
+    ("live", "2026-10-16", True), ("replay", "2026-10-16", False),
+])
+def test_negative_warmup_is_not_published_as_a_formal_stop(tmp_path, feed, clock_start, formal):
+    j = _journal(tmp_path)
+    j.state("feed", json.dumps({"kind": feed}))
+    if clock_start:
+        j.state("clock_start", json.dumps({"date": clock_start, "reason": "fixture", "set_at": "2026-10-15T00:00:00Z"}))
+    for i in range(240):
+        day = f"2026-10-{16 + i % 6}"
+        _trade(j, "tp4_T600", 100 + i * 100, day, day, -1_000_000)
+    daily_report(j, "2026-10-21")
+    text = open(os.path.join(j.dir, "2026-10-21", "report.md")).read()
+    assert ("**STOP**" in text) == formal
+    assert ("**no formal verdict**" in text) == (not formal)
+    if clock_start != "2026-10-26":
+        assert "- trades 240" in text and "net -0.0010 SOL/trade" in text
+    else:
+        assert "- trades 0" in text and "not started, nothing counted yet" in text
+    assert "recorded settlement rules: 1" in text
+    assert "historical P&L is unchanged" in text
+    assert "segment latency does not prove" in text
+    j.close()
+
+
 def test_the_command_sets_and_shows_the_clock(tmp_path, capsys):
     with pytest.raises(SystemExit, match="no journal.sqlite"):
         clock.main(["--journal", str(tmp_path / "none")])
