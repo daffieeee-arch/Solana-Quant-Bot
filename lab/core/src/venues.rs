@@ -174,7 +174,7 @@ pub fn pool_buy_exact_in(p: &Pool, budget: i128) -> Option<Fill<Pool>> {
     }
     let (n, lp, f) = if p.cashback_bps == 0 {
         // Fees are fixed on the initial quotient BEFORE shaving the rounding excess.
-        // Source: pinned SDK buyQuoteInput and recorded events in tests/data/README.md.
+        // Source: pinned SDK buyQuoteInput and recorded events in tests/fixtures/README.md.
         let n = floor_div(budget * BPS, BPS + p.fee_list().iter().sum::<i128>());
         let (lp, f) = p.fees(n);
         (n - (n + f - budget).max(0), lp, f)
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn recorded_exact_in_source_amounts() {
-        let source = include_str!("../tests/data/pumpswap-exact-in.tsv");
+        let source = include_str!("../tests/fixtures/pumpswap-exact-in.tsv");
         let mut count = 0;
         for row in source.lines().skip(1) {
             let cols: Vec<_> = row.split('\t').collect();

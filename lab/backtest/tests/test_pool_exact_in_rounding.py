@@ -8,7 +8,7 @@ import pytest
 from backtest import venues as V
 from backtest.replay import PoolLeg, Tau, _rerun_pool
 
-FIXTURE = Path(__file__).resolve().parents[2] / 'core/tests/data/pumpswap-exact-in.tsv'
+FIXTURE = Path(__file__).resolve().parents[2] / 'core/tests/fixtures/pumpswap-exact-in.tsv'
 with FIXTURE.open() as f:
     ROWS = list(csv.DictReader(f, delimiter='\t'))
 

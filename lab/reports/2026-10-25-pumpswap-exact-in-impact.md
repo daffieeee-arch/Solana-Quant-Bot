@@ -17,7 +17,7 @@ ongewijzigd. Cashback behoudt zijn bestaande model; deze correctie valideert dat
 niet. Eventuele transferbelastingen of andere onbewezen varianten krijgen geen nieuwe
 pariteitsclaim. Pricing reserves zijn niet automatisch fysieke fee-vaultsaldi.
 
-Bronnen: [vastgepinde officiële SDK en authentieke regressies](../core/tests/data/README.md).
+Bronnen: [vastgepinde officiële SDK en authentieke regressies](../core/tests/fixtures/README.md).
 De 18 verwachtingen komen uit oorspronkelijke eventvelden, niet uit de private correctie.
 De bestaande 50.089 exacte private swapcontroles blijven aanvullend bewijs; deze taak
 herhaalt die hele LP-verwerking niet en presenteert ze niet als een nieuwe Rustmeting.
