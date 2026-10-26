@@ -17,7 +17,7 @@ def test_source_pinned_zero_cashback_pool_buys():
         rows = list(csv.DictReader(f, delimiter="\t"))
     assert len(rows) == 18
     con = duckdb.connect()
-    changed = 0
+    changed = boundary_rejections = 0
     for row in rows:
         b, e, budget = (int(row[k]) for k in ("b", "e", "budget"))
         lp, pr, cr = (int(row[k]) for k in ("lp_bps", "protocol_bps", "creator_bps"))
@@ -50,4 +50,7 @@ def test_source_pinned_zero_cashback_pool_buys():
                           "FROM (SELECT ?::HUGEINT AS budget, ?::HUGEINT AS lp, "
                           "?::HUGEINT AS pr, ?::HUGEINT AS cr)", (budget, lp, pr, cr)).fetchone()[0]
         changed += int(old != n)
+        old_tokens = b * (int(old) - 1) // (e + int(old) - 1)
+        boundary_rejections += int(old_tokens >= tokens + 1)
     assert changed > 0  # The regression must catch the old SQL calculation.
+    assert boundary_rejections > 0  # A min-out one token above source output must be refused.
