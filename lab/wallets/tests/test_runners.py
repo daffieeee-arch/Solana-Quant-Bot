@@ -183,7 +183,7 @@ def test_reversed_pool_f7_entry(tmp_path, monkeypatch):
     assert r["entry_slot"] == S + 20
     pre = states[0][1]
     fill = V.rev_buy_token(pre, SIZE)
-    assert abs(r["tokens"] - fill.tokens) <= 2 and abs(r["depth_sol"] * 1e9 - pre.b) < 1
+    assert r["tokens"] == fill.tokens and abs(r["depth_sol"] * 1e9 - pre.b) < 1
     marks = [(V.rev_sell_token(st, fill.tokens).trader_quote - TX) for _, st in states[1:]]
     assert r["n_marks"] == len(marks) and abs(r["mult_6h"] - max(marks) / (SIZE + TX)) < 1e-6 and abs(r["end_6h"] - marks[-1] / (SIZE + TX)) < 1e-6
     assert r["mult_6h"] > 1.2   # the 30 SOL buy at S + 40 lifts the mark
@@ -244,12 +244,12 @@ def test_thin_normal_pool_mark_includes_our_own_deposit(tmp_path, monkeypatch):
     con.execute(f"CREATE OR REPLACE TEMP TABLE mom AS SELECT '{M}' AS key, 'x' AS moment, {S + 110}::BIGINT AS t, 3::BIGINT AS d_slots, 9000::BIGINT AS h1, 54000::BIGINT AS h6, 150::BIGINT AS m1s, 750::BIGINT AS m5s")
     runners.entries(con, TX)
     runners.marks(con, TX, LO + 60_000)
-    venue, tokens, q_in, depth = con.execute("SELECT venue, tokens, q_in, depth FROM ent").fetchone()
+    venue, tokens, q_in, depth, cost = con.execute("SELECT venue, tokens, q_in, depth, cost FROM ent").fetchone()
     p0 = V.Pool(B0, e0, 20, 5, 5, 0, VIRT)
     fill = V.pool_buy_exact_in(p0, SIZE)
-    assert venue == "pool" and abs(int(tokens) - fill.tokens) <= 2 and int(depth) == REAL and int(depth) < SIZE
-    n = V.net_for_budget(SIZE, p0.fee_list)
-    assert int(q_in) == n
+    assert venue == "pool" and int(tokens) == fill.tokens and int(depth) == REAL and int(depth) < SIZE
+    n = fill.curve_quote
+    assert int(q_in) == n and int(cost) == fill.trader_quote + TX
     marks = dict(con.execute("SELECT slot, net FROM mk ORDER BY ord").fetchall())
     assert set(marks) == {S + 120, S + 200}
     # mark 1: state after the small buy; gross <= real + q_in -> the uncapped constant-product value (old code: capped at real 0.2 SOL)
