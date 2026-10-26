@@ -62,10 +62,11 @@ def triggers(con, clock):
     parts = []
     for cell, (k, n) in CELLS.items():
         win = f"greatest(1, round({n * 1000} / ({ms_case(clock, 'a.slot')})))::BIGINT"
-        # a buy is a candidate trigger when >= k-1 other distinct good wallets bought the key in the N s before it
+        # A buy is a candidate when >= k-1 other good traders bought within N s and strictly earlier in
+        # chain order. Different instructions in the same slot count; later instructions never leak back.
         con.execute(f"""CREATE OR REPLACE TEMP TABLE cand_{cell} AS
             SELECT a.key, a.slot, a.ord, {cool} AS cool
-            FROM gb a WHERE (SELECT count(DISTINCT b.trader) FROM gb b WHERE b.key = a.key AND b.trader <> a.trader AND b.slot < a.slot AND b.slot >= a.slot - {win}) >= {k - 1}
+            FROM gb a WHERE (SELECT count(DISTINCT b.trader) FROM gb b WHERE b.key = a.key AND b.trader <> a.trader AND b.ord < a.ord AND b.slot >= a.slot - {win}) >= {k - 1}
             ORDER BY a.key, a.ord""")
         # the cooldown: the first candidate per key, then the first one at least 60 min after the previous trigger
         rows = con.execute(f"SELECT key, slot, cool FROM cand_{cell} ORDER BY key, slot").fetchall()
