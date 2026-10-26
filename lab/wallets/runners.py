@@ -231,10 +231,24 @@ def _net_for_budget(budget, *bps):
     return f"(CASE {cases} ELSE {n0} END)"
 
 
+def _pool_net_from_initial(initial, budget, *bps):
+    """PumpSwap zero-cashback exact-in: keep fees on the initial quotient when shaving excess.
+
+    The source-pinned SDK and recorded events cover buy_exact_quote_in(_v2), not
+    bonding curves or cashback. Callers retain _net_for_budget for those paths.
+    """
+    return f"({initial} - greatest(0, {initial} + ({_pool_fees(initial, *bps)}) - ({budget})))"
+
+
+def _pool_fees(amount, *bps):
+    """Exact integer ceiling for source-proven zero-cashback pool fee components."""
+    return " + ".join(f"((({amount}) * {b} + {BPS - 1}) // {BPS})" for b in bps)
+
+
 def _pool_mark(pos, b, e, virt, q_in):
     """SQL: the gross SOL a full sell of `pos` tokens into a normal pool at the logged state (b tokens, e quote incl. the
     virtual part `virt`) can realise: the constant-product output e * pos // (b + pos), capped at the real quote reserve
-    e - virt plus our own deposit q_in (the logged states lack it: spec-runners-mark-cap-2026-10-24). The output grows
+    e - virt plus our own pricing-reserve increment q_in (the logged states lack it: spec-runners-mark-cap-2026-10-24). The output grows
     with the tokens sold, so the most any sell can take out of a real reserve R is min(out(pos), R), within e/b lamports
     above the largest sell the reserve can really pay (one token's worth of rounding); no token inversion
     (the R * b // virt inversion of #552 solved out(x) = R only for q_in = 0: Codex finding #3, 2026-10-24)."""
@@ -261,28 +275,45 @@ def entries(con, cost_tx):
             SELECT *,
               -- curve: net quote for the budget, tokens by the constant product on the pre-state, capped at the real tokens
               CASE WHEN venue = 'curve' THEN {_net_for_budget(f'{SIZE}::HUGEINT', 'fee_bps', 'creator_bps')} END::HUGEINT AS cq,
-              CASE WHEN venue = 'pool' AND orientation = 'normal' THEN {_net_for_budget(f'{SIZE}::HUGEINT', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS pn,
+              CASE WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0
+                   THEN ({SIZE}::HUGEINT * {BPS}) // ({BPS} + lp + pr + cr)
+                   WHEN venue = 'pool' AND orientation = 'normal'
+                   THEN {_net_for_budget(f'{SIZE}::HUGEINT', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS pn0,
               CASE WHEN venue = 'pool' AND orientation = 'reversed' THEN (e_pre * {SIZE}) // (b_pre + {SIZE}) END::HUGEINT AS rg
             FROM c),
         g AS (
+            SELECT *,
+              CASE WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0
+                   THEN {_pool_net_from_initial('pn0', f'{SIZE}::HUGEINT', 'lp', 'pr', 'cr')}
+                   ELSE pn0 END::HUGEINT AS pn,
+              CASE WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0 THEN {_pool_fees('pn0', 'lp', 'pr', 'cr')}
+                   WHEN venue = 'pool' AND orientation = 'normal' THEN {_fees('pn0', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS pool_fees,
+              CASE WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0
+                   THEN {_pool_fees('pn0', 'lp')} END::HUGEINT AS pool_lp_fee
+            FROM f),
+        h AS (
             SELECT *,
               CASE WHEN venue = 'curve' THEN least(rt_pre, ((cq - 1) * vt_pre) // (vq_pre + cq - 1))
                    WHEN orientation = 'normal' THEN (b_pre * (pn - 1)) // (e_pre + pn - 1)
                    WHEN rg <= e_pre - virt THEN rg - ({_fees('rg', 'lp', 'pr', 'cr', 'cb')}) END::HUGEINT AS tokens,
               CASE WHEN venue = 'curve' THEN rq_pre WHEN orientation = 'normal' THEN e_pre - virt ELSE b_pre END::HUGEINT AS depth
-            FROM f)
+            FROM g)
         SELECT key, moment, t, d_slots, h1, h6, m1s, m5s, ord AS entry_ord, slot AS entry_slot, venue, orientation, depth, tokens,
                -- the curve fill capped at the real tokens buys exactly rt_pre (curve_buy_exact_out): q = rt * vq // (vt - rt) + 1 plus fees
                CASE WHEN venue = 'curve' AND tokens = rt_pre
                     THEN (rt_pre * vq_pre) // (vt_pre - rt_pre) + 1 + ({_fees('(rt_pre * vq_pre) // (vt_pre - rt_pre) + 1', 'fee_bps', 'creator_bps')}) + {cost_tx}
+                    WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0 THEN pn + pool_fees + {cost_tx}
                     ELSE {SIZE} + {cost_tx} END::HUGEINT AS cost,
-               -- q_in: our own net deposit into the venue's real reserve (after the venue fees), which the logged states do not
-               -- contain; marks add it to the real reserve before capping a sell (spec-runners-mark-cap-2026-10-24.md)
+               -- q_in: our own increment to the venue's effective pricing reserve, absent from logged states.
+               -- For a source-proven normal pool buy this is net quote plus retained LP fee, not a claim about fee-vault state.
+               -- Marks include it before capping a sell (spec-runners-mark-cap-2026-10-24.md).
                CASE WHEN venue = 'curve' AND tokens = rt_pre THEN (rt_pre * vq_pre) // (vt_pre - rt_pre) + 1
                     WHEN venue = 'curve' THEN cq
+                    -- the source event and venue state increase effective quote by net input PLUS the retained LP fee
+                    WHEN orientation = 'normal' AND cb = 0 THEN pn + pool_lp_fee
                     WHEN orientation = 'normal' THEN pn
                     ELSE {SIZE} END::HUGEINT AS q_in
-        FROM g WHERE tokens IS NOT NULL AND tokens > 0 AND (venue = 'curve' OR orientation = 'reversed' OR tokens < b_pre)""")
+        FROM h WHERE tokens IS NOT NULL AND tokens > 0 AND (venue = 'curve' OR orientation = 'reversed' OR tokens < b_pre)""")
     progress(f"entries {_count(con, 'ent')} of {_count(con, 'mom')} moments (one per key x moment x t): " + str(con.execute("SELECT moment, venue, count(*) FROM ent GROUP BY 1, 2 ORDER BY 1, 2").fetchall()))
 
 
@@ -304,14 +335,21 @@ def marks(con, cost_tx, hi_ext):
               -- without q_in a position on a venue thinner than the budget is valued at the reserve: E71 section 3.3)
               CASE WHEN venue = 'curve' AND rt > 0 THEN least(rq + q_in, (pos * vq) // (vt + pos)) END::HUGEINT AS cq,
               CASE WHEN venue = 'pool' AND orientation = 'normal' AND b > 0 AND e > 0 THEN {_pool_mark('pos', 'b', 'e', 'virt', 'q_in')} END::HUGEINT AS pg,
-              CASE WHEN venue = 'pool' AND orientation = 'reversed' AND b > 0 AND e > 0 THEN {_net_for_budget('pos', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS rn
+              CASE WHEN venue = 'pool' AND orientation = 'reversed' AND b > 0 AND e > 0 AND cb = 0
+                   THEN (pos * {BPS}) // ({BPS} + lp + pr + cr)
+                   WHEN venue = 'pool' AND orientation = 'reversed' AND b > 0 AND e > 0
+                   THEN {_net_for_budget('pos', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS rn0
             FROM j),
+        r AS (
+            SELECT *, CASE WHEN venue = 'pool' AND orientation = 'reversed' AND cb = 0
+                           THEN {_pool_net_from_initial('rn0', 'pos', 'lp', 'pr', 'cr')}
+                           ELSE rn0 END::HUGEINT AS rn FROM q),
         n AS (
             SELECT key, moment, t, entry_ord, entry_slot, h1, cost, ord, slot, venue,
               CASE WHEN cq IS NOT NULL THEN greatest(0, cq - ({_fees('cq', 'fee_bps', 'creator_bps')})) - {cost_tx}
                    WHEN pg IS NOT NULL THEN greatest(0, pg - ({_fees('pg', 'lp', 'pr', 'cr', 'cb')})) - {cost_tx}
                    WHEN rn IS NOT NULL AND rn > 1 THEN (b * (rn - 1)) // (e + rn - 1) - {cost_tx} END::HUGEINT AS net
-            FROM q)
+            FROM r)
         SELECT * FROM n WHERE net IS NOT NULL""")
     progress(f"marks {_count(con, 'mk')}")
     # three simple exits on the same marks (modelaanname: the sell is at the state of the mark that triggers the rule, no

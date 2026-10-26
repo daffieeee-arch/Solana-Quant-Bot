@@ -167,6 +167,32 @@ def test_e73_triggers_k_distinct_wallets_and_cooldown():
     assert not any(k == "B" for _, k, _ in t)
 
 
+def test_e73_same_slot_buys_use_instruction_order_not_future_trades():
+    """Two selected traders in one slot are within 30 s; the earlier instruction cannot see the later one."""
+    import duckdb
+    from wallets.common import Clock
+    from wallets.probes import e73
+
+    con = duckdb.connect()
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("INSERT INTO meta VALUES (?)", ['{"ms_per_slot": {"1040": 250.0}}'])
+    lo = 1040 * 432_000
+    con.execute("CREATE TABLE gb (key VARCHAR, slot UBIGINT, ord UBIGINT, trader VARCHAR)")
+    con.executemany("INSERT INTO gb VALUES (?, ?, ?, ?)", [
+        ("same-slot", lo, lo * 1_000_000_000 + 100_000, "W1"),
+        ("same-slot", lo, lo * 1_000_000_000 + 200_000, "W2"),
+        ("same-wallet", lo, lo * 1_000_000_000 + 100_000, "W1"),
+        ("same-wallet", lo, lo * 1_000_000_000 + 200_000, "W1"),
+    ])
+    e73.triggers(con, Clock.from_store(con))
+    assert con.execute("SELECT key, slot, ord FROM cand_k2n30 ORDER BY key").fetchall() == [
+        ("same-slot", lo, lo * 1_000_000_000 + 200_000)
+    ]
+    assert con.execute("SELECT key, moment, t FROM trig_all WHERE moment = 'k2n30'").fetchall() == [
+        ("same-slot", "k2n30", lo)
+    ]
+
+
 def test_e73_good_set_threshold_is_5_sol_in_lamports(tmp_path):
     import duckdb
     import pyarrow as pa
