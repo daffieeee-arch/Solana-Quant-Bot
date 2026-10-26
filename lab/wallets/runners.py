@@ -248,7 +248,7 @@ def _pool_fees(amount, *bps):
 def _pool_mark(pos, b, e, virt, q_in):
     """SQL: the gross SOL a full sell of `pos` tokens into a normal pool at the logged state (b tokens, e quote incl. the
     virtual part `virt`) can realise: the constant-product output e * pos // (b + pos), capped at the real quote reserve
-    e - virt plus our own deposit q_in (the logged states lack it: spec-runners-mark-cap-2026-10-24). The output grows
+    e - virt plus our own pricing-reserve increment q_in (the logged states lack it: spec-runners-mark-cap-2026-10-24). The output grows
     with the tokens sold, so the most any sell can take out of a real reserve R is min(out(pos), R), within e/b lamports
     above the largest sell the reserve can really pay (one token's worth of rounding); no token inversion
     (the R * b // virt inversion of #552 solved out(x) = R only for q_in = 0: Codex finding #3, 2026-10-24)."""
@@ -287,7 +287,9 @@ def entries(con, cost_tx):
                    THEN {_pool_net_from_initial('pn0', f'{SIZE}::HUGEINT', 'lp', 'pr', 'cr')}
                    ELSE pn0 END::HUGEINT AS pn,
               CASE WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0 THEN {_pool_fees('pn0', 'lp', 'pr', 'cr')}
-                   WHEN venue = 'pool' AND orientation = 'normal' THEN {_fees('pn0', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS pool_fees
+                   WHEN venue = 'pool' AND orientation = 'normal' THEN {_fees('pn0', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS pool_fees,
+              CASE WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0
+                   THEN {_pool_fees('pn0', 'lp')} END::HUGEINT AS pool_lp_fee
             FROM f),
         h AS (
             SELECT *,
@@ -302,10 +304,13 @@ def entries(con, cost_tx):
                     THEN (rt_pre * vq_pre) // (vt_pre - rt_pre) + 1 + ({_fees('(rt_pre * vq_pre) // (vt_pre - rt_pre) + 1', 'fee_bps', 'creator_bps')}) + {cost_tx}
                     WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0 THEN pn + pool_fees + {cost_tx}
                     ELSE {SIZE} + {cost_tx} END::HUGEINT AS cost,
-               -- q_in: our own net deposit into the venue's real reserve (after the venue fees), which the logged states do not
-               -- contain; marks add it to the real reserve before capping a sell (spec-runners-mark-cap-2026-10-24.md)
+               -- q_in: our own increment to the venue's effective pricing reserve, absent from logged states.
+               -- For a source-proven normal pool buy this is net quote plus retained LP fee, not a claim about fee-vault state.
+               -- Marks include it before capping a sell (spec-runners-mark-cap-2026-10-24.md).
                CASE WHEN venue = 'curve' AND tokens = rt_pre THEN (rt_pre * vq_pre) // (vt_pre - rt_pre) + 1
                     WHEN venue = 'curve' THEN cq
+                    -- the source event and venue state increase effective quote by net input PLUS the retained LP fee
+                    WHEN orientation = 'normal' AND cb = 0 THEN pn + pool_lp_fee
                     WHEN orientation = 'normal' THEN pn
                     ELSE {SIZE} END::HUGEINT AS q_in
         FROM h WHERE tokens IS NOT NULL AND tokens > 0 AND (venue = 'curve' OR orientation = 'reversed' OR tokens < b_pre)""")
