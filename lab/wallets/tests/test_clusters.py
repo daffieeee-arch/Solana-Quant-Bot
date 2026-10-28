@@ -106,8 +106,9 @@ def test_sell_windows(tmp_path):
 def write_positions(run_dir, rows):
     os.makedirs(os.path.join(run_dir, "parts"))
     base = dict(segment="pool_reversed", farm="organic", variant="v", size_sol=0.5, d=1, day="2026-09-25",
-                venue="pool", mint="M", pool="P", skipped=False, entry_failed=False, cost=10**9, exit_attempts=1)
-    pq.write_table(pa.Table.from_pylist([dict(base, **r) for r in rows]), os.path.join(run_dir, "parts", "p.parquet"))
+                venue="pool", mint="M", pool="P", skipped=False, entry_failed=False, cost=10**9, exit_attempts=1, exit_reason="time")
+    pq.write_table(pa.Table.from_pylist([dict(base, exit_slot=r["t"] + 100, **r) for r in rows]),  # sold (costs.FILLED_SQL)
+                   os.path.join(run_dir, "parts", "p.parquet"))
 
 
 def test_veto_uses_only_the_past(tmp_path):

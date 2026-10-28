@@ -112,7 +112,7 @@ def engine(case, journal):
     eng = C1.Engine(FlipFeed(case), journal, p["risk"], variants=[C1.TP_T.get(v, v) for v in p["variants"]], d=p["d"],
                     d_ms=p["d_ms"], q=p["q"], n2_k=p["n2_k"], segments=p["segments"], farm=p["farm"], name=name,
                     groups=others, ignore_risk=False, clock=C1.Clock(case["clock"]), dev_bounds=tuple(case["dev_bounds"]),
-                    backup=False)
+                    backup=False, settle_rule=1)  # frozen golden corpus; current-rule behavior has separate fixtures
     if C1.groups_state(eng) != case["groups"]:
         raise ValueError(f"case {case['name']}: groups is not what the engine journals: {C1.groups_state(eng)}")
     return eng

@@ -5,7 +5,7 @@ has no legs, so it gets no hours here (a store with non-SOL market legs is a sep
 keeps every pool, so the 'other' pools stay countable as "not seen".
 NAS job (run with PYTHONPATH=lab in a scope; LAB_DATA for the data root, LAB_STORE for the store):
 
-  python -m wallets.explore.runner_hours OUT_DIR
+  python -m wallets.explore.runner_hours OUT_DIR [--forward]      (--forward: a forward store from epoch 1064 on, common.forward_guard)
 
 Per (pool, UTC hour) from the store's pool legs (the hour of a leg via the blocks table: the first slot of every hour, ASOF):
   close      the price after the hour's last trade (buy / sell / boost), in the quote per token: normal and other pools
@@ -19,13 +19,14 @@ Hours without a leg are absent (the census carries the previous close and depth 
 pool ranges (LAB_MARKOUT_BUCKETS) bound the working set, as markout.paid_buyers. Writes hours.parquet, pools.parquet
 (pool, quote_class, orientation, quote_mint, mint, create_slot), hour_bounds.parquet and run-runner-hours.json.
 """
+import argparse
 import json
 import os
 import re
 import sys
 import time
 
-from wallets.common import connect, git_commit, guard
+from wallets.common import connect, forward_guard, git_commit, guard, store_meta
 
 LAB = os.environ.get("LAB_DATA", "/home/chupa/Solana-project/data-old-faithful-one/lab")
 STORE = os.environ.get("LAB_STORE", f"{LAB}/store/dev2.duckdb")
@@ -78,18 +79,26 @@ def build(con, out, buckets):
     return n
 
 
-def main():
-    out = sys.argv[1]
-    os.makedirs(out, exist_ok=True)
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("out")
+    ap.add_argument("--forward", action="store_true", help="a forward store from epoch 1064 on instead of the dev-only guard")
+    a = ap.parse_args(argv)
+    out = a.out
     t0 = time.time()
     con = connect(STORE, memory=os.environ.get("LAB_WALLETS_MEMORY", "1500MB"), threads=int(os.environ.get("LAB_WALLETS_THREADS", "2")))
-    end_slot = int(json.loads(con.execute("SELECT json FROM meta").fetchone()[0])["slot_end_exclusive"])
-    guard(end_slot)  # development only: the store ends before the hold-out
+    meta = store_meta(con)
+    end_slot = int(meta["slot_end_exclusive"])
+    if a.forward:
+        forward_guard(int(meta["slot_start"]), end_slot, meta)  # the whole store: a forward store from 1064 on
+    else:
+        guard(end_slot)  # development only: the store ends before the hold-out
+    os.makedirs(out, exist_ok=True)
     nh, h0, h1 = hour_bounds(con)
     print(f"{nh} hours in blocks", file=sys.stderr, flush=True)
     n_rows, n_pools, n_null_close = build(con, out, int(os.environ.get("LAB_MARKOUT_BUCKETS", "4")))
     per_class = dict(con.execute("SELECT po.quote_class, count(*) FROM hours h JOIN pm po USING (pool) GROUP BY 1").fetchall())
-    info = {"rows": n_rows, "pools": n_pools, "null_close_hours": n_null_close, "pool_hours_per_class": per_class, "hours": nh, "pool_prefix": os.environ.get("LAB_RUNNER_POOL_PREFIX", ""), "hour_first": h0, "hour_last": h1, "store": STORE, "slot_end_exclusive": end_slot, "commit": git_commit(), "seconds": round(time.time() - t0, 1)}
+    info = {"rows": n_rows, "pools": n_pools, "null_close_hours": n_null_close, "pool_hours_per_class": per_class, "hours": nh, "pool_prefix": os.environ.get("LAB_RUNNER_POOL_PREFIX", ""), "hour_first": h0, "hour_last": h1, "store": STORE, "period": meta.get("period"), "forward": a.forward, "slot_end_exclusive": end_slot, "commit": git_commit(), "seconds": round(time.time() - t0, 1)}
     with open(f"{out}/run-runner-hours.json", "w") as f:
         json.dump(info, f, indent=1)
     print(json.dumps(info))

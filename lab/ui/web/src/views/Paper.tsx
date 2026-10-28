@@ -35,7 +35,7 @@ const ASSUMPTION: Record<string, (a: PaperAssessmentItem) => string> = {
     ? `Landing is gesimuleerd: elke transactie landt met kans ${pct(a.land_prob)}; een mislukte poging kost de fee van een mislukte transactie.`
     : "Landing is gesimuleerd.",
   delay: (a) => a.d_ms != null
-    ? `De instap komt ${n0(a.d_ms)} ms na het signaal${a.q != null ? `, op positie ${a.q.toLocaleString("nl-NL")} in het slot` : ""}.`
+    ? `De gesimuleerde instap komt ${n0(a.d_ms)} ms na het signaal${a.q != null ? `, op positie ${a.q.toLocaleString("nl-NL")} in het slot` : ""}. Segmentvertraging bewijst geen uitvoerbare streamvertraging of fill.`
     : "De instapvertraging is die uit de configuratie van de engine.",
   regime: (a) => `${n0(a.after_switch ?? 0)} van de ${n0(a.trades ?? 0)} instappen zijn na de Alpenglow-overgang (epoch 1064).`,
 };
@@ -172,11 +172,13 @@ function Assessment({ j }: { j: PaperJournal }) {
   const s = j.stop_rule, a = s.assessment, b = a.basis, v = VERDICT[a.verdict];
   const sol = (x: number) => `${x > 0 ? "+" : x < 0 ? "−" : ""}${Math.abs(x).toLocaleString("nl-NL", { minimumFractionDigits: 4, maximumFractionDigits: 4 })} SOL`;
   const costs = b.costs_sol ? Object.entries(b.costs_sol) : [];
-  const verdictText = j.test_run ? "test, geen paper trading" : !a.applies && v ? `${v.text} (telt nog niet)` : v?.text ?? waitText(s) ?? a.verdict;
+  const verdictText = j.test_run ? "test, geen paper trading" : !s.clock ? "voorloopmeting · geen formeel oordeel"
+    : !a.applies ? "nog geen formeel oordeel" : v?.text ?? waitText(s) ?? a.verdict;
+  const rules = b.settle_rules ?? (b.settle_rule === 1 || b.settle_rule === 2 ? [b.settle_rule] : []);
   return (
     <Panel className="lg:col-span-3">
       <div className="flex flex-wrap items-center gap-2 mb-1">
-        <h2 className="m-0 text-[13px] font-extrabold">Oordeel: waarop het rust</h2>
+        <h2 className="m-0 text-[13px] font-extrabold">{a.applies ? "Oordeel: waarop het rust" : "Beschrijvende meting"}</h2>
         {j.test_run ? <TestLabel j={j} /> : a.applies && v ? <Badge tone={v.tone}>{v.text}</Badge> : <Badge tone="muted">{verdictText}</Badge>}
       </div>
       <p className="m-0 my-2 px-3 py-2 rounded-lg bg-warn-soft border border-warn-line text-warn text-[13px] font-bold">{a.not_permission}</p>
@@ -193,6 +195,8 @@ function Assessment({ j }: { j: PaperJournal }) {
         </div>
         <div>
           <h3 className="m-0 mb-1 text-xs font-extrabold text-fg-2">Kosten (naast de fill-prijzen)</h3>
+          <Line k="Geboekte kostenregel">{rules.length ? rules.join(" + ") : "onbekend"}{b.settle_rule === "mixed" ? " (gemengd)" : ""}</Line>
+          <p className="m-0 my-1 text-[11px] text-muted">Historische P&amp;L blijft ongewijzigd. Regel 1 en 2 zijn verschillende kostenmodellen. De Rust-route gebruikt nog regel 1.</p>
           {costs.length ? costs.map(([k, x]) => <Line key={k} k={COSTS[k] ?? k}>{x.toLocaleString("nl-NL", { maximumFractionDigits: 4 })} SOL</Line>)
             : <p className="m-0 text-xs text-muted">Geen kostenscenario in het journaal.</p>}
           <p className="m-0 mt-1 text-[11px] text-muted">De fees van pool en curve zitten al in de fill-prijzen.</p>

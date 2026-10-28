@@ -14,7 +14,10 @@ when nothing can fill there (curve complete without a pool state yet, empty pool
 
 Measures per entry: the mark at every trade from the entry trade on (its post-state) up to 6 h = the net SOL of a
 full sell of the position at that state (price impact, venue fees, network cost; capped at the real SOL of the
-venue, as the engine's pool_sell_capped / curve_sell do). mult_1h / mult_6h = the highest mark / cost within 1 h /
+venue state PLUS our own net deposit q_in, since 2026-10-24 (spec-runners-mark-cap-2026-10-24.md; before, the cap was the
+logged reserve alone and valued a position on a venue thinner than the budget at that reserve: E71 section 3.3; reversed
+pools are deliberately unchanged: their constant-product payout is always below b; the sell itself follows the engine's
+pool_sell_capped / curve_sell). mult_1h / mult_6h = the highest mark / cost within 1 h /
 6 h, t_max the minutes from the entry to that mark, end_6h the mark at the last trade within 6 h, dd_6h the lowest
 mark before the maximum. After the curve completes, the mint's SOL pool prices the position (its own state).
 Three simple exits on the same marks, as multiples of the cost (x_tp2: the first mark >= 2 x cost; x_tr30 / x_tr50:
@@ -50,7 +53,7 @@ import os
 import sys
 import time
 
-from .common import EPOCH_SLOTS, HOLDOUT_START, OUT_ROOT, SOL, Clock, connect, git_commit, regime_label
+from .common import EPOCH_SLOTS, HOLDOUT_START, OUT_ROOT, SOL, Clock, connect, forward_guard, git_commit, guard, regime_label, store_meta
 from .markout import ms_case
 
 MOMENTS_MIN = {"c1": 1, "c5": 5, "c15": 15}
@@ -83,11 +86,36 @@ def tx_cost(cfg_path=DEFAULTS):
         return 705_000
 
 
+CAP = HOLDOUT_START  # the slot no mark horizon crosses: the hold-out start on dev, the store's end on a released forward store
+
+
+def window(con, lo, hi, forward=False):
+    """The window's guard, called first by every entry point. Dev (default): common.guard, every slot before the hold-out,
+    horizons capped at the hold-out start. forward=True (owner decision 2026-10-24, OF1 from epoch 1064 on): common.forward_guard
+    -- a forward store that starts at or after FORWARD_START with [lo, hi) inside it -- and horizons capped at the store's end.
+    Sets the module cap that horizon() and the `cut` flag read."""
+    global CAP
+    if forward:
+        meta = store_meta(con)
+        if meta.get("period") != "forward" or "slot_start" not in meta or "slot_end_exclusive" not in meta:
+            raise ValueError(f"forward=True reads forward stores only (this store's period: {meta.get('period')!r}, window fields "
+                             f"{'present' if 'slot_start' in meta else 'missing'})")
+        forward_guard(lo, hi, meta)
+        CAP = int(meta["slot_end_exclusive"])
+    else:
+        guard(hi)
+        CAP = HOLDOUT_START
+
+
+def horizon(con, hi, clock):
+    """hi_ext: the mark horizon (H6_MS after the window's last slot), never past the window's cap (window())."""
+    h6 = f"greatest(1, round({H6_MS} / ({ms_case(clock, str(hi - 1))})))::BIGINT"
+    return min(CAP, hi + int(con.execute(f"SELECT {h6}").fetchone()[0]) + 10)
+
+
 def setup(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
     """Tokens, legs (curve and pool, with pre- and post-states) and the moments of the window."""
-    ms = ms_case(clock, "slot")
-    h6 = f"greatest(1, round({H6_MS} / ({ms_case(clock, str(hi - 1))})))::BIGINT"
-    hi_ext = min(HOLDOUT_START, hi + int(con.execute(f"SELECT {h6}").fetchone()[0]) + 10)
+    hi_ext = horizon(con, hi, clock)
     # tokens: mints created in the window, with their first SOL pool
     con.execute(f"""CREATE OR REPLACE TEMP TABLE tok AS
         SELECT m.mint AS key, m.mint, m.create_slot, m.creator, m.mayhem, m.complete_slot, true AS has_curve,
@@ -106,6 +134,14 @@ def setup(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
             WHERE f.family = 'F7' AND f.variant = 'tp4_T600' AND f.d = 1 AND f.size_sol = 0.5 AND f.q = 0.5
               AND f.t >= {lo} AND f.t < {hi} AND f.pool NOT IN (SELECT key FROM tok)""")
     progress(f"tok {_count(con, 'tok')} (mints {lo}..{hi}, pools of F7 triggers)")
+    legs(con, lo, hi_ext)
+    moments(con, lo, hi, clock, f7_parts, m1x_triggers)
+    return hi_ext
+
+
+def legs(con, lo, hi_ext, mayhem_curve=False):
+    """cl / pl from the tok table: curve and pool legs with pre- and post-states. Mayhem curve legs only when asked
+    (wallets.probes E71, a labelled model assumption: our buy does not change the Mayhem agent's resets)."""
     # curve legs: the mint's constant vq offset from its event rows; fee tiers = the mint's modal event tiers
     # curve legs of the non-mayhem mints: the logged post-state and the pre-state (streams.py), fee tiers from the row
     con.execute(f"""CREATE OR REPLACE TEMP TABLE cl AS
@@ -118,20 +154,21 @@ def setup(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
                CASE WHEN c.is_buy THEN c.rt + c.t ELSE c.rt - c.t END::HUGEINT AS rt_pre,
                CASE WHEN c.is_buy THEN c.rq - c.q ELSE c.rq + c.q END::HUGEINT AS rq_pre,
                COALESCE(c.fee_bps, 0) AS fee_bps, COALESCE(c.creator_bps, 0) AS creator_bps
-        FROM curve c JOIN tok t ON t.mint = c.mint AND t.has_curve AND NOT COALESCE(t.mayhem, false) WHERE c.slot >= {lo} AND c.slot < {hi_ext}""")
+        FROM curve c JOIN tok t ON t.mint = c.mint AND t.has_curve AND (NOT COALESCE(t.mayhem, false) OR {str(bool(mayhem_curve)).lower()}) WHERE c.slot >= {lo} AND c.slot < {hi_ext}""")
     progress(f"curve legs {_count(con, 'cl')}")
     # pool legs: post-states as streams.pool_leg (buy / sell: b -/+ base, e + e_delta; boost: b - base, e + e_delta;
     # withdraw / deposit: vault + last virtual quote -/+ quote_user, b -/+ base); the pre-state of a trade is the row
     con.execute(f"""CREATE OR REPLACE TEMP TABLE pl AS
         WITH raw AS (
             SELECT t.key, p.pool, p.slot, p.tx_index, p.outer_ix, p.inner_ix, p.kind, p.b, p.e, p.vault, COALESCE(p.vq, 0) AS vq, p.base, p.e_delta, p.quote_user,
-                   p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps, p.token_buy, p.sol_amount, p.token_amount, p.trader, p.fee_payer, p.farmer, t.orientation
+                   p.lp_bps, p.protocol_bps, p.creator_bps, p.cashback_bps, p.token_buy, p.sol_amount, p.token_amount, p.trader, p.fee_payer, p.farmer, t.orientation,
+                   p.slot * 1000000000 + p.tx_index * 100000 + p.outer_ix * 1000 + p.inner_ix AS ord
             FROM pool p JOIN tok t ON t.pool = p.pool WHERE p.slot >= {lo} AND p.slot < {hi_ext} AND p.kind IN ('buy', 'sell', 'boost', 'withdraw', 'deposit')),
         trades AS (
             SELECT *, b AS b_pre, e AS e_pre, CASE WHEN kind = 'sell' THEN b + base ELSE b - base END AS b_post, e + e_delta AS e_post, vq AS virt,
                    COALESCE(lp_bps, 0) AS lp, COALESCE(protocol_bps, 0) AS pr, COALESCE(creator_bps, 0) AS cr, COALESCE(cashback_bps, 0) AS cb
             FROM raw WHERE kind IN ('buy', 'sell')),
-        virts AS (SELECT key, slot, tx_index, outer_ix, inner_ix, vq AS virt FROM raw WHERE kind IN ('buy', 'sell', 'boost')),
+        virts AS (SELECT key, ord, vq AS virt FROM raw WHERE kind IN ('buy', 'sell', 'boost')),
         others AS (
             SELECT o.*, NULL::BIGINT AS b_pre, NULL::BIGINT AS e_pre,
                    CASE WHEN o.kind = 'deposit' THEN o.b + o.base ELSE o.b - o.base END AS b_post,
@@ -139,14 +176,21 @@ def setup(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
                         ELSE o.vault + COALESCE(v.virt, 0) + o.quote_user END AS e_post,
                    CASE WHEN o.kind = 'boost' THEN o.vq ELSE COALESCE(v.virt, 0) END AS virt,
                    COALESCE(t.lp, 0) AS lp, COALESCE(t.pr, 0) AS pr, COALESCE(t.cr, 0) AS cr, COALESCE(t.cb, 0) AS cb
+            -- the fee tiers (and the virtual quote) of a boost / withdraw / deposit row come from the LAST TRADE BEFORE IT in the full
+            -- transaction order (ord), not from any trade in the same slot: an ASOF on the slot alone was a tie among the slot's trades
+            -- and picked one at random per run (E75 A/B, 2026-10-24: three creator tiers in one slot gave peak marks 5 bps apart)
             FROM (SELECT * FROM raw WHERE kind IN ('boost', 'withdraw', 'deposit')) o
-            ASOF LEFT JOIN trades t ON t.key = o.key AND o.slot >= t.slot
-            ASOF LEFT JOIN virts v ON v.key = o.key AND o.slot >= v.slot)
-        SELECT key, 'pool' AS venue, orientation, slot * 1000000000 + tx_index * 100000 + outer_ix * 1000 + inner_ix AS ord, slot, tx_index, kind,
+            ASOF LEFT JOIN trades t ON t.key = o.key AND o.ord > t.ord
+            ASOF LEFT JOIN virts v ON v.key = o.key AND o.ord > v.ord)
+        SELECT key, 'pool' AS venue, orientation, ord, slot, tx_index, kind,
                kind IN ('buy', 'sell') AS trade, token_buy AS is_buy, sol_amount::HUGEINT AS sol, token_amount::HUGEINT AS tokens, trader, fee_payer, COALESCE(farmer, false) AS farmer,
                b_pre::HUGEINT AS b_pre, e_pre::HUGEINT AS e_pre, b_post::HUGEINT AS b_post, e_post::HUGEINT AS e_post, virt::HUGEINT AS virt, lp, pr, cr, cb
         FROM (SELECT * FROM trades UNION ALL SELECT * FROM others)""")
     progress(f"pool legs {_count(con, 'pl')}")
+
+
+def moments(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
+    """trades_all, moments and mom (c1 / c5 / c15 and the f7 / m1 triggers) from tok, cl and pl."""
     # the moments: c1 / c5 / c15 = the first trade (any venue) whose block time is >= create time + X min; f7 / m1 / m1e = triggers
     con.execute(f"""CREATE OR REPLACE TEMP TABLE trades_all AS
         SELECT key, ord, slot, is_buy, sol, tokens, trader, fee_payer, farmer, tx_index FROM cl
@@ -172,7 +216,6 @@ def setup(con, lo, hi, clock, f7_parts=None, m1x_triggers=None):
                greatest(1, round(60000 / ({ms_case(clock, 'm.t')})))::BIGINT AS m1s, greatest(1, round(300000 / ({ms_case(clock, 'm.t')})))::BIGINT AS m5s
         FROM moments m""")
     progress(f"moments {_count(con, 'mom')}: " + str(con.execute("SELECT moment, count(*) FROM mom GROUP BY 1 ORDER BY 1").fetchall()))
-    return hi_ext
 
 
 def _fees(x, *bps):
@@ -186,6 +229,30 @@ def _net_for_budget(budget, *bps):
     n0 = f"((({budget}) - {k}) * {BPS}) // ({BPS} + {' + '.join(str(b) for b in bps)})"
     cases = " ".join(f"WHEN ({n0} + {j}) + ({_fees(f'{n0} + {j}', *bps)}) <= ({budget}) THEN {n0} + {j}" for j in range(k, 0, -1))
     return f"(CASE {cases} ELSE {n0} END)"
+
+
+def _pool_net_from_initial(initial, budget, *bps):
+    """PumpSwap zero-cashback exact-in: keep fees on the initial quotient when shaving excess.
+
+    The source-pinned SDK and recorded events cover buy_exact_quote_in(_v2), not
+    bonding curves or cashback. Callers retain _net_for_budget for those paths.
+    """
+    return f"({initial} - greatest(0, {initial} + ({_pool_fees(initial, *bps)}) - ({budget})))"
+
+
+def _pool_fees(amount, *bps):
+    """Exact integer ceiling for source-proven zero-cashback pool fee components."""
+    return " + ".join(f"((({amount}) * {b} + {BPS - 1}) // {BPS})" for b in bps)
+
+
+def _pool_mark(pos, b, e, virt, q_in):
+    """SQL: the gross SOL a full sell of `pos` tokens into a normal pool at the logged state (b tokens, e quote incl. the
+    virtual part `virt`) can realise: the constant-product output e * pos // (b + pos), capped at the real quote reserve
+    e - virt plus our own pricing-reserve increment q_in (the logged states lack it: spec-runners-mark-cap-2026-10-24). The output grows
+    with the tokens sold, so the most any sell can take out of a real reserve R is min(out(pos), R), within e/b lamports
+    above the largest sell the reserve can really pay (one token's worth of rounding); no token inversion
+    (the R * b // virt inversion of #552 solved out(x) = R only for q_in = 0: Codex finding #3, 2026-10-24)."""
+    return f"least(({e}) * ({pos}) // (({b}) + ({pos})), greatest(0, ({e}) - ({virt}) + ({q_in})))"
 
 
 def entries(con, cost_tx):
@@ -208,22 +275,45 @@ def entries(con, cost_tx):
             SELECT *,
               -- curve: net quote for the budget, tokens by the constant product on the pre-state, capped at the real tokens
               CASE WHEN venue = 'curve' THEN {_net_for_budget(f'{SIZE}::HUGEINT', 'fee_bps', 'creator_bps')} END::HUGEINT AS cq,
-              CASE WHEN venue = 'pool' AND orientation = 'normal' THEN {_net_for_budget(f'{SIZE}::HUGEINT', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS pn,
+              CASE WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0
+                   THEN ({SIZE}::HUGEINT * {BPS}) // ({BPS} + lp + pr + cr)
+                   WHEN venue = 'pool' AND orientation = 'normal'
+                   THEN {_net_for_budget(f'{SIZE}::HUGEINT', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS pn0,
               CASE WHEN venue = 'pool' AND orientation = 'reversed' THEN (e_pre * {SIZE}) // (b_pre + {SIZE}) END::HUGEINT AS rg
             FROM c),
         g AS (
+            SELECT *,
+              CASE WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0
+                   THEN {_pool_net_from_initial('pn0', f'{SIZE}::HUGEINT', 'lp', 'pr', 'cr')}
+                   ELSE pn0 END::HUGEINT AS pn,
+              CASE WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0 THEN {_pool_fees('pn0', 'lp', 'pr', 'cr')}
+                   WHEN venue = 'pool' AND orientation = 'normal' THEN {_fees('pn0', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS pool_fees,
+              CASE WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0
+                   THEN {_pool_fees('pn0', 'lp')} END::HUGEINT AS pool_lp_fee
+            FROM f),
+        h AS (
             SELECT *,
               CASE WHEN venue = 'curve' THEN least(rt_pre, ((cq - 1) * vt_pre) // (vq_pre + cq - 1))
                    WHEN orientation = 'normal' THEN (b_pre * (pn - 1)) // (e_pre + pn - 1)
                    WHEN rg <= e_pre - virt THEN rg - ({_fees('rg', 'lp', 'pr', 'cr', 'cb')}) END::HUGEINT AS tokens,
               CASE WHEN venue = 'curve' THEN rq_pre WHEN orientation = 'normal' THEN e_pre - virt ELSE b_pre END::HUGEINT AS depth
-            FROM f)
+            FROM g)
         SELECT key, moment, t, d_slots, h1, h6, m1s, m5s, ord AS entry_ord, slot AS entry_slot, venue, orientation, depth, tokens,
                -- the curve fill capped at the real tokens buys exactly rt_pre (curve_buy_exact_out): q = rt * vq // (vt - rt) + 1 plus fees
                CASE WHEN venue = 'curve' AND tokens = rt_pre
                     THEN (rt_pre * vq_pre) // (vt_pre - rt_pre) + 1 + ({_fees('(rt_pre * vq_pre) // (vt_pre - rt_pre) + 1', 'fee_bps', 'creator_bps')}) + {cost_tx}
-                    ELSE {SIZE} + {cost_tx} END::HUGEINT AS cost
-        FROM g WHERE tokens IS NOT NULL AND tokens > 0 AND (venue = 'curve' OR orientation = 'reversed' OR tokens < b_pre)""")
+                    WHEN venue = 'pool' AND orientation = 'normal' AND cb = 0 THEN pn + pool_fees + {cost_tx}
+                    ELSE {SIZE} + {cost_tx} END::HUGEINT AS cost,
+               -- q_in: our own increment to the venue's effective pricing reserve, absent from logged states.
+               -- For a source-proven normal pool buy this is net quote plus retained LP fee, not a claim about fee-vault state.
+               -- Marks include it before capping a sell (spec-runners-mark-cap-2026-10-24.md).
+               CASE WHEN venue = 'curve' AND tokens = rt_pre THEN (rt_pre * vq_pre) // (vt_pre - rt_pre) + 1
+                    WHEN venue = 'curve' THEN cq
+                    -- the source event and venue state increase effective quote by net input PLUS the retained LP fee
+                    WHEN orientation = 'normal' AND cb = 0 THEN pn + pool_lp_fee
+                    WHEN orientation = 'normal' THEN pn
+                    ELSE {SIZE} END::HUGEINT AS q_in
+        FROM h WHERE tokens IS NOT NULL AND tokens > 0 AND (venue = 'curve' OR orientation = 'reversed' OR tokens < b_pre)""")
     progress(f"entries {_count(con, 'ent')} of {_count(con, 'mom')} moments (one per key x moment x t): " + str(con.execute("SELECT moment, venue, count(*) FROM ent GROUP BY 1, 2 ORDER BY 1, 2").fetchall()))
 
 
@@ -236,23 +326,30 @@ def marks(con, cost_tx, hi_ext):
             UNION ALL
             SELECT key, ord, slot, 'pool', orientation, NULL, NULL, NULL, NULL, NULL, NULL, b_post, e_post, virt, lp, pr, cr, cb FROM pl),
         j AS (
-            SELECT e.key, e.moment, e.t, e.entry_ord, e.entry_slot, e.h1, e.cost, e.tokens AS pos, s.ord, s.slot, s.venue, s.orientation,
+            SELECT e.key, e.moment, e.t, e.entry_ord, e.entry_slot, e.h1, e.cost, e.tokens AS pos, e.q_in, s.ord, s.slot, s.venue, s.orientation,
                    s.vt, s.vq, s.rt, s.rq, s.fee_bps, s.creator_bps, s.b, s.e, s.virt, s.lp, s.pr, s.cr, s.cb
             FROM ent e JOIN st s ON s.key = e.key AND s.ord >= e.entry_ord AND s.slot <= e.entry_slot + e.h6),
         q AS (
             SELECT *,
-              CASE WHEN venue = 'curve' AND rt > 0 THEN least(rq, (pos * vq) // (vt + pos)) END::HUGEINT AS cq,
-              CASE WHEN venue = 'pool' AND orientation = 'normal' AND b > 0 AND e > 0
-                   THEN CASE WHEN (e * pos) // (b + pos) <= e - virt THEN (e * pos) // (b + pos)
-                             WHEN e > e - virt THEN (e * (((e - virt) * b) // virt)) // (b + ((e - virt) * b) // virt) END END::HUGEINT AS pg,
-              CASE WHEN venue = 'pool' AND orientation = 'reversed' AND b > 0 AND e > 0 THEN {_net_for_budget('pos', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS rn
+              -- the real reserve available to our sell = the logged reserve + our own deposit q_in (the logged states lack it;
+              -- without q_in a position on a venue thinner than the budget is valued at the reserve: E71 section 3.3)
+              CASE WHEN venue = 'curve' AND rt > 0 THEN least(rq + q_in, (pos * vq) // (vt + pos)) END::HUGEINT AS cq,
+              CASE WHEN venue = 'pool' AND orientation = 'normal' AND b > 0 AND e > 0 THEN {_pool_mark('pos', 'b', 'e', 'virt', 'q_in')} END::HUGEINT AS pg,
+              CASE WHEN venue = 'pool' AND orientation = 'reversed' AND b > 0 AND e > 0 AND cb = 0
+                   THEN (pos * {BPS}) // ({BPS} + lp + pr + cr)
+                   WHEN venue = 'pool' AND orientation = 'reversed' AND b > 0 AND e > 0
+                   THEN {_net_for_budget('pos', 'lp', 'pr', 'cr', 'cb')} END::HUGEINT AS rn0
             FROM j),
+        r AS (
+            SELECT *, CASE WHEN venue = 'pool' AND orientation = 'reversed' AND cb = 0
+                           THEN {_pool_net_from_initial('rn0', 'pos', 'lp', 'pr', 'cr')}
+                           ELSE rn0 END::HUGEINT AS rn FROM q),
         n AS (
             SELECT key, moment, t, entry_ord, entry_slot, h1, cost, ord, slot, venue,
               CASE WHEN cq IS NOT NULL THEN greatest(0, cq - ({_fees('cq', 'fee_bps', 'creator_bps')})) - {cost_tx}
                    WHEN pg IS NOT NULL THEN greatest(0, pg - ({_fees('pg', 'lp', 'pr', 'cr', 'cb')})) - {cost_tx}
                    WHEN rn IS NOT NULL AND rn > 1 THEN (b * (rn - 1)) // (e + rn - 1) - {cost_tx} END::HUGEINT AS net
-            FROM q)
+            FROM r)
         SELECT * FROM n WHERE net IS NOT NULL""")
     progress(f"marks {_count(con, 'mk')}")
     # three simple exits on the same marks (modelaanname: the sell is at the state of the mark that triggers the rule, no
@@ -332,7 +429,7 @@ def assemble(con, clock, lo):
                COALESCE(a.x_tp2, a.last_net) / e.cost::DOUBLE AS x_tp2, COALESCE(a.x_tr30, a.last_net) / e.cost::DOUBLE AS x_tr30,
                COALESCE(a.x_tr50, a.last_net) / e.cost::DOUBLE AS x_tr50,
                (a.last_slot - e.entry_slot) * ({ms_case(clock, 'e.entry_slot')}) / 60000.0 AS last_min,
-               e.h6 AS h6_slots, e.entry_slot + e.h6 >= {HOLDOUT_START} AS cut,
+               e.h6 AS h6_slots, e.entry_slot + e.h6 >= {CAP} AS cut,
                fa.* EXCLUDE (key, moment, t), fe.* EXCLUDE (key, moment, t), fr.* EXCLUDE (key, moment, t), fh.payer_hub, ft.top5_share, ft.holders
         FROM ent e JOIN tok t ON t.key = e.key JOIN blocks b ON b.slot = e.entry_slot JOIN agg a ON a.key = e.key AND a.moment = e.moment AND a.t = e.t
         LEFT JOIN fe_all fa ON fa.key = e.key AND fa.moment = e.moment AND fa.t = e.t LEFT JOIN fe ON fe.key = e.key AND fe.moment = e.moment AND fe.t = e.t
@@ -341,12 +438,13 @@ def assemble(con, clock, lo):
     return _count(con, "out")
 
 
-def run(lo, hi, out_dir, f7_parts=None, m1x_triggers=None, cfg=DEFAULTS, store=None, memory=None, threads=None):
-    if hi > HOLDOUT_START:
-        raise ValueError(f"slot {hi} reaches into the hold-out (starts at {HOLDOUT_START})")
+def run(lo, hi, out_dir, f7_parts=None, m1x_triggers=None, cfg=DEFAULTS, store=None, memory=None, threads=None, forward=False):
+    if not forward:
+        guard(hi)   # before anything is opened; window() repeats it on the connection
     t0 = time.time()
     con = connect(store or os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"),
                   memory or os.environ.get("LAB_WALLETS_MEMORY", "1GB"), int(threads or os.environ.get("LAB_WALLETS_THREADS", "2")))
+    window(con, lo, hi, forward)
     clock = Clock.from_store(con)
     cost = tx_cost(cfg)
     hi_ext = setup(con, lo, hi, clock, f7_parts, m1x_triggers)
@@ -360,6 +458,7 @@ def run(lo, hi, out_dir, f7_parts=None, m1x_triggers=None, cfg=DEFAULTS, store=N
             "curve_excluded": {"mayhem": con.execute("SELECT count(*) FROM tok WHERE has_curve AND COALESCE(mayhem, false)").fetchone()[0]},
             "curve_rows_without_fee_tiers": con.execute("SELECT count(*) FROM cl WHERE fee_bps = 0").fetchone()[0],
             "tx_cost_lamports": cost, "size_lamports": SIZE, "commit": git_commit(), "seconds": round(time.time() - t0, 1),
+            "forward": forward, "store_period": store_meta(con).get("period"), "cap": CAP,
             "per_moment": {m: c for m, c in con.execute("SELECT moment, count(*) FROM out GROUP BY 1").fetchall()}}
     with open(f"{out_dir}/run-runners-{lo}.json", "w") as f:
         json.dump(info, f, indent=1, default=str)
@@ -375,8 +474,11 @@ def main(argv=None):
     ap.add_argument("--m1x-triggers")
     ap.add_argument("--cfg", default=DEFAULTS)
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "runners-v1"))
+    ap.add_argument("--forward", action="store_true", help="a forward store from epoch 1064 on (common.forward_guard) instead of the dev-only guard; needs its own --out")
     a = ap.parse_args(argv)
-    info = run(a.from_slot, a.to_slot, a.out, a.f7_parts, a.m1x_triggers, a.cfg)
+    if a.forward and a.out == ap.get_default("out"):
+        ap.error("--forward writes into its own --out, never the development runners-v1")
+    info = run(a.from_slot, a.to_slot, a.out, a.f7_parts, a.m1x_triggers, a.cfg, forward=a.forward)
     print(json.dumps({k: v for k, v in info.items() if k != "per_moment"}, default=str))
 
 

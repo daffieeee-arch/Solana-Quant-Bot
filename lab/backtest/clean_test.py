@@ -58,7 +58,7 @@ import duckdb
 import numpy as np
 
 from . import wash
-from .costs import Scenario, settle_sql
+from .costs import SETTLE_RULE, Scenario, settle_sql
 from .store import CLEAN, load_defaults
 from .strategies import EPOCH_SLOTS, F7_GRID, Clock
 
@@ -427,6 +427,7 @@ def run_test(a, log=print):
     keep = "NOT (coalesce(mint IN (SELECT mint FROM xm), false) OR coalesce(pool IN (SELECT pool FROM xp), false))"
     win = f"t >= {lo} AND t < {hi}" if lo is not None else "true"
     pnl, ret = settle_sql(Scenario.from_cfg("base", load_defaults()))
+    out["settle_rule"] = SETTLE_RULE  # the rule the net was settled with (clean_reports re-settles under it; Codex #6)
     con.execute(f"""CREATE TEMP TABLE k3all AS SELECT pool, mint, t, trigger_trader, day, entry_failed, {ret} AS ret, {pnl} / 1e9 AS pnl
                     FROM read_parquet('{tg}', union_by_name = true) WHERE {K3} AND {win}""")
     n_all, trig_all = con.execute("SELECT count(*), count(DISTINCT (pool, t)) FROM k3all").fetchone()

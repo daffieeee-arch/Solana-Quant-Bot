@@ -1,0 +1,4220 @@
+{
+ "449280000-449496000": {
+  "_manifest.json": [
+   2311,
+   "031a437c3f9a0540067525082b6297972e308b46b35dfd3c3f4ef19390f1bffc"
+  ],
+  "blocks/part-00000.parquet": [
+   3129595,
+   "562442076570868fcce0e55941b6ca988bb6247ef2d396750b2d2e13c4e85aab"
+  ],
+  "blocks/part-00001.parquet": [
+   268919,
+   "266658349052ffc87cf1e5250e6fd26e3895a191a34e0d08b8ef035121a76412"
+  ],
+  "failed_txs/part-00000.parquet": [
+   3867341,
+   "2dedf55fa062b2bdd19d3f06fc1b3c4ce8a07cc57bb8aef7d10ef1128cc2bd71"
+  ],
+  "failed_txs/part-00001.parquet": [
+   3772895,
+   "cfe61c24d4a5f57ef6a3227fd3bf6504fe125784c4581fc47639c69d2664c87f"
+  ],
+  "failed_txs/part-00002.parquet": [
+   3782420,
+   "c3461db6f5bdd0278caddddc989e325b5c0ba4d9d8ec88b0c87ddb1652d49e79"
+  ],
+  "failed_txs/part-00003.parquet": [
+   3738662,
+   "f18c5eb214e9050dc83ce65daadd5c8978fce00ad3f9d5e53cfcb27bb2c608fc"
+  ],
+  "failed_txs/part-00004.parquet": [
+   3858806,
+   "fdddfbe7e323439751aa0ea876353abea288346c4b39b9eaaac3a3671368592f"
+  ],
+  "failed_txs/part-00005.parquet": [
+   3823571,
+   "a6353cbd094772318e8c11dda2c1a89b302d03336aeba507e22aaed753b423a8"
+  ],
+  "failed_txs/part-00006.parquet": [
+   3888825,
+   "56598bddd788491b4cedbe9a53f2a399d5d53710d747a5bcfbdd8fc554903bc0"
+  ],
+  "failed_txs/part-00007.parquet": [
+   3913182,
+   "7f5066219ae2499b083dc3686f10da06353f1a1e80c3c81e0edb34de2f0e48a6"
+  ],
+  "failed_txs/part-00008.parquet": [
+   3779347,
+   "bb25e29bda4e6570c810db9a41a91919f25f1fd3e751ed061157e720f9d9bca2"
+  ],
+  "failed_txs/part-00009.parquet": [
+   3770214,
+   "1c5e9db2d2fdc6d5ac0b31f16f29d40ba2d964830b80983f49429b3059aa868a"
+  ],
+  "failed_txs/part-00010.parquet": [
+   3649724,
+   "78f1d090b65f7cbf93b26c0ad0ea2b7c766c104dd9e2b3125502f02c8da616bc"
+  ],
+  "failed_txs/part-00011.parquet": [
+   3168972,
+   "271f483ad6c4261481c215ae96119c62a75fad09355bf9b95985b3672a3e28c8"
+  ],
+  "failed_txs/part-00012.parquet": [
+   3661067,
+   "86f56af3fedb5c6f994b04035ed4b4ace6562bcd874ef0c63c2a28e88dcf19c2"
+  ],
+  "failed_txs/part-00013.parquet": [
+   3932217,
+   "0352fa63c24c9469efdcef518c14bf8270ff796d0a80550f337c34eb792b525c"
+  ],
+  "failed_txs/part-00014.parquet": [
+   3690570,
+   "ba4df6655070c8d95f8d5ec4918f6d0f017afe050e947e42480bc1eebe7410d7"
+  ],
+  "failed_txs/part-00015.parquet": [
+   3946167,
+   "4c1c5907e410c57b30661053364f7a018ffe32a25b586f83992a8547e6333977"
+  ],
+  "failed_txs/part-00016.parquet": [
+   3779233,
+   "4419f44d3e88d6e511bda0f0f770f5d57bdb3c29e4fc6fc19b37c1345b4bc896"
+  ],
+  "failed_txs/part-00017.parquet": [
+   3901883,
+   "ab9a142f9c0b68aa7bcb55346677d97e6edda2fd06cf4e82a894afe3ae5158e8"
+  ],
+  "failed_txs/part-00018.parquet": [
+   3902785,
+   "73aa536b0b1ed9228f900d40888dbb7239d98508b4a40016a7a5c15307b26c37"
+  ],
+  "failed_txs/part-00019.parquet": [
+   4208359,
+   "268e83aef045be2ee79060d353852cb60dfc2a2bafbcd58746ac8ff23b405770"
+  ],
+  "failed_txs/part-00020.parquet": [
+   3930137,
+   "cef491b5f4c46ddbe495be0a27d3e33fccf75a384059da81adafb9d444bc09c6"
+  ],
+  "failed_txs/part-00021.parquet": [
+   3844266,
+   "729bf45691ba8a95c6449373b00d30184ba3d362f0b55dfaac6bc32d0316b6ad"
+  ],
+  "failed_txs/part-00022.parquet": [
+   3846929,
+   "c453546693c59bf5482af890494bafa2b5cb3e6c5ec1f15eba26b7e3d4b1b3fa"
+  ],
+  "failed_txs/part-00023.parquet": [
+   3784676,
+   "8478df2e6a34e388a00556f10fa3b37c9d55f8704380fa7705c07090a7b9e275"
+  ],
+  "failed_txs/part-00024.parquet": [
+   3527871,
+   "95b9522ef8ab8b7e75cdec102d49374d88df798ea0a265f639cc558e18e61938"
+  ],
+  "failed_txs/part-00025.parquet": [
+   3721012,
+   "2259f79ccc74f4b0982c43a2dcb2aaf8140ce492e39d34034a2698defdbde581"
+  ],
+  "failed_txs/part-00026.parquet": [
+   3712925,
+   "b55b00b3ae6c5e8d96d50ce17dd19570c4ff9b8e2cb4e9893b75cb31d20384a6"
+  ],
+  "failed_txs/part-00027.parquet": [
+   4035504,
+   "c0f01b99427dc9711cb259ca3ea1cd9d7916e982a8f08b7983bb861d123867a0"
+  ],
+  "failed_txs/part-00028.parquet": [
+   4057989,
+   "4cfd12343a298c04fce3c7a3c65d5353d6719e689626671792392cacd988baa2"
+  ],
+  "failed_txs/part-00029.parquet": [
+   3926852,
+   "0afe6470d5fbaa2c409e0d4df7add28b0d71dbbeb97b9dd8490209ef42a2183a"
+  ],
+  "failed_txs/part-00030.parquet": [
+   3865940,
+   "fca2b1ca71569f79c80def5c2ec5f399424f4d38cc3b476e72b241121b841e7a"
+  ],
+  "failed_txs/part-00031.parquet": [
+   4022720,
+   "54f2d264ac8da48b7492a6044ae6029ca629fcf9b697619671f9f8204a212513"
+  ],
+  "failed_txs/part-00032.parquet": [
+   3755152,
+   "a0aa8bf44f2af2e91a75dd8f8a19d67da00cbbd48e31dd9a1fa88439b6a97ffe"
+  ],
+  "failed_txs/part-00033.parquet": [
+   3930672,
+   "276a4cec930473c180a85554bb569dc4553f903b1f841f1de6b6582724654f5d"
+  ],
+  "failed_txs/part-00034.parquet": [
+   4102064,
+   "c3eba46f90b5498831c3f2d9672995dfe278a4973360d8198a2bc75e9a127bcf"
+  ],
+  "failed_txs/part-00035.parquet": [
+   4023562,
+   "55c2c86e3ee6090d5fb35885ccb7c5732951938e74f4b276cc0b337dd9b1c732"
+  ],
+  "failed_txs/part-00036.parquet": [
+   4149076,
+   "f7901d965fab29f0cdb00079979f9ea78c329735d307208bcd1fa09231bdea32"
+  ],
+  "failed_txs/part-00037.parquet": [
+   4091239,
+   "9baa7af41c98128497eff86a3ac057df26325bca70299400d7a5310f2f0ca9e7"
+  ],
+  "failed_txs/part-00038.parquet": [
+   3968533,
+   "79618e94b1db6e4d29a1c38a91e3a5ab9796bafe17f1b789e6287546fe35422a"
+  ],
+  "failed_txs/part-00039.parquet": [
+   3565200,
+   "66fe11ab162f129706390ebd05604d534f225e99226c9683377b81feec089e74"
+  ],
+  "failed_txs/part-00040.parquet": [
+   3630234,
+   "82b77008faa7ee5ee8814098e4425dbd18e0e48b533f2deb359e5b7fce2674fb"
+  ],
+  "failed_txs/part-00041.parquet": [
+   3611751,
+   "659c0718ab9c96ed069aede8e51568999b25bb743edeeafd75342f81bad861b8"
+  ],
+  "failed_txs/part-00042.parquet": [
+   3906121,
+   "c2cb04deff4aa9dc51ea951108f32196c64f5c47fe683cfc84b68a21e2e0defb"
+  ],
+  "failed_txs/part-00043.parquet": [
+   3802375,
+   "51ebafc143be33268fbef0bd7a225a0be202283a006ef91675d2f3d48c9d1028"
+  ],
+  "failed_txs/part-00044.parquet": [
+   3948946,
+   "775dbcc14f2df1477e15f71f6368a7ee2543f3064454d4c9dd9665ae3c39918c"
+  ],
+  "failed_txs/part-00045.parquet": [
+   3867069,
+   "6ceb4c0f95f981d06eb53dc3ac8000e050aee1545901169a63a58b560220024f"
+  ],
+  "failed_txs/part-00046.parquet": [
+   3587427,
+   "7266aa643fd6a792d30402b4db1a01f2fe17e551264e61706debf2d736cce8c9"
+  ],
+  "failed_txs/part-00047.parquet": [
+   3676927,
+   "8b35533e204371322a1f50e1ba16f6b1b38b62b30212f1b2d84c5abc90950666"
+  ],
+  "failed_txs/part-00048.parquet": [
+   3708877,
+   "0d6469469ccbd45a627706c59f31be8c145f3187acc729ffa0c393de521cbf15"
+  ],
+  "failed_txs/part-00049.parquet": [
+   3854197,
+   "5ddc452c1ff2cd7289b89f216ea54558d65a7047b4d4d7d3d7823604e2b0c9b4"
+  ],
+  "failed_txs/part-00050.parquet": [
+   3785896,
+   "7833ce875e7a3ede6cab971542f2978b7e85417142e6b16f52a563782889b384"
+  ],
+  "failed_txs/part-00051.parquet": [
+   3846447,
+   "948d0826220ab1865dfebfa811e068dea555eda5ffc1d1f737efc729e3f56204"
+  ],
+  "failed_txs/part-00052.parquet": [
+   4216023,
+   "a3715b7f9e5ebd9221840a87538bf1ac2578702b11d701a3c807b38805700fa9"
+  ],
+  "failed_txs/part-00053.parquet": [
+   3910048,
+   "a3ac642c3510b7f1de96bc370a0cdd2004d0558d9f6dc20897b14a0363b23182"
+  ],
+  "failed_txs/part-00054.parquet": [
+   4347594,
+   "a23ff8848f779a7587c1796f664bcf361fc70b1de94227256bf473d6845b1c58"
+  ],
+  "failed_txs/part-00055.parquet": [
+   4072537,
+   "5ae7293b93ba33eb6726dddb47a25032f036d34b2fbf39265b227ae560ee5337"
+  ],
+  "failed_txs/part-00056.parquet": [
+   4102693,
+   "617fcf243bc368d517fe525a067b35f60fc6f709231b9e8ae627c14a2bcc9e99"
+  ],
+  "failed_txs/part-00057.parquet": [
+   4221617,
+   "28cac725ee9a64675157994897a1777de8399dacbc81c14f35111485c2e9fca9"
+  ],
+  "failed_txs/part-00058.parquet": [
+   4180174,
+   "406f576e4a4242a7c089a6504f81c4c5dae95c5a3d62b42cbf6286c131599d7d"
+  ],
+  "failed_txs/part-00059.parquet": [
+   3822713,
+   "ea9ec828dcb6a802e480ff56ae12317094d4eeb322c1fc5afd0b869c46fc13f7"
+  ],
+  "failed_txs/part-00060.parquet": [
+   3686793,
+   "d1a10de08ec265fd29420209c60ba2e1b78480cb0d139b951475fad0097c8211"
+  ],
+  "failed_txs/part-00061.parquet": [
+   3352849,
+   "945d74ad5101b69ba1efa4265a46dac0d0000375321209a6c665c34f44600ae9"
+  ],
+  "failed_txs/part-00062.parquet": [
+   3445951,
+   "a4dac8069f0cb0def84651e3ad9da4c1b2a648a8d8f70c78770b6156b419e01b"
+  ],
+  "failed_txs/part-00063.parquet": [
+   3481612,
+   "30bd1a328bdc0ace8ca26c84bb2174735e332fdc942cacda3995f2288dda6b52"
+  ],
+  "failed_txs/part-00064.parquet": [
+   3727691,
+   "cd7ea6c63972b849fad6d330b2c690d48abaa9d83dc6f3340921b7b0ce2064d0"
+  ],
+  "failed_txs/part-00065.parquet": [
+   3586129,
+   "5f264d9cca7b3efd1e8329fa1f8b31be63748550e1a11b27fa62905128465253"
+  ],
+  "failed_txs/part-00066.parquet": [
+   3642734,
+   "423e5f8e432340782c78bdec0a6273428769f56440ddf924991a90881d7b3e82"
+  ],
+  "failed_txs/part-00067.parquet": [
+   3699651,
+   "82115d0c27be1ffefb279fe46aacb44078199690ef8c59b1d905675e966c3444"
+  ],
+  "failed_txs/part-00068.parquet": [
+   3773164,
+   "f9d3f20b6748f22aff2609b682f86b247442e8aebcc998ad4e7a37a1b2333f3a"
+  ],
+  "failed_txs/part-00069.parquet": [
+   3775623,
+   "410a53adc40aaf02f1060a9d80036774ad44b04b71f1e40c7c3a92165a97886d"
+  ],
+  "failed_txs/part-00070.parquet": [
+   3942661,
+   "768ff69e8aa1637d2ba21ff310cfb5efaf7feaeef7817173677f1c4243ed9f11"
+  ],
+  "failed_txs/part-00071.parquet": [
+   3818681,
+   "c66947b9b22ae422641386362fe5cfefddcbb6f48575e1ac9117c8ce3e60217b"
+  ],
+  "failed_txs/part-00072.parquet": [
+   3861448,
+   "e3a9a77300ad590509c88f7904eb3a2f765a514c48919ffbec353c4479a485c5"
+  ],
+  "failed_txs/part-00073.parquet": [
+   3888999,
+   "64f2f74c21ce86d50e95fd17d96366d4ccea579a2a1ad9afd0520c490d197f9f"
+  ],
+  "failed_txs/part-00074.parquet": [
+   3968504,
+   "10480024a70eb050510cc7cb10f2107b00a40cfa1dffcbb831b14f1deb51436a"
+  ],
+  "failed_txs/part-00075.parquet": [
+   3713355,
+   "f930d0c0154b970a1952d426ee1ad2a1812dc056e563bc3c21a55137e637a49a"
+  ],
+  "failed_txs/part-00076.parquet": [
+   3730276,
+   "220b64f795ebda1821c3c854f39e205c08ee1a7f981a392ccbe98caf04c5ceec"
+  ],
+  "failed_txs/part-00077.parquet": [
+   3704295,
+   "925e8f0f3c48515b24fed7b1a755f661a64808fac671eccdb32438729d59a90c"
+  ],
+  "failed_txs/part-00078.parquet": [
+   3628569,
+   "4a80b1718df631170c7d75182f8991c3a2d8c00929a6a1ad92ca49682a5257f4"
+  ],
+  "failed_txs/part-00079.parquet": [
+   3536013,
+   "f900b82d90dbc3fbd4bbc06655beccc34b77e75244687278bebc09cd6db2aa5c"
+  ],
+  "failed_txs/part-00080.parquet": [
+   2361921,
+   "eabb5ac3051aaaffbf273413328731cd8dcde05847deb75fdda4a7ef2dd8a9f6"
+  ],
+  "pump/AddQuoteControlMintEvent/part-00000.parquet": [
+   11572,
+   "88cf9a331ff065fdac3c89262dee93572ed43ad6a70d9713f679826a0db11e63"
+  ],
+  "pump/AdminCtoEvent/part-00000.parquet": [
+   13422,
+   "36d254b3940b784df76e7271b5d9379f569eee5deeba50006e2ea7f4e8a6f7cd"
+  ],
+  "pump/ClaimCashbackEvent/part-00000.parquet": [
+   1166460,
+   "730c8a0f92b3c11f07862c3fe0877ed389d3ea124be68e0bf667b2f450f5e6cc"
+  ],
+  "pump/CloseUserVolumeAccumulatorEvent/part-00000.parquet": [
+   19826129,
+   "97669085da1cbff520e579726eddf9ab30698ed8e6b03b164788f3c6d526df6d"
+  ],
+  "pump/CollectCreatorFeeEvent/part-00000.parquet": [
+   2019152,
+   "2b9eb00a39e52ba678cf8eb1a43cc74064840803ada3b058adb4a5d2ee2ea3cf"
+  ],
+  "pump/CompleteEvent/part-00000.parquet": [
+   187150,
+   "deda78af20219bfcae2626063a14c614e5d2529c942e978bb2a3106a2cc9e522"
+  ],
+  "pump/CompletePumpAmmMigrationEvent/part-00000.parquet": [
+   170909,
+   "39a37fcf33f85b569e16fbc2a4dc2842508ac36480f51b0d326337743a79f952"
+  ],
+  "pump/CreateEvent/part-00000.parquet": [
+   7534151,
+   "3f5ce8af752f232381a791e41c8b5f14269234cf7a1e84f53acae7108a65163b"
+  ],
+  "pump/DistributeCreatorFeesEvent/part-00000.parquet": [
+   1452081,
+   "5ba79fc96f570d9b4efba1adf730ef35097d2e0d057a16f8a04507a75afb0b68"
+  ],
+  "pump/DistributeFeeToHoldersEvent/part-00000.parquet": [
+   21436386,
+   "50e7f515d7d6f4762a3c964fc3f71fda57a534e72ad195b5a48f2709088226bc"
+  ],
+  "pump/DistributeFeeToHoldersEvent/part-00001.parquet": [
+   16882807,
+   "74f61df2418a04e818bab668f6ac1fb49cb3e4169665531e5bf8c694ba9fa089"
+  ],
+  "pump/ExtendAccountEvent/part-00000.parquet": [
+   2263135,
+   "775599b0f20ac32b7cdedc7935e7d11f32bb3d3ef0074d5f7e266d1c8d83623d"
+  ],
+  "pump/InitUserVolumeAccumulatorEvent/part-00000.parquet": [
+   1357036,
+   "3b5b3d61a4c81a1d70c57ceb9c7d4c51256cff6be133e06cec1938c8755c9ac7"
+  ],
+  "pump/MigrateBondingCurveCreatorEvent/part-00000.parquet": [
+   375849,
+   "67b827c4472c702580be16c58f2edc1e96563be10e5e5fefa9e25a1f94f23e5f"
+  ],
+  "pump/TradeEvent/part-00000.parquet": [
+   39443067,
+   "5ae17030b3214f282365ee297554a577be976dba0478650a7259cf3c3687191e"
+  ],
+  "pump/TradeEvent/part-00001.parquet": [
+   39185698,
+   "0bf0a76e23c46e2a4a6c1a79dd400536d77445f65d8131a4305c07a211e0bdb9"
+  ],
+  "pump/TradeEvent/part-00002.parquet": [
+   39009715,
+   "1dc66ce7da5fb47a2c9d2c4eee19cf62e5b9e0e910c9e70a3f2273914e7beb54"
+  ],
+  "pump/TradeEvent/part-00003.parquet": [
+   39773369,
+   "0225f9aee17177da0390c966a04d2d360865ea8e41d97d6bd66c13ba3345d006"
+  ],
+  "pump/TradeEvent/part-00004.parquet": [
+   39572707,
+   "536295049f48cdb773a32d385f875daf231dd5cff284fda3f39bc65df0fb9431"
+  ],
+  "pump/TradeEvent/part-00005.parquet": [
+   39889522,
+   "e73f9aef984492379911c59cd619652e8e1eaeae460c3523bcb092c766e4eedd"
+  ],
+  "pump/TradeEvent/part-00006.parquet": [
+   29401190,
+   "324c7f82648dc89444f8991a4659b57ffec9ae5972a67adcd0dbf00772b20d2d"
+  ],
+  "pump/TradeEvent/part-00007.parquet": [
+   38850553,
+   "34a4f4628c8827ab780955948cf7a1e356f4ec15717e8008f4169bd7c94ebc71"
+  ],
+  "pump/TradeEvent/part-00008.parquet": [
+   40018033,
+   "c5576c484f0fc24758bcde5a01c2db204099a3a252595823204b5a9ec02beaff"
+  ],
+  "pump/TradeEvent/part-00009.parquet": [
+   40186735,
+   "67e7ce4153cc0a7b31e62fa5f5c678a905b1ac1d9030ad03991d4c3b5365dfc2"
+  ],
+  "pump/TradeEvent/part-00010.parquet": [
+   40341732,
+   "ba1ce3ff0266c92ff49422cc3e2d85c51704e77cb9d63b691d6b3f63782a6872"
+  ],
+  "pump/TradeEvent/part-00011.parquet": [
+   22925560,
+   "b526feff3540be0b11390bf13fbccdf49bdb99096e9d9cfca5ac538dfde7a36e"
+  ],
+  "pump_amm/BoostBuyAndBurnEvent/part-00000.parquet": [
+   2360887,
+   "a7fa4295003ba3a421c37245862a9bb91d74d1139e84b91d827be886e73aa170"
+  ],
+  "pump_amm/BuyEvent/part-00000.parquet": [
+   50363767,
+   "b9329993d21e1615542416f15c48ce8f21105c80e795116b76c255a9b4371413"
+  ],
+  "pump_amm/BuyEvent/part-00001.parquet": [
+   50598181,
+   "ac61fe4434d5ed22bc2484b1d3c022cb4c0ed9a278b58608147c5336d3ea328a"
+  ],
+  "pump_amm/BuyEvent/part-00002.parquet": [
+   50649497,
+   "e14ec12f0d4202dd1b22d82e1c3d330bdc73485cbf50da51a72ecb51c8783dd1"
+  ],
+  "pump_amm/BuyEvent/part-00003.parquet": [
+   51030884,
+   "9d996c0fca46cd0dfae6ce88c13a6a5320f2d0ece7d5efafd2cf9688a77d81f9"
+  ],
+  "pump_amm/BuyEvent/part-00004.parquet": [
+   50833686,
+   "01a01ad8a2f4e4dfd638f194e20a05075a8082a876d49c6e78418a72c80cb53f"
+  ],
+  "pump_amm/BuyEvent/part-00005.parquet": [
+   50356182,
+   "5082a1404dd2acd9e74f68559b0ad83499d3a08c84c19e41e05fe07010d94fc8"
+  ],
+  "pump_amm/BuyEvent/part-00006.parquet": [
+   51119552,
+   "82a510e3b69ceadc8d5c7f0130536a03e50e3cc146b50ecdb2317adf28d7b4c8"
+  ],
+  "pump_amm/BuyEvent/part-00007.parquet": [
+   51029728,
+   "f4ec15279ec018eed8a0c2e861e822fb0ca23637d0f001e37d40736dd68c45de"
+  ],
+  "pump_amm/BuyEvent/part-00008.parquet": [
+   51276108,
+   "7146ff98f65c7323d69ffadfbca9b85f7a9299a4e3263afd4596815d31c7bf1b"
+  ],
+  "pump_amm/BuyEvent/part-00009.parquet": [
+   50999660,
+   "a50cba88068856798b747434013463d77f286a8e0aabfec60cb3403316997101"
+  ],
+  "pump_amm/BuyEvent/part-00010.parquet": [
+   50878514,
+   "2cb3ca84025acc8628543cc4cec278c1def455cfa70dc18dc42a3722f2918d35"
+  ],
+  "pump_amm/BuyEvent/part-00011.parquet": [
+   51600315,
+   "4e9a2fa29e3d56cea7a2132b15a6177154a2fd589def482b86e4ae4165469d3f"
+  ],
+  "pump_amm/BuyEvent/part-00012.parquet": [
+   51151159,
+   "dc2b66d643da5150ffcbe804629c1ee542e9eb0d3924ecde887cd6886b146279"
+  ],
+  "pump_amm/BuyEvent/part-00013.parquet": [
+   51442272,
+   "381b730c7101e57501c9bceef5a43653fbd479edba99893a1ca8733a21ce8795"
+  ],
+  "pump_amm/BuyEvent/part-00014.parquet": [
+   51606488,
+   "95e3c07a2e4bbf003690315864f0c393c442f21e0fce0dd11851d968ca9948bb"
+  ],
+  "pump_amm/BuyEvent/part-00015.parquet": [
+   50613768,
+   "49006b675b2b3e97b0f341a804b79552b9f9f175368ac88bfd672c5b1b297ba1"
+  ],
+  "pump_amm/BuyEvent/part-00016.parquet": [
+   50741261,
+   "a06364eb901ec016058505c325a7d8b1a03397f224d5411316f9e875010ed694"
+  ],
+  "pump_amm/BuyEvent/part-00017.parquet": [
+   51277478,
+   "fc961817870c105631ec451598ead6ebede668e18cbf3133d89185f959483fcf"
+  ],
+  "pump_amm/BuyEvent/part-00018.parquet": [
+   50814736,
+   "c3eb3b1b6b32cd38b0829f5b0d4da9158f343584779a8d90bffcad6614c080cd"
+  ],
+  "pump_amm/BuyEvent/part-00019.parquet": [
+   50242517,
+   "033c4891549e48791d6c3a5a79d0b2d00b6984617592f531555fcba9ec1ced20"
+  ],
+  "pump_amm/BuyEvent/part-00020.parquet": [
+   50607548,
+   "3f39bacdafd41604f62928fbd6260c670e4f28731aa715e1bc9cbd62aa8e4ebf"
+  ],
+  "pump_amm/BuyEvent/part-00021.parquet": [
+   50757046,
+   "1d1f9ab2d18a320df278f57b03c8170f01b7a000c6ee37298f7a58cfd062a40a"
+  ],
+  "pump_amm/BuyEvent/part-00022.parquet": [
+   50536212,
+   "d8ef851a6e97850b802a51458f24a5f00ed9e922f9dcf4f3bd8b6f3b78e87283"
+  ],
+  "pump_amm/BuyEvent/part-00023.parquet": [
+   50920777,
+   "a2e8a260e1921091d7b084e75ba146ed68e1d890e06cacc7649a1b354bdedcbd"
+  ],
+  "pump_amm/BuyEvent/part-00024.parquet": [
+   50043948,
+   "e67843dfb2a50d3ada1983a175649a85eb2fc14934d3c63ad5f64e0c27bb7ead"
+  ],
+  "pump_amm/BuyEvent/part-00025.parquet": [
+   49289962,
+   "990fb6072fbdacf60cb7211b75baf32220db3940861d5459a37500116385069b"
+  ],
+  "pump_amm/BuyEvent/part-00026.parquet": [
+   50076541,
+   "40ad21ad66dfd1f856bad1dd10140b1b31268b03af78ebbebcc63c6450e484dc"
+  ],
+  "pump_amm/BuyEvent/part-00027.parquet": [
+   49929665,
+   "0f300f5db0336d78df27b20285645225fe3b8fc626c1ca6cece3edfcd51d541f"
+  ],
+  "pump_amm/BuyEvent/part-00028.parquet": [
+   49889696,
+   "b8efe86a9f9ad8078a645e0f370d36469295f1548d8801c893cde13d00a60233"
+  ],
+  "pump_amm/BuyEvent/part-00029.parquet": [
+   47599912,
+   "f82742273041c1b8e57ca7ae4689cfe1d71ca27dc83a667931b6683c3f8b0abd"
+  ],
+  "pump_amm/BuyEvent/part-00030.parquet": [
+   18226684,
+   "cc25d0b5e60b3b319292119e402d4e63abca08fa350d3b2d4e9ff6f3c3d7c431"
+  ],
+  "pump_amm/ClaimCashbackEvent/part-00000.parquet": [
+   6485946,
+   "09ddd0b0bcfa100942eb9803d3784e43442e6cd2bc566d329a7982714b5cd5a9"
+  ],
+  "pump_amm/CloseUserVolumeAccumulatorEvent/part-00000.parquet": [
+   24732994,
+   "fd939f8ecddbf6b4b4511302c8bfdb3a717760a9413fb02ad86d19dd27836420"
+  ],
+  "pump_amm/CloseUserVolumeAccumulatorEvent/part-00001.parquet": [
+   21708370,
+   "9e65ee83b37f1a219e7e67ac6bf73089ea9d91c4a411e1c2b30b8f155f6cfc6a"
+  ],
+  "pump_amm/CollectCoinCreatorFeeEvent/part-00000.parquet": [
+   798557,
+   "955dc2448f8ecd52e6578a7aa12b196217b26c613390fa127a58376d6a67ccbe"
+  ],
+  "pump_amm/CreatePoolEvent/part-00000.parquet": [
+   992954,
+   "2b664e7d3fd1617863cf2d4f723be88966fcddf264dbce201826ed27b173ff7e"
+  ],
+  "pump_amm/DepositEvent/part-00000.parquet": [
+   52342,
+   "36bb69037e80d4e722773391cbfadb2193fd44f72c4f2e065951dc53b9134de5"
+  ],
+  "pump_amm/ExtendAccountEvent/part-00000.parquet": [
+   380815,
+   "2aca0b6829814f2ac40d417c0374c51fe3df1666f882daaaa3653f5a75b52933"
+  ],
+  "pump_amm/InitBoostEvent/part-00000.parquet": [
+   130128,
+   "1856a9e84e595d7e359cc216e2d80821b821a768f73c0b79cbd93008f5157bc6"
+  ],
+  "pump_amm/InitUserVolumeAccumulatorEvent/part-00000.parquet": [
+   1581436,
+   "f45dd10b5bc79d953ba3b9d7dee1ce1c4025ffbedf5d3808b91199300cde86f0"
+  ],
+  "pump_amm/MigratePoolCoinCreatorEvent/part-00000.parquet": [
+   13646,
+   "6e1871f24ccf0d6f277978edb70f1f5a0046b76b69008d078b4a9c151d2fa1ce"
+  ],
+  "pump_amm/SellEvent/part-00000.parquet": [
+   54547829,
+   "13c54d2e191b072da3de816ea9c1885a85aadec7e840139fcc640da612b66b09"
+  ],
+  "pump_amm/SellEvent/part-00001.parquet": [
+   54435625,
+   "1e8929dd0cf1504331e2d35e490eff476275d63a5fb9a9df2894c617b49eb3c1"
+  ],
+  "pump_amm/SellEvent/part-00002.parquet": [
+   54198681,
+   "cd88ed8e0b6ab658b23f3aabbfd1d776b0de61435bd01d92a59444ed8f535c3f"
+  ],
+  "pump_amm/SellEvent/part-00003.parquet": [
+   54448004,
+   "e97ad04301a1118b0a6f411c5e928d80f9f6b43b5255fdb2a3e1b93afe5f1a27"
+  ],
+  "pump_amm/SellEvent/part-00004.parquet": [
+   53949030,
+   "782e726a3ed978e9b3916a1559e20ac6223728a2ceb702fd18dca5e8bcf66a71"
+  ],
+  "pump_amm/SellEvent/part-00005.parquet": [
+   54040774,
+   "bf3c13974fc92c970c12b28f900833807b031671a2f5e9d4ed94f8c04c52fa74"
+  ],
+  "pump_amm/SellEvent/part-00006.parquet": [
+   54655995,
+   "7d3e6d47c82f6505a5f6e67670fad711d6571a4509ab357db2d3e2d39263910b"
+  ],
+  "pump_amm/SellEvent/part-00007.parquet": [
+   54379857,
+   "b920dc5cf90f04068a62eaf9d2a77551912bedfc37b4aef3147a101b2f92be82"
+  ],
+  "pump_amm/SellEvent/part-00008.parquet": [
+   53941382,
+   "94678919f3787cd6445057b293d90ce95110ebfad4645f6907ce31a2dec2363c"
+  ],
+  "pump_amm/SellEvent/part-00009.parquet": [
+   54544147,
+   "38071718bd5779944fee0ec9297649302c8eb50c3bb584b35094f367f55a0dda"
+  ],
+  "pump_amm/SellEvent/part-00010.parquet": [
+   54568990,
+   "9ff16c822cffc4b4c29c9eec9e7d2587de50fcb2a87088d401db7625e40d9355"
+  ],
+  "pump_amm/SellEvent/part-00011.parquet": [
+   54509270,
+   "151352f8d83a4fc2f86fc0040f9a2df1a3dc24d5800b2c4c167494e47ae0798e"
+  ],
+  "pump_amm/SellEvent/part-00012.parquet": [
+   54580355,
+   "9b3c24a8631a3ab0d06c21bd377a61341e88fdb2f5dca2edef32485a0e3186e8"
+  ],
+  "pump_amm/SellEvent/part-00013.parquet": [
+   54514723,
+   "0b4b418a4c3a75ae3e5aa3de7daec2ac785d3b07c93b055c240b35dfb5934905"
+  ],
+  "pump_amm/SellEvent/part-00014.parquet": [
+   54425600,
+   "6406beb3e6313f6e4fbe188001a0d6a82dabaa84701819334d3272c1bc0ff271"
+  ],
+  "pump_amm/SellEvent/part-00015.parquet": [
+   54292580,
+   "18f97bcdd8fd0b5a58163aa44dd17f95742a18201026c1bb74a73674fcc95e06"
+  ],
+  "pump_amm/SellEvent/part-00016.parquet": [
+   54359007,
+   "24e36ac9203e8899def5cfe4fb1ce0b356a4aa1c88ebc70cb05f4eb1ecf60aa8"
+  ],
+  "pump_amm/SellEvent/part-00017.parquet": [
+   54614203,
+   "80f67a0f8f31b852f308e9fa46b67762c69c95a6cb95228f4cc4c03c6eaa7810"
+  ],
+  "pump_amm/SellEvent/part-00018.parquet": [
+   54347318,
+   "8b7292f1f33777739dd3222423ec93fe7e3095e536c81e1bd0b4fc0ec40a9f51"
+  ],
+  "pump_amm/SellEvent/part-00019.parquet": [
+   54458724,
+   "e024f34bfd13fb5ced31ce387a2f6949e700d9088b04146577791a692bd9c9af"
+  ],
+  "pump_amm/SellEvent/part-00020.parquet": [
+   54250528,
+   "744b2a6d2474e52fd7cd5e270ad77134e74def526065c83dc57caaadf518f1a3"
+  ],
+  "pump_amm/SellEvent/part-00021.parquet": [
+   54625846,
+   "ddb5b6a29585cf2d1f9cadd3347b17df0d838b376e335e08a2ca787be21ce5e2"
+  ],
+  "pump_amm/SellEvent/part-00022.parquet": [
+   54309405,
+   "65d3f9400d5111f5039cc81ee71450a6bd9846ea2a6d6f55901ba856e56896e5"
+  ],
+  "pump_amm/SellEvent/part-00023.parquet": [
+   53963925,
+   "bee8e1904437c3ea5b17310ac9fa7adbeb21edb6fa80f1a0533f424e79be95ae"
+  ],
+  "pump_amm/SellEvent/part-00024.parquet": [
+   54066545,
+   "1c0bd96d594338fdf5408f7207bce4d9cfc9499dd278ed43f800d9d9662fa7db"
+  ],
+  "pump_amm/SellEvent/part-00025.parquet": [
+   54443853,
+   "4c0c8a83baccceb63c93f30371ce019d0e199c0698d6fa4ead7907b7f347ee65"
+  ],
+  "pump_amm/SellEvent/part-00026.parquet": [
+   54268100,
+   "482b50da767870c6ff22cf553d728f0385485fb6dc72a5aec6b39ad084021472"
+  ],
+  "pump_amm/SellEvent/part-00027.parquet": [
+   54194121,
+   "926db97f0813c13715cda657b1ec81e0e2904b99f8ea398fccdf644ef201407e"
+  ],
+  "pump_amm/SellEvent/part-00028.parquet": [
+   53550157,
+   "ec41fd78d3c017a8f86ddc6f7400fc0675767d5bb1712a0a31955ea17c9850ae"
+  ],
+  "pump_amm/SellEvent/part-00029.parquet": [
+   53388195,
+   "6a9ceca6f63efe5658bcd8182062e7f88b1039f05234eafa9269a12e9c816fed"
+  ],
+  "pump_amm/SellEvent/part-00030.parquet": [
+   53956438,
+   "ab86258668f3317f6271963834ffa0492d0468003acda9f3e13579f1095b0750"
+  ],
+  "pump_amm/SellEvent/part-00031.parquet": [
+   54300976,
+   "c348e4ca6369b22ff7d415094382da940d3ca9b037a13cd0b9c36e37b6bed1b8"
+  ],
+  "pump_amm/SellEvent/part-00032.parquet": [
+   54249560,
+   "a96803d43ca69f501d2bd547e0e18ade76deab875ded8d43b53ae3666add2941"
+  ],
+  "pump_amm/SellEvent/part-00033.parquet": [
+   54547528,
+   "3e64889a92f07ee4a10a89c183815dbc6498f092c344e9949dbbdde7ed59a447"
+  ],
+  "pump_amm/SellEvent/part-00034.parquet": [
+   54336155,
+   "49e7f9555b7bbe408eec8f45f0a648e09333b7c404176e432f018858a69eaf14"
+  ],
+  "pump_amm/SellEvent/part-00035.parquet": [
+   53731673,
+   "218caad7a0a1abe8b8fbaea54972ee8ced95e0aef442cfec110500e24ae284ab"
+  ],
+  "pump_amm/SellEvent/part-00036.parquet": [
+   53690901,
+   "c6c12c9aebb2d12bb242335602014e4b5b65f6fe51821e3571a15f8e7c1125c2"
+  ],
+  "pump_amm/SellEvent/part-00037.parquet": [
+   53247921,
+   "fa340f02d42cf3d3454a8ae615766d6625e9e6b811ede963fb886867eec1ca9a"
+  ],
+  "pump_amm/SellEvent/part-00038.parquet": [
+   53108719,
+   "beaceb301ab7a447998e72a1f0b400c3f9c6b23d425ec2cb1b11dba8f81eeec4"
+  ],
+  "pump_amm/SellEvent/part-00039.parquet": [
+   53479490,
+   "21abda036ab4c9a194c3643aba997d7a2ca1b3a604686561c6ca71e0c57cb3c3"
+  ],
+  "pump_amm/SellEvent/part-00040.parquet": [
+   52841062,
+   "4f0a97d350e15cd9282f344a7955b5fe5a588b5c52cfc92376992f0aef1b4a13"
+  ],
+  "pump_amm/SellEvent/part-00041.parquet": [
+   53655785,
+   "072bb3f652b2db719ea43c4e46e4e8d1b1cb30226a8d563a5e85e1925a6f7529"
+  ],
+  "pump_amm/SellEvent/part-00042.parquet": [
+   52954547,
+   "6dcdc80a56c0ae99b9e858bf48812d0c3654c51dee281fe0b7e99f228d6d19d4"
+  ],
+  "pump_amm/SellEvent/part-00043.parquet": [
+   52320577,
+   "59756e3176f3450c4d0165baaf9e32220856891725ac5a565d7c6981d28a044f"
+  ],
+  "pump_amm/SellEvent/part-00044.parquet": [
+   44142470,
+   "69cadec1a35484405a320619f49b8eb3faba82b1285c1ec38360e4b3988f4f88"
+  ],
+  "pump_amm/WithdrawEvent/part-00000.parquet": [
+   692912,
+   "6c85a70e0d82814bc6053a1eb7b8bce27ea9729a356d76e0fc4f9776e0185951"
+  ]
+ },
+ "449496000-449712000": {
+  "_manifest.json": [
+   2385,
+   "2ebbff56b33ddc784b8658059a88f9299cf719d8b424e78464117aa149f26603"
+  ],
+  "blocks/part-00000.parquet": [
+   3090245,
+   "04e2434b802d56c3c3070048bb0f97df7679736fad9970ad895aaee5f1663b45"
+  ],
+  "blocks/part-00001.parquet": [
+   263098,
+   "f03bb0cb6cc322c0dbde3b7cea7323345d0b24318aeb3b7664e285fbfc9a95d8"
+  ],
+  "failed_txs/part-00000.parquet": [
+   3827848,
+   "a4f427494dc80486ea1393311fc974a09f763b201b7669d8176cb0990ce7a0d3"
+  ],
+  "failed_txs/part-00001.parquet": [
+   3670349,
+   "b05a8d0b45eaf2f7d20263944164cf644af6a8143f0935fb31f35bfbe5a3167e"
+  ],
+  "failed_txs/part-00002.parquet": [
+   3685947,
+   "a29a653dd78e6e18c8c679ce5dc7d095a5de4219baf1887dfe5e2f9155290484"
+  ],
+  "failed_txs/part-00003.parquet": [
+   3638055,
+   "7cb5a923cdda475950acbe5a5d0193cf0fadd1e26ee46b9cac9d5d39cc77a87c"
+  ],
+  "failed_txs/part-00004.parquet": [
+   3628055,
+   "6c74899772aa6374e7af96361039393717b6824d2d9ff5591798381499f8c89a"
+  ],
+  "failed_txs/part-00005.parquet": [
+   3587192,
+   "20c00951f348756c493152773bd7ed43ae60637dbe344ecdbf89f23d60bb5795"
+  ],
+  "failed_txs/part-00006.parquet": [
+   3675943,
+   "c4dd535cabf396a44ec42b9a60c5a7d2707b1c02e325e342196971d6d30dbede"
+  ],
+  "failed_txs/part-00007.parquet": [
+   3693463,
+   "9fcef1e888f46d92da4dba86e9f05a82575595d0ba725bb78aa66deff446dba0"
+  ],
+  "failed_txs/part-00008.parquet": [
+   3695495,
+   "2c4dae07164591e3723c3a24b531ac672aab501c68adb93c87d3763ad10090bb"
+  ],
+  "failed_txs/part-00009.parquet": [
+   3746419,
+   "bfc150f050ab3b0275a70e6dd391cd3a8a603dcebf0845abf38524b486d082db"
+  ],
+  "failed_txs/part-00010.parquet": [
+   3844486,
+   "71dd2e599fa51c477b52ab943c31e2fa473e0d0cde563b762a467fe514e19fb5"
+  ],
+  "failed_txs/part-00011.parquet": [
+   3979522,
+   "2aee9f1c922668ea82fb9760b7e18bf6f9c634095ca523a342a8cb7c36c4039b"
+  ],
+  "failed_txs/part-00012.parquet": [
+   4178149,
+   "b1d5a543a66f0a805c4278502995414b1036969ff75b14f90a556da91d2e7d9f"
+  ],
+  "failed_txs/part-00013.parquet": [
+   4055656,
+   "91f31e7ba88f567e2e768c7a39e2252178cde2e2c5c34c4c0598049ecd1c6bd7"
+  ],
+  "failed_txs/part-00014.parquet": [
+   4132669,
+   "8643b7382ada6122027ff2d89176ad19fc372ddb8205dbcf1fa62a1f85c18baf"
+  ],
+  "failed_txs/part-00015.parquet": [
+   4223541,
+   "bfc759277488f872406f53fb1078015531eb3e9b06a495ec5ca0323a9956d7c1"
+  ],
+  "failed_txs/part-00016.parquet": [
+   4026099,
+   "673f0e7ee6f550b73e44fba5d4f441510f341e015323bcc5589dc6f73bf73f78"
+  ],
+  "failed_txs/part-00017.parquet": [
+   3873360,
+   "11a2c35f00ccb44d4b1518753f5bd702d94c86c0c2b319fac715a6b4e4a2c2f5"
+  ],
+  "failed_txs/part-00018.parquet": [
+   3932305,
+   "382d1f222aeaccb185272ca612f138aa468e5d175aee543021c1e656598bed68"
+  ],
+  "failed_txs/part-00019.parquet": [
+   3958771,
+   "49b7be130ed76e7e05df079257796104cf35e96cdcf6b0416f6aa9bb54ee96b0"
+  ],
+  "failed_txs/part-00020.parquet": [
+   3824212,
+   "764bd8778f5ab0d242b618752531a84a5ad65fde73868aebdbf4577d364436ef"
+  ],
+  "failed_txs/part-00021.parquet": [
+   3803600,
+   "6065d8b7e6970395dabddbfa74d349f3311aa767454052d92e7b72f2ab9d4bf5"
+  ],
+  "failed_txs/part-00022.parquet": [
+   3900247,
+   "22df2915c429df2d6b77d818ed4fb4e1fc5cc48452408c04faaa1233eb04fa78"
+  ],
+  "failed_txs/part-00023.parquet": [
+   3908052,
+   "b8552e2ee183fd1a55a45b0a20a614728090652451d5d24231453e544358385e"
+  ],
+  "failed_txs/part-00024.parquet": [
+   3966597,
+   "d2e0eb7532f939e3ea230dd5f38e392bb6b6b1f52dc5fc94c7ba4f7fd23030fe"
+  ],
+  "failed_txs/part-00025.parquet": [
+   3976704,
+   "04437b3bef4131672ad779d21242836868156fb2ccd7371689cde851667315bd"
+  ],
+  "failed_txs/part-00026.parquet": [
+   4003476,
+   "8dc6f7646fbb310b57ec154d3d5f2336a6162f7b6f164507460a8bc55a6a9fc6"
+  ],
+  "failed_txs/part-00027.parquet": [
+   4019538,
+   "a5f498ea62f75527c394e930c3535208ae1dc6c9de6b7f4dffe18fb2f6b27bb0"
+  ],
+  "failed_txs/part-00028.parquet": [
+   3990295,
+   "ab3232e5c2f58a84b9cfd52fb49dc08f6d29ef953e3160006c5b24ff93afcb2c"
+  ],
+  "failed_txs/part-00029.parquet": [
+   4095367,
+   "a83fb3a8c4483a320004e0fc18ed6cf9799e51f1f2a6a1ee3ac67c001d89c46c"
+  ],
+  "failed_txs/part-00030.parquet": [
+   4028897,
+   "dd5b51ea2f318f7ee792b1684852ebb1672b1cf7dc9498bea3cfe47061434a10"
+  ],
+  "failed_txs/part-00031.parquet": [
+   3990875,
+   "3d045e05d5efc6d561dfdbc5192a7c8f6caf79902d7f7c89a4c74a8ac4536fef"
+  ],
+  "failed_txs/part-00032.parquet": [
+   4296936,
+   "4a56aaea8f92b3d87a484f6c3c627da263a63bf20d39212b77606612b35d420d"
+  ],
+  "failed_txs/part-00033.parquet": [
+   3916664,
+   "e9619814c5f979314b1842a525df4c91a52e4b0cc7a0a0dbb7af2c88fb5a4f97"
+  ],
+  "failed_txs/part-00034.parquet": [
+   4102276,
+   "e0dce39faadeed7848efd4aa29fbc644f494bbcbd4e5f515bc3af631694b17b0"
+  ],
+  "failed_txs/part-00035.parquet": [
+   4084124,
+   "23dfe9e28be8792af0a5e82fd0bcc33731c583ba3d5dc7ff7db5d5ccb9f7f1a1"
+  ],
+  "failed_txs/part-00036.parquet": [
+   4158703,
+   "4dec21eb93a70e7862e2d8f21a157da7af86f850b6b5f67f353621971dd326a0"
+  ],
+  "failed_txs/part-00037.parquet": [
+   4049081,
+   "99f7a237ea7f8102cb531765bb29c4e721b9854213ca9e5ec768c41ec06662f6"
+  ],
+  "failed_txs/part-00038.parquet": [
+   3971113,
+   "3811eb0cebbb661344f10207c67974885fd79c2aada9458f8581a9c2b3d90016"
+  ],
+  "failed_txs/part-00039.parquet": [
+   4161206,
+   "d9e2c507315afc8d582f0ef8fe0a7dad2ed2b091840b73fe8b99c0e6feb93524"
+  ],
+  "failed_txs/part-00040.parquet": [
+   3964236,
+   "b51546a13a1c143f6fdcd6dd06b3cc67dcc5bb0bb4fa3abe7b07fc92fc1ff9eb"
+  ],
+  "failed_txs/part-00041.parquet": [
+   4051034,
+   "439d8df2f985afacf40fa53d788f8aadce44869d15a3014940e4baa0b606defe"
+  ],
+  "failed_txs/part-00042.parquet": [
+   3824089,
+   "94d439d1d63bd4e392a32440693f98e72d540672193cfa9421237a65eea94c01"
+  ],
+  "failed_txs/part-00043.parquet": [
+   3784637,
+   "e9986af022593ae2dcd0a5b7306d3ea7fc935e28ac1e0fbd33e193f19d54b7ce"
+  ],
+  "failed_txs/part-00044.parquet": [
+   3852616,
+   "b11296fe49c8b927679f34e6d4bba70d1c5faec3b49fa3c8f63d0bd8386e42a2"
+  ],
+  "failed_txs/part-00045.parquet": [
+   3920429,
+   "b551e8d845744cae5965570aa0204b131d23d7ad4611d57cbc96d2fb068cde99"
+  ],
+  "failed_txs/part-00046.parquet": [
+   4120732,
+   "779f50b9a3481ba4331c0c0f24bfd0a249d708267a8f5b0f211b58e70ee79535"
+  ],
+  "failed_txs/part-00047.parquet": [
+   4103976,
+   "9946aa2ca48d0f71862801c2268c9dfe1c4c4dc92d162962411e5aef9afdaa97"
+  ],
+  "failed_txs/part-00048.parquet": [
+   3948817,
+   "28b9b2359c5888ec3ca9ec25da60362d88c9534bdaa7d3de98fce555fa3e07c2"
+  ],
+  "failed_txs/part-00049.parquet": [
+   3951286,
+   "258fda9922c872000c95992d88a774d949d2c1e37d781fc18ee1777c98a70f49"
+  ],
+  "failed_txs/part-00050.parquet": [
+   3941168,
+   "72a3f14600cc6800ded21c404f57d8ae61243093f5ebabd4b6f84b2dd5cdc022"
+  ],
+  "failed_txs/part-00051.parquet": [
+   3884147,
+   "c9b729550afd6fa6d55d301e30f269463de3ede87c7d1048e7a237e1455e6574"
+  ],
+  "failed_txs/part-00052.parquet": [
+   3946749,
+   "0453de1f5aa9e6119e0a446955308d06072c07ed54ef439f5f72b462bf84f1f9"
+  ],
+  "failed_txs/part-00053.parquet": [
+   4092927,
+   "7dad7d0376f6f87085d64afcb8b1930ca9f0f6228a3b005cbf10f774023410bf"
+  ],
+  "failed_txs/part-00054.parquet": [
+   3958362,
+   "d4cd0d11fbe4f3a7aad3212a452816915fa1764399e413aef6ac202f59497bb2"
+  ],
+  "failed_txs/part-00055.parquet": [
+   4111977,
+   "b53c034ac3fdf30153126f031616c70c6d0f9b3d0a94d37eee7630595ffbd57b"
+  ],
+  "failed_txs/part-00056.parquet": [
+   3882926,
+   "4e55222bde338e00739a3e4b75c34d495662a377f138c6caafb64db6a324c23e"
+  ],
+  "failed_txs/part-00057.parquet": [
+   3989824,
+   "f66749d99c5cf163bc804f10b22be9b2b07935b4a237a8ddcb230daf01cbf223"
+  ],
+  "failed_txs/part-00058.parquet": [
+   3995623,
+   "52c85e29319d93a7a7c59ce8335a104fd51a34d60c8a16ae63ef990ddab39e9a"
+  ],
+  "failed_txs/part-00059.parquet": [
+   4071385,
+   "982eb490b6ee2e3b69babf37800a87f086e38599d9229a6bcbd7a4d2fed13700"
+  ],
+  "failed_txs/part-00060.parquet": [
+   4099953,
+   "c067c0a77298c55cdf692253b47870dd3681caa93863a0214372f5c45b014912"
+  ],
+  "failed_txs/part-00061.parquet": [
+   3845026,
+   "8285f303105c4840b2c21a825660815f056c5504c353d0ca1fcaf6a0ae734963"
+  ],
+  "failed_txs/part-00062.parquet": [
+   3713268,
+   "465d59456aa40ac1336fe35fb71e43d75ed44a591ace47feb8215f89464655db"
+  ],
+  "failed_txs/part-00063.parquet": [
+   3800052,
+   "a1989b464b15203897cd39c880f89e2d711fc94bbcbe0e121b71cc375122dfe4"
+  ],
+  "failed_txs/part-00064.parquet": [
+   3859734,
+   "04cad3119d3247eea622c5aaf637c137300a308fc29936d8dedfb0fb65759eda"
+  ],
+  "failed_txs/part-00065.parquet": [
+   3467083,
+   "639dfa22007a515048a83d45b833960a18d260c76e5dfccc9c3935f1c87fda44"
+  ],
+  "failed_txs/part-00066.parquet": [
+   2394328,
+   "4c568a83e22cd34097f69ba1aa2e78b8a848ea7c95cb0211fb59442d276fa4b6"
+  ],
+  "pump/AddQuoteControlMintEvent/part-00000.parquet": [
+   11598,
+   "886ef747ccf85514816acf5101ffbe30465b90676caa536ee8a3112e053aeb3e"
+  ],
+  "pump/AdminCtoEvent/part-00000.parquet": [
+   13913,
+   "e854b0356c6109fa08938339f5e0cb325306a764532c62f40288f2b423cd3df9"
+  ],
+  "pump/ClaimCashbackEvent/part-00000.parquet": [
+   989373,
+   "d1bfcea22be7d7ebeaeb38ea0728133e85ffd080ccc6872fbb0eef6904de4aa1"
+  ],
+  "pump/CloseUserVolumeAccumulatorEvent/part-00000.parquet": [
+   10669422,
+   "53d099b3a0b1613ec1b419de767aa7ddb885045510e6982770bad56552e69109"
+  ],
+  "pump/CollectCreatorFeeEvent/part-00000.parquet": [
+   1565313,
+   "02a3cf05f4d6b31ec0ec6779f7ce20b85d15429970829aa18b37e7d1a7757dc6"
+  ],
+  "pump/CompleteEvent/part-00000.parquet": [
+   189702,
+   "c78fdafc8e1382fb97649cd2232a96d02223e6d4d5e0f63131aa2dc4a79b9e84"
+  ],
+  "pump/CompletePumpAmmMigrationEvent/part-00000.parquet": [
+   175376,
+   "454193fc1773220b53abc4def8c8a122d8e6937e4b002f17daba8a71cf6497f1"
+  ],
+  "pump/CreateEvent/part-00000.parquet": [
+   6559973,
+   "17278e8a865c22c62506370bf055685e3ee0b8923193b12c6bd711a66b03a0fb"
+  ],
+  "pump/DistributeCreatorFeesEvent/part-00000.parquet": [
+   1450437,
+   "ba17b5cb4c9a95fc54beffac9888ad91511a7886abc19e833e10b1c2598ee600"
+  ],
+  "pump/DistributeFeeToHoldersEvent/part-00000.parquet": [
+   21349392,
+   "362147c7b88b9eeb5057130b7e13295c6e522968aa362987a355bc1d67f8d94c"
+  ],
+  "pump/DistributeFeeToHoldersEvent/part-00001.parquet": [
+   15042994,
+   "1ba813c6e60a0e492f1ce727419ce6c462724695f048d4d658c334acf82574b0"
+  ],
+  "pump/ExtendAccountEvent/part-00000.parquet": [
+   1787194,
+   "f0d31ff848f2e56487c6007dccb12f3d37a961dc9453b4927684916d774fc264"
+  ],
+  "pump/InitUserVolumeAccumulatorEvent/part-00000.parquet": [
+   1165952,
+   "0170d68fec37c0c262818b28a77fb47a459d24797c289808185f50815820ce3e"
+  ],
+  "pump/MigrateBondingCurveCreatorEvent/part-00000.parquet": [
+   357814,
+   "81fa894e9d732d10329197624b3e78abbb2cfcb8a05397f7c6fbbf5cce1579b1"
+  ],
+  "pump/RemoveQuoteControlMintEvent/part-00000.parquet": [
+   11110,
+   "1286fa359e1fd43192369debb4ddeca9bee73a92f181e19dee673be4d6e86ef1"
+  ],
+  "pump/TradeEvent/part-00000.parquet": [
+   38111764,
+   "be24098154cc6d1b2e18e4de758f03cf4e2bc545e5c1527ba98b15c67371e6f6"
+  ],
+  "pump/TradeEvent/part-00001.parquet": [
+   38458946,
+   "65c58da83a5f4de44a39a5bfe5649b142e6db0e5ff3f93f06ceccc66fb359294"
+  ],
+  "pump/TradeEvent/part-00002.parquet": [
+   38568903,
+   "29b3aabf8c405ec48d23168836836c109da80c687da44882b9ea460151e12af1"
+  ],
+  "pump/TradeEvent/part-00003.parquet": [
+   38769642,
+   "0916b3faa08cce2b983b30ec1bb14d42de429988c23e97d46915fdbffd48538d"
+  ],
+  "pump/TradeEvent/part-00004.parquet": [
+   38283561,
+   "2e2523fdfe57ffa1e5aa93a27850717d900e5924c2dd071a031ff38bda76f6d2"
+  ],
+  "pump/TradeEvent/part-00005.parquet": [
+   38511011,
+   "90979e56465d31e5809cbed835b9fb199a992951723618e2c6af17957a41cb56"
+  ],
+  "pump/TradeEvent/part-00006.parquet": [
+   38525387,
+   "2d7b8765236e2028385b2b048bb70ec9ed7e869948a10a1f7763d956e71f14eb"
+  ],
+  "pump/TradeEvent/part-00007.parquet": [
+   38476940,
+   "b304acd6a04db29da76892002be2ea6a74fa04207f4860a4029f007e52fe74a1"
+  ],
+  "pump/TradeEvent/part-00008.parquet": [
+   38505905,
+   "0d90a17e8cfadf0f0eeb72df729d2b41a209d7a027acdd696ed3e8c3b65d02d7"
+  ],
+  "pump/TradeEvent/part-00009.parquet": [
+   38302666,
+   "a721badcc110d5395163e7506573068fd56a9d8904f27ead3c80479c9c45138b"
+  ],
+  "pump_amm/AdminCtoPoolEvent/part-00000.parquet": [
+   12249,
+   "cd5a736ae1c0b11cd913551b3c8db76118432e0b23a08adcdee3395d21ceddb0"
+  ],
+  "pump_amm/BoostBuyAndBurnEvent/part-00000.parquet": [
+   2313047,
+   "1f8cccc4f72ac35776d3eb39e53665057c63dbb53853a7e803f2f2ddb43c2639"
+  ],
+  "pump_amm/BuyEvent/part-00000.parquet": [
+   50897058,
+   "4c2b0b481312a114d0f360bedd455ecf828e234e2d37acbc95f156b6564cf05e"
+  ],
+  "pump_amm/BuyEvent/part-00001.parquet": [
+   50853751,
+   "23eacf1eaf0b23c3ba4f4ddc34a3c874aa7ae676e82545030b372e9de1117950"
+  ],
+  "pump_amm/BuyEvent/part-00002.parquet": [
+   51351421,
+   "65d580985bf5f49b4b4cae0e5bc253f9a788a313966f606fd5f14af81c3b803d"
+  ],
+  "pump_amm/BuyEvent/part-00003.parquet": [
+   50858095,
+   "19a4a2d63f4f60b189bdf6c1f99d704406546929da9178ecfa008fd06d6ee11e"
+  ],
+  "pump_amm/BuyEvent/part-00004.parquet": [
+   50656181,
+   "c942e1a7561f04ca4930002310cc724d84d24a8b685bd3c05d995039871c1e57"
+  ],
+  "pump_amm/BuyEvent/part-00005.parquet": [
+   51130003,
+   "23c2d5b6718571dc25865989203154c2949892f3ee2ebfd7a283f8455ed8b9fb"
+  ],
+  "pump_amm/BuyEvent/part-00006.parquet": [
+   51596940,
+   "a069fce957c22d8fd676affef791c58c71150650bfee9be6659fd63dfeb1496b"
+  ],
+  "pump_amm/BuyEvent/part-00007.parquet": [
+   51226858,
+   "89e1f998f1028b15d3b9cba8af7e9d89ae0c9b8fb0d1d376b7b15cadbd767b5a"
+  ],
+  "pump_amm/BuyEvent/part-00008.parquet": [
+   51524615,
+   "f031e0e7577cfaba4ab71b93215326f7f4c38c9401d8ac55c12a8ffd882d010d"
+  ],
+  "pump_amm/BuyEvent/part-00009.parquet": [
+   51536263,
+   "7f84d28df189d8050ae3cc95ad41d9beae9e1ff38ca7fdd1d44398d6648c29b6"
+  ],
+  "pump_amm/BuyEvent/part-00010.parquet": [
+   51573152,
+   "4c3ad561b884e9e37b178b47f649df49e84f6e3ad3302231b91aef038c0ec90c"
+  ],
+  "pump_amm/BuyEvent/part-00011.parquet": [
+   51041478,
+   "1bfeef79431a4eb6cf43e0e443964a6a1e0658d6f95635ccb64a2bd3807e8347"
+  ],
+  "pump_amm/BuyEvent/part-00012.parquet": [
+   51987135,
+   "c2be62c5ffc2ca452a209e70fa0e0d046e53b74d11c699de93eeba34da28ec30"
+  ],
+  "pump_amm/BuyEvent/part-00013.parquet": [
+   51822702,
+   "d99646a3b653816e4e00984ff9fc624e44b15f2c718a50035b9d04d7c2077b05"
+  ],
+  "pump_amm/BuyEvent/part-00014.parquet": [
+   51507061,
+   "736e1e122640991254eb98fec10e5b46f3b1d4cf031663c1e7aee6387ed1239f"
+  ],
+  "pump_amm/BuyEvent/part-00015.parquet": [
+   51567473,
+   "208a76996b536d561a484ccf9f281278916cdce9655d9978b929aca8883aaca8"
+  ],
+  "pump_amm/BuyEvent/part-00016.parquet": [
+   50829128,
+   "d82656155b28c2a97fa2c48d1b6ab0897e553a54781de8d3ffc8865c99b45f1c"
+  ],
+  "pump_amm/BuyEvent/part-00017.parquet": [
+   50772165,
+   "93d33a1fb7acc106c2ebd34873bcbb891078e1954645e472d2096a74d5679625"
+  ],
+  "pump_amm/BuyEvent/part-00018.parquet": [
+   51145941,
+   "b378727c57530a5942720c6480aac2b2caea9decef070c51969d520bc8e2e511"
+  ],
+  "pump_amm/BuyEvent/part-00019.parquet": [
+   51231616,
+   "d2fb90af2f0b81af2f3f89fb6fb2b9867cb6cae0e319771911b5f6e1ea7cdf2c"
+  ],
+  "pump_amm/BuyEvent/part-00020.parquet": [
+   50914443,
+   "5aefdb4c2e73d187770dad3cdfe5c2bdb1cf4c2d3f38c15d693d39376d7e9c1b"
+  ],
+  "pump_amm/BuyEvent/part-00021.parquet": [
+   51023618,
+   "47d6d87b960af6ccb7fde429f4acc6dad3cea1e720fd72f76ecfea54031ccb3f"
+  ],
+  "pump_amm/BuyEvent/part-00022.parquet": [
+   51110090,
+   "63ddf9ce4215e15b4ad9d1830e4d71b51b2737c77516b775ff4920d17d026cd2"
+  ],
+  "pump_amm/BuyEvent/part-00023.parquet": [
+   50982823,
+   "ead304f694984d3daac7ffee4bc2f6acfc5e0207926c715a1ac86201b2dcdcfc"
+  ],
+  "pump_amm/BuyEvent/part-00024.parquet": [
+   50309470,
+   "bf03e96bddfedd4b5f33651e73aac5b1a77bea21c516b4d1f2e8faa259fa908b"
+  ],
+  "pump_amm/BuyEvent/part-00025.parquet": [
+   51252017,
+   "38a415fd8ce8b309b90ed95492f8b253bf206082f76e91cac4294fd4699589d6"
+  ],
+  "pump_amm/BuyEvent/part-00026.parquet": [
+   51803565,
+   "38e2d147722cc9c6d817d2d47ad70fb83e24027285dfc83e37a62550fc8aba2b"
+  ],
+  "pump_amm/BuyEvent/part-00027.parquet": [
+   51112656,
+   "eb1d45c343e4e6213e288cb39258ad90f856189b496200d47edcf683d311b625"
+  ],
+  "pump_amm/BuyEvent/part-00028.parquet": [
+   51451965,
+   "b6dd19cf121e301d47f0806d2a558b2161a85317a727c0041f3288f6084cc8f4"
+  ],
+  "pump_amm/BuyEvent/part-00029.parquet": [
+   51539786,
+   "545bc53140749ce14e2ba652aff50b3707c593a805c29ada9bc43cb47a01ca68"
+  ],
+  "pump_amm/BuyEvent/part-00030.parquet": [
+   50377413,
+   "df338cbbf146482735ed78b4b589cb5d2542a775160c97349773d2f98118321f"
+  ],
+  "pump_amm/BuyEvent/part-00031.parquet": [
+   49904464,
+   "32e177b785f91e9edb07980e79ccac716eca56a255890c065d8f193c445f9d7c"
+  ],
+  "pump_amm/BuyEvent/part-00032.parquet": [
+   49360314,
+   "323b6992921fbd6357161e3095e1c65012f84e03d5dddedb15da8e2b7f3f1c24"
+  ],
+  "pump_amm/BuyEvent/part-00033.parquet": [
+   25079375,
+   "d5f98fb858d8d299538ca17540ebaed75ea93298c8c4999d4de633087e3b4015"
+  ],
+  "pump_amm/ClaimCashbackEvent/part-00000.parquet": [
+   7333599,
+   "f32a1172fe9e3c7ce44aef93c6ae115175f595f84ba47a6ac2ef43d299ba5d34"
+  ],
+  "pump_amm/CloseUserVolumeAccumulatorEvent/part-00000.parquet": [
+   23550236,
+   "b93bdeeb285cdd6200aa063c2c0f689b1747c20345e87829f1f2b47d412fc40b"
+  ],
+  "pump_amm/CloseUserVolumeAccumulatorEvent/part-00001.parquet": [
+   23593311,
+   "e0351f74d739103745bdabe53dd0b689b53ac36c06aed8be2f1da4ceda7a4756"
+  ],
+  "pump_amm/CloseUserVolumeAccumulatorEvent/part-00002.parquet": [
+   9421825,
+   "bb1f2e6826ba26b7565b6e31b7a944673cb4b367282f5c0fa7e33a41152bb759"
+  ],
+  "pump_amm/CollectCoinCreatorFeeEvent/part-00000.parquet": [
+   584779,
+   "488a539c5b4bb135eb4155761da476f0cb952219a88eb1fb4b2cb2b331449b0c"
+  ],
+  "pump_amm/CreatePoolEvent/part-00000.parquet": [
+   927987,
+   "32303ddef58b093756dce1460999bad0cb89f4b0493a9c9721998fa00c1636f2"
+  ],
+  "pump_amm/DepositEvent/part-00000.parquet": [
+   52461,
+   "c866894e574ab9217ed5cfd26ce438d187a1a668d5baa2e69f61d82ea70ec7c3"
+  ],
+  "pump_amm/ExtendAccountEvent/part-00000.parquet": [
+   353383,
+   "3098e74255d658a65c0f3a59bc9913ee0245d2e7bdc34716d4e1216965fa2420"
+  ],
+  "pump_amm/InitBoostEvent/part-00000.parquet": [
+   128175,
+   "c3ee7335a8bbf6675840b58f0ecfb53ea1a462b61d238decfb438894c586ea96"
+  ],
+  "pump_amm/InitUserVolumeAccumulatorEvent/part-00000.parquet": [
+   1247997,
+   "e0025b604de4c1d92036d100cb2a4fb603d072ffd11623de2aa7a8928278ca4d"
+  ],
+  "pump_amm/MigratePoolCoinCreatorEvent/part-00000.parquet": [
+   13758,
+   "d9c5ba5aa359a3c47fd6e91722a848924e90e9f5049d3ec30f99e95fb0187eb7"
+  ],
+  "pump_amm/SellEvent/part-00000.parquet": [
+   54534676,
+   "a0a0962576ffa6f9bdde08329731bee2180fb7af04dde7f00c7519e5a115d900"
+  ],
+  "pump_amm/SellEvent/part-00001.parquet": [
+   54160769,
+   "d1321fbf9b94151d22520402729ccd619ece9b1cf78c3462b5a482558135f02e"
+  ],
+  "pump_amm/SellEvent/part-00002.parquet": [
+   54308460,
+   "4196fe4988f0f4f221614a9cfe4be796793e25eab433d55c68f5a319217e6a85"
+  ],
+  "pump_amm/SellEvent/part-00003.parquet": [
+   54191263,
+   "b8b030252d7d7b72dec1eb6081f8c60a4e791d3cb80d1356314a73fd0571df9e"
+  ],
+  "pump_amm/SellEvent/part-00004.parquet": [
+   54732854,
+   "592a62442fa61b26a8907d9ee02b3ed488f1d51e26faf90f7e34e36f8d0b3fd1"
+  ],
+  "pump_amm/SellEvent/part-00005.parquet": [
+   54238928,
+   "a1e62e47f882a4eadc18621b6237387942cb92cbc6b37cdf18b9a34968623138"
+  ],
+  "pump_amm/SellEvent/part-00006.parquet": [
+   54389561,
+   "3be66272d8b55d67acd7a095b1a469ced217cc91e709213a523afa49cb1b41ea"
+  ],
+  "pump_amm/SellEvent/part-00007.parquet": [
+   54773753,
+   "580b0e2af09c1ed1e4fc6e102ec0cfcd5029590bf28fdca2d64fe8d723aefe25"
+  ],
+  "pump_amm/SellEvent/part-00008.parquet": [
+   54786010,
+   "9447f98dfcbd087d1942b1a0f03a2921cb87cad5a3531e117c7a77cd6b4bc1b0"
+  ],
+  "pump_amm/SellEvent/part-00009.parquet": [
+   54907052,
+   "99d171496d15473328902edb29caf078b78c8fd15d333db7595931c9fa3b6142"
+  ],
+  "pump_amm/SellEvent/part-00010.parquet": [
+   54893295,
+   "1742111736c3597705cc6380fc9d9b4eca73ae6750071e72226c3df4ca7970ea"
+  ],
+  "pump_amm/SellEvent/part-00011.parquet": [
+   54787857,
+   "1f1e56c2aac4252059bce46ffd07f1d19991d176fe52af11440ca6e120ba4c62"
+  ],
+  "pump_amm/SellEvent/part-00012.parquet": [
+   55116461,
+   "f8438795364f2f9d89c4d57e9627533f88402ffcc5051267e72e574173d71430"
+  ],
+  "pump_amm/SellEvent/part-00013.parquet": [
+   55053918,
+   "912c317889e8491ebf109a673b986c1be802a322abc9b09c549a4f6f1404c470"
+  ],
+  "pump_amm/SellEvent/part-00014.parquet": [
+   54809744,
+   "52b08a99149a515ac6b974faf7dd37393c1cc1d62b4f98a8746b8f83a0d912ec"
+  ],
+  "pump_amm/SellEvent/part-00015.parquet": [
+   54570642,
+   "d8325a316b78f4843b337e05babec39591eee58c0971c91d2c7c540aa0fc5c9e"
+  ],
+  "pump_amm/SellEvent/part-00016.parquet": [
+   54380133,
+   "a3e8c1daa1273d393d380f41a60bfa4b5ea6b9dac4140d09d9c0deffb2b38d0f"
+  ],
+  "pump_amm/SellEvent/part-00017.parquet": [
+   54619775,
+   "ee9aada73c05cc17a8dc87e447daa2707b19778a083001a9655a0f829edfb447"
+  ],
+  "pump_amm/SellEvent/part-00018.parquet": [
+   54741981,
+   "bd16ba8511e92167a593a139fbb7f8a66735296e0737d832e83a55edf7e22ada"
+  ],
+  "pump_amm/SellEvent/part-00019.parquet": [
+   54191999,
+   "0ff8921f13eccea428b0f316b131a0a31ef3c0c474e81eb7791aba87621a5dc6"
+  ],
+  "pump_amm/SellEvent/part-00020.parquet": [
+   54644519,
+   "99c702e7421c7e841fdf12e431042fb996ae8c398e7f1816b506ffd1e223b67d"
+  ],
+  "pump_amm/SellEvent/part-00021.parquet": [
+   55111994,
+   "2ea28504d3a975d361c275d46fb26ebc226e902291f0e8520c8489df0d0088d3"
+  ],
+  "pump_amm/SellEvent/part-00022.parquet": [
+   54865564,
+   "0ef89dad323ddd48cb7a6068710d0e2aaaedd32420babcc7868665d73f677329"
+  ],
+  "pump_amm/SellEvent/part-00023.parquet": [
+   54772020,
+   "ffa22b8516b0f04b7a1ee52c5cacfd7194a772a42e9c4ae2e187e5ee64d29136"
+  ],
+  "pump_amm/SellEvent/part-00024.parquet": [
+   54481967,
+   "22946c4a7fdd86a58438f41a711d20311d3577753bdf171af87a012d5c2df901"
+  ],
+  "pump_amm/SellEvent/part-00025.parquet": [
+   54497737,
+   "442be95cd2b7b04c096e33f8cf83ab2bdf9eece64bee4dde8e2b01d087694f12"
+  ],
+  "pump_amm/SellEvent/part-00026.parquet": [
+   54200830,
+   "26dd41d53e9678f23863cb68c3421cc2480c05b8ebb7ccc099e42bb7c493ce9e"
+  ],
+  "pump_amm/SellEvent/part-00027.parquet": [
+   54033495,
+   "241950f139a026a51d054f556ff0eedb7ecc1f5eaa0f9aca80e5d808be88dfcb"
+  ],
+  "pump_amm/SellEvent/part-00028.parquet": [
+   54632890,
+   "cd9a0d19c886b844a4cdf8b24b26757597bd201b6005b5a4f375820ca3850fa9"
+  ],
+  "pump_amm/SellEvent/part-00029.parquet": [
+   54696041,
+   "f8fa7d4f6ba89917dc45c43dedf7485b005e1d4c94faef5a1ffc6ba551eb8d8f"
+  ],
+  "pump_amm/SellEvent/part-00030.parquet": [
+   54546483,
+   "7dbfb5534f94c95285a993c7f89c1f3f722ffa2cb9d2c915b35dff9c24443c56"
+  ],
+  "pump_amm/SellEvent/part-00031.parquet": [
+   54436336,
+   "30093f8f0ad1ecd37c2989595680b42e0a5fb605185d2f244a6aa24f1544eed1"
+  ],
+  "pump_amm/SellEvent/part-00032.parquet": [
+   54639998,
+   "a5694d12f31bb686f90c1eb39c3d7cff3ae6a72b1e70559e78f6ad0a31e79dc8"
+  ],
+  "pump_amm/SellEvent/part-00033.parquet": [
+   54285288,
+   "cc21119e244b6d4cce5d503c977f89c6badb4e08e03a023a352f1595e3bb90be"
+  ],
+  "pump_amm/SellEvent/part-00034.parquet": [
+   53697581,
+   "18aa80d4f7a31e7b19a5fe22806d307196bf5cf7874f43586b57e6882906ad69"
+  ],
+  "pump_amm/SellEvent/part-00035.parquet": [
+   54481875,
+   "59aaec55512ee0405e672c9270ba58515571488ad16a0a770f3b7d668392f70a"
+  ],
+  "pump_amm/SellEvent/part-00036.parquet": [
+   54491458,
+   "cd9f65ed71711c5f3e3a3a4cc640dbf6e86b782916a001c69b0936c980a84bb1"
+  ],
+  "pump_amm/SellEvent/part-00037.parquet": [
+   54623308,
+   "49788fd6c1a651c1ecf77553ef782b53ebd411d71ceaa5e9d59626fe3edfa006"
+  ],
+  "pump_amm/SellEvent/part-00038.parquet": [
+   54297758,
+   "1aee710d323778ca56322d82364713bc5d7a7e459c4fe207767d92c438dbd3a1"
+  ],
+  "pump_amm/SellEvent/part-00039.parquet": [
+   54799935,
+   "bdef897c1e588b05b68a015e4c9da62afe1b0e0bf51437eda7c72b7d00ac6890"
+  ],
+  "pump_amm/SellEvent/part-00040.parquet": [
+   54617447,
+   "a37096476473c68d1b057b16abe764755ebf3368357e229ceb8f424add04a20d"
+  ],
+  "pump_amm/SellEvent/part-00041.parquet": [
+   54851650,
+   "d27c4dd627fd4838c70e8ecb1d9824e914889f5e34ecea4f9cc8f96678530831"
+  ],
+  "pump_amm/SellEvent/part-00042.parquet": [
+   53964594,
+   "412b42cfaf7892242104c2fedf2443818de88051e833ab366baa5c784c3f8cf5"
+  ],
+  "pump_amm/SellEvent/part-00043.parquet": [
+   53710958,
+   "2c90a6f39e7bebf140f8dc4f40cb34de62b76379f2bf3b8ce2fe42eb1c60bb2e"
+  ],
+  "pump_amm/SellEvent/part-00044.parquet": [
+   52481660,
+   "f3bea369fdbff315504b46376066e54e14ab4efd37c4ba7d2378373a8e53ebc2"
+  ],
+  "pump_amm/SellEvent/part-00045.parquet": [
+   28824997,
+   "417f3f0fb9a624da7675ed2069ebb3d1cf61c1238a0423fdc1b53ab0a3f88ac4"
+  ],
+  "pump_amm/WithdrawEvent/part-00000.parquet": [
+   638558,
+   "d7df4c0ffd24a52e2ae99c3971226e7e6d00ce8f1e07d9824f8e885d5594fe01"
+  ]
+ },
+ "450576000-450792000": {
+  "_manifest.json": [
+   2392,
+   "efbafeb38580e054860307a2e9d4f0f7379c9a16e72c764a68cc8ca27269a509"
+  ],
+  "blocks/part-00000.parquet": [
+   3107943,
+   "3762d0ea60caa3f2925e56048dd4841ef623e6a80449702b3f34e2af21d67689"
+  ],
+  "blocks/part-00001.parquet": [
+   268623,
+   "08195784686d6a54a2075ff31fddf1235851f371e13b278488b95a5350ce77a0"
+  ],
+  "failed_txs/part-00000.parquet": [
+   4027354,
+   "8f2a24dfbb50ce0e8837223d520b2cf3f76cfd5587c6bc7ad80e8fd90d53494e"
+  ],
+  "failed_txs/part-00001.parquet": [
+   3966569,
+   "bedb66d4e18d72fb369f4a93fab79de5d534f9021bcaaabeed27899a83fae7f4"
+  ],
+  "failed_txs/part-00002.parquet": [
+   4438107,
+   "7f972b0ccd355610393a3b58168703f38b6513f3301e487284397e2bc75fbb74"
+  ],
+  "failed_txs/part-00003.parquet": [
+   4755199,
+   "bf8d9bb6b319deb859d1ff1c7a67e2ce3e00109545322eb2ffdd2ea08e0a12f9"
+  ],
+  "failed_txs/part-00004.parquet": [
+   4758411,
+   "6e3fd929805e36767809c3c7d1777691a4b9597ca45b701ae63209208171353c"
+  ],
+  "failed_txs/part-00005.parquet": [
+   5072427,
+   "8989b7bdad0228c7fa3a21166428b281f15c7e7b9910874831fb0986e1a92ed7"
+  ],
+  "failed_txs/part-00006.parquet": [
+   4829616,
+   "34645a86ccf85d456c456ed8a649c909c40653ddd0d33de673a23b1e0be86297"
+  ],
+  "failed_txs/part-00007.parquet": [
+   4756117,
+   "c3c321fe3b03c6f7520e7b9ea41de93d57ac8e832749e5a6760d04d4b0456fdc"
+  ],
+  "failed_txs/part-00008.parquet": [
+   4719887,
+   "9a8e45734a57bd109100ae7b92147da788e5b1b31e15264e8dc9bc2ea2950541"
+  ],
+  "failed_txs/part-00009.parquet": [
+   4790105,
+   "d1d60920699edd2f2e200cb323bbbca2e609fd1f63ddda85b64b5a0072ae46b7"
+  ],
+  "failed_txs/part-00010.parquet": [
+   4816647,
+   "8977ec864e816aa7049a0fedfcfedf038e1aa48be22df2c19608af79581d69dd"
+  ],
+  "failed_txs/part-00011.parquet": [
+   4575588,
+   "ce86f2c5e01248971e9e3e1046903dee2037a5fb740dbfae7634b5be5bb92206"
+  ],
+  "failed_txs/part-00012.parquet": [
+   4615075,
+   "908d2fd6b77c50e4b2136c14c9383a9703b0825b4d6aeee095c01b99f078bad2"
+  ],
+  "failed_txs/part-00013.parquet": [
+   4545041,
+   "30c411858dce2a1ce164dfff50c61fcea4ac2d2812aac63d5518f0fe35c43a19"
+  ],
+  "failed_txs/part-00014.parquet": [
+   4575390,
+   "c6598dd21705e337a5b07c3f0050f630349ad7f701cb4275ad46687b819d4a37"
+  ],
+  "failed_txs/part-00015.parquet": [
+   4628706,
+   "2a8a1e6ca0a1265710cc56393eef5909332cf09f1ec12771662a9051636d23e3"
+  ],
+  "failed_txs/part-00016.parquet": [
+   4747387,
+   "bda89ebebbb85c861cb36d3e7a8a55f88df2b71683cc9b0e63364ee886e3a2ad"
+  ],
+  "failed_txs/part-00017.parquet": [
+   4610852,
+   "06398843c029520be98e390f4fe724ee5f9cbc69e85eb957e44dc2f72c0b9fc8"
+  ],
+  "failed_txs/part-00018.parquet": [
+   4723211,
+   "d6ae0665372cb64dfec6bd641e71e990afc25d9ba1b1e8fe3464266ec9e36401"
+  ],
+  "failed_txs/part-00019.parquet": [
+   4645457,
+   "68c6563ed096effe2fbdae3c59ef8756ae197313674cb97e71082fbbae42de44"
+  ],
+  "failed_txs/part-00020.parquet": [
+   4472543,
+   "451edb00b5f6a44a02deecf5d7762e6846812ae5cc53386101abaa2dd4fb41f7"
+  ],
+  "failed_txs/part-00021.parquet": [
+   4607094,
+   "6edcd74a4324f0faae14dfab8dd308e2f20d37d4123202014f030002dad439c5"
+  ],
+  "failed_txs/part-00022.parquet": [
+   4904562,
+   "41c6597e2f007f475b826169d56422b4221a9c71ada88bde493e06d2eeecfd63"
+  ],
+  "failed_txs/part-00023.parquet": [
+   4930816,
+   "9eb59cf4ca183cabeffaf8c6f388993723680d318fac1001dc62c54202206237"
+  ],
+  "failed_txs/part-00024.parquet": [
+   4924501,
+   "0df3ac8e4bdc0cfdbfbf41c358cc11b5507b44142eff4f649355caea332f5fa7"
+  ],
+  "failed_txs/part-00025.parquet": [
+   4891279,
+   "c4acc92b01bef63d931800a5f1885ae39f3d19b5ddf4ad41074d895c3799c77d"
+  ],
+  "failed_txs/part-00026.parquet": [
+   4884292,
+   "c77573914048263db8ab611ee19cb1fa7fc071ebc0e0bcf6a07bdb737a2068e6"
+  ],
+  "failed_txs/part-00027.parquet": [
+   4817565,
+   "46544fb56530576413adf9a1fa464043df2efec35f5f2f35444f93322cc0ef30"
+  ],
+  "failed_txs/part-00028.parquet": [
+   4974142,
+   "6147e92e08db7df84f00680a29b74b195f8d2608c0fece9fe01576ab2cdf6b75"
+  ],
+  "failed_txs/part-00029.parquet": [
+   4729846,
+   "3d460949f949faf2cf39be02bf4f8f91d4a8221239b5a13b0a5cc39d77cfede5"
+  ],
+  "failed_txs/part-00030.parquet": [
+   4994665,
+   "d4cbee4d59911a9538d50add31bd8e7630d91550066acfdfa941bdd3e3c43bfd"
+  ],
+  "failed_txs/part-00031.parquet": [
+   4980140,
+   "3765446255d69771d4037c805e4ab001c0cc9e3184a01a5e1faeff3fb76d6270"
+  ],
+  "failed_txs/part-00032.parquet": [
+   4896836,
+   "b0a8f1a16a4c2e72bae08e97371af3c59c0596e8295b37d1470c7f741ddb669e"
+  ],
+  "failed_txs/part-00033.parquet": [
+   4869909,
+   "3abd851b64c4c53a15ab56bad77b52fe73e530d5f50ec0672dfccc2df7cd54e0"
+  ],
+  "failed_txs/part-00034.parquet": [
+   4899701,
+   "18ea152ea0345e9c4d1e4cf413a5490ba9d5f7bf7b8dc0b8129da35f53a8038c"
+  ],
+  "failed_txs/part-00035.parquet": [
+   4780319,
+   "d3c7cd9e90eacbf05e0f1d1abaa4b619575eca5af97fb5c505c41b13a574504d"
+  ],
+  "failed_txs/part-00036.parquet": [
+   4840487,
+   "052c3d329a5ef6cde719e9c0d469129830909eff1442ce1a201204752557e53c"
+  ],
+  "failed_txs/part-00037.parquet": [
+   4920979,
+   "e9f70b297dc09eff6a5c64be8ffe3053ae0b2f5b2a53fbb3e5ebd6c81d2031d5"
+  ],
+  "failed_txs/part-00038.parquet": [
+   5015213,
+   "4aae38ae2b3e3fbfca78be0c8baf1e8d522c52e50eaf608dadfab94637790a12"
+  ],
+  "failed_txs/part-00039.parquet": [
+   5061321,
+   "600abeacf272f2a335818767bc4139d3bf0805d8f42b9303fe87b51f011fde81"
+  ],
+  "failed_txs/part-00040.parquet": [
+   4609065,
+   "f177ecf3bfbe3834b65c9ccd6080136a6010be4dc8e9055fab2cdf8a7807dd59"
+  ],
+  "failed_txs/part-00041.parquet": [
+   4603752,
+   "5b9f3af593965a6078911fb6f3a98715c3271b2af93a41a2b1105a7f20a01914"
+  ],
+  "failed_txs/part-00042.parquet": [
+   4705400,
+   "f0188d115bed001d68c23778a318e46326b5126636724351c9475a39599743a0"
+  ],
+  "failed_txs/part-00043.parquet": [
+   4821865,
+   "7e3cd96d491abb1aa61b770f6418eedbbcbeb97ae3f4b87ef7490a6e3204e3f1"
+  ],
+  "failed_txs/part-00044.parquet": [
+   4720815,
+   "011ed2dfd231836af49826f63112baba22f7f087afdd800d428736546d8a2a2a"
+  ],
+  "failed_txs/part-00045.parquet": [
+   4649371,
+   "0a9ee2a1d750e26d62256a5ed9bfa8e92e524b22fbd4ca986de09d1d2600d26d"
+  ],
+  "failed_txs/part-00046.parquet": [
+   4878200,
+   "0ddfd63f156ade047b89229e47d170587716524f46f60def2e5df2edbab3172c"
+  ],
+  "failed_txs/part-00047.parquet": [
+   4847556,
+   "528f874e301006059e8b74f3e2a23523ebdbd0a0e3ba467d123524d8b6487a25"
+  ],
+  "failed_txs/part-00048.parquet": [
+   4620748,
+   "c1cff6f938aa766e05b9a0b62c2ce71097ebaa0eb2a7a22f1de0ab848bb19810"
+  ],
+  "failed_txs/part-00049.parquet": [
+   4839106,
+   "4bd95c85d9ab3b712a5756e397a917ffba14923352331953f5cf554f390b151b"
+  ],
+  "failed_txs/part-00050.parquet": [
+   5064838,
+   "63f9e013759010c97058251005f52c55e50cf07739b4ba1f6f80723c47542d2e"
+  ],
+  "failed_txs/part-00051.parquet": [
+   5019295,
+   "9114f6d76cc3405fa2efada15231dd7583431e324f923ff73dfb84c9340f7eeb"
+  ],
+  "failed_txs/part-00052.parquet": [
+   4943180,
+   "9d7d4803f3c66629b2af8549b257f8f54569a1288e9b513111d316770960ad8d"
+  ],
+  "failed_txs/part-00053.parquet": [
+   4760726,
+   "15be56c493aaeda9db428639136e74bda5a5d1a58f875e3410a6488b7cc2e8a2"
+  ],
+  "failed_txs/part-00054.parquet": [
+   4779552,
+   "492ba27710780fb04833f4fb9998ed0e4d3631748320785f31dfbfc46f96c306"
+  ],
+  "failed_txs/part-00055.parquet": [
+   5122701,
+   "6b10df16ab2162cf8a724354bf2b63e465f779bcb65c1f2b79d6b1b533d7f5dd"
+  ],
+  "failed_txs/part-00056.parquet": [
+   4888629,
+   "591e927c44d4f18f0fdc8f904720abddedb26210669c3eecef3feeca44f35726"
+  ],
+  "failed_txs/part-00057.parquet": [
+   5055083,
+   "ffab5fe3b886d4e61ec9f6c2edb31d2ca3ca4eed6f52956b6641b01f0785d45d"
+  ],
+  "failed_txs/part-00058.parquet": [
+   5088094,
+   "c68b66bf642ec65085a12908e110cef61de4726726271c2387c5de5282fe689e"
+  ],
+  "failed_txs/part-00059.parquet": [
+   5031017,
+   "52cc40a10d08abccae5324ec2ded284032722b8dd8ec1ba98a07549b4aeea1ba"
+  ],
+  "failed_txs/part-00060.parquet": [
+   5062322,
+   "7e89e9a804f4c5533f65f1bb020b93b6bf9e374a0a37ee25525bf8fd2514624b"
+  ],
+  "failed_txs/part-00061.parquet": [
+   4831872,
+   "2eebd5af02a08b07f977e75f7c0aad7501eee373406defd47c3d4cf02db549ba"
+  ],
+  "failed_txs/part-00062.parquet": [
+   4752519,
+   "de46efb24b34ffe64e0cf500f7cb01ccdefe4ddf093856e4ebc3f0db53ae672d"
+  ],
+  "failed_txs/part-00063.parquet": [
+   4881863,
+   "a1ce83e521e49b6119c5f380b8159bba9c7259065688e47f33bf39bfdbaf42f5"
+  ],
+  "failed_txs/part-00064.parquet": [
+   4968007,
+   "5874c9fa376015815fb60dca4e3b7258368a81daac1c5230bc397849205545bd"
+  ],
+  "failed_txs/part-00065.parquet": [
+   4807308,
+   "15ef17a16804a2c7e762226eb2ccf73d78b44c19d55d955aa7a6fa0f873c11ec"
+  ],
+  "failed_txs/part-00066.parquet": [
+   4933424,
+   "f7c16d06cfaa33c2142640f2f5ad50cfdfd5185f1891e65be940ebae05615970"
+  ],
+  "failed_txs/part-00067.parquet": [
+   5098010,
+   "a220f3b81f5791784761dd4aa64b25ce9467270093bf7f63b823f78ec24068ed"
+  ],
+  "failed_txs/part-00068.parquet": [
+   4942499,
+   "099f9b45e9ed4ae71b4e5d6fbd0f4e526704db64b4c46ac015a1b81c5dfe0d67"
+  ],
+  "failed_txs/part-00069.parquet": [
+   4917442,
+   "4ab66a1b89bf42c4ec88b32fc92ce32708b029e77e877a55a45ea703f360db8a"
+  ],
+  "failed_txs/part-00070.parquet": [
+   4767792,
+   "5f97d9dbc7383c915678488ca563126697a166797353850262f392eba2cf7201"
+  ],
+  "failed_txs/part-00071.parquet": [
+   4910186,
+   "296b458dd3ab1f95390356bcabdd5dd6a83ce529855be90998795c0dd6561c2c"
+  ],
+  "failed_txs/part-00072.parquet": [
+   4907432,
+   "3815626130d5fcc2c9d2f23b9024c5981876aa160bb976f3be8522f0158dd055"
+  ],
+  "failed_txs/part-00073.parquet": [
+   4997927,
+   "e69a90f3bd6dc19d0056078cef585edc8c4c3cd72fb1364f52137ff3ffc72eed"
+  ],
+  "failed_txs/part-00074.parquet": [
+   5067508,
+   "4867c78d167790f594bde546feec0d23a9cde735c1a278854b6bd349e15d0769"
+  ],
+  "failed_txs/part-00075.parquet": [
+   5097721,
+   "5b499bfb1266bf9d3ca554522ddd5a1d5a7f9f50d814807a9d4eac79c419b8d8"
+  ],
+  "failed_txs/part-00076.parquet": [
+   5113100,
+   "bd2c8f76bcd6e005c680a92e1528e3eaeb358ad77f2feffef0972099c99fdfae"
+  ],
+  "failed_txs/part-00077.parquet": [
+   5112545,
+   "c1b4f996cd8a3127635ed9d66cfaaac5fdbbb70d2321a0a594b8c992caef75d1"
+  ],
+  "failed_txs/part-00078.parquet": [
+   5270810,
+   "fafbe8ef0ee3fdf2c7f1ab0ee1c887c4993b529c7221473fa14f1a53c23190b5"
+  ],
+  "failed_txs/part-00079.parquet": [
+   5125062,
+   "8b04bbf860cf46302cd8b596250e5feaa786d7acf5d388721866280da184e3d1"
+  ],
+  "failed_txs/part-00080.parquet": [
+   5199606,
+   "c1a874c64d6b1f256d216f2f42d31ea9a93d8eec64883d95a6b777da3bed9977"
+  ],
+  "failed_txs/part-00081.parquet": [
+   5157671,
+   "6c7cf4897567d55b497c08b05cf7aec4035c6f96e05bfbc008a6fe774bbdcfee"
+  ],
+  "failed_txs/part-00082.parquet": [
+   5162146,
+   "91d5a78444f298b7b9f05c89e02802a756eb6730d2f44d2b468cea37081d59e3"
+  ],
+  "failed_txs/part-00083.parquet": [
+   4971803,
+   "3aabf0b72e128a0a4902103c39c86cc7a53a261610e23073d4b370373a8b6acb"
+  ],
+  "failed_txs/part-00084.parquet": [
+   5040469,
+   "2ea6d4d18b6cf1e3f47a6802c19f41f8a710ce9cfe6e5edab6503de1676f32ac"
+  ],
+  "failed_txs/part-00085.parquet": [
+   4784863,
+   "f9c81f530dcd953c49cce4fefb677077dba933b36611208303b4f612dc76efa0"
+  ],
+  "failed_txs/part-00086.parquet": [
+   4979756,
+   "1ddacb181cd8dd9b971a83c0750cb46a85c993b82ce886d6f5aab904573a0348"
+  ],
+  "failed_txs/part-00087.parquet": [
+   4839436,
+   "daa6c49467d27de5f2944862673823009f7c15f4cdfdd88d3afb9ccfc3ab7ddc"
+  ],
+  "failed_txs/part-00088.parquet": [
+   4725343,
+   "54d113e006f20efa989862c844758ca16b59385de42477901e98eb20c28c9bd1"
+  ],
+  "failed_txs/part-00089.parquet": [
+   4711203,
+   "8a863ea955f005fd03ae97b63b0433274facc56d1cefb21f79a6b5872d1f8d55"
+  ],
+  "failed_txs/part-00090.parquet": [
+   4831942,
+   "ea2384e89b70682e29cfb95d17cb108481fa397a9bca5c07aa21ff75fc669951"
+  ],
+  "failed_txs/part-00091.parquet": [
+   4922671,
+   "a5e0b1f5c166eb6d6bd8c9bd2ee188f30f77b4e9aa66f480fb09b0dd1bb0d757"
+  ],
+  "failed_txs/part-00092.parquet": [
+   5054301,
+   "c26f97d35a385db0c3d9d37b5899efc146f0eb15c69eebf59974d2c7ae450b41"
+  ],
+  "failed_txs/part-00093.parquet": [
+   5112104,
+   "b20cb9eec0d86dc6f4d695bfffe3c2a1044d4773cc2baf0540a32a8b1b08a4fc"
+  ],
+  "failed_txs/part-00094.parquet": [
+   5111745,
+   "6b0a234bac30bdde3cdbbbdc0dfce3a2ed5d10f99b2946f77a5855977134df92"
+  ],
+  "failed_txs/part-00095.parquet": [
+   5176106,
+   "73ac4b832f735096c98ab43b629eb3bcac274869aeb843c050e1be08f83fa0af"
+  ],
+  "failed_txs/part-00096.parquet": [
+   5176585,
+   "53108721a139ec5ef855ca614f24ead6fbcf38ed0bef9214c49e1bfcd98f8656"
+  ],
+  "failed_txs/part-00097.parquet": [
+   5128527,
+   "3c177b7c2ec06699671555cde8d7ca29f8def07b3fa7e4f65f2aaa19352f4653"
+  ],
+  "failed_txs/part-00098.parquet": [
+   4891077,
+   "82b7c4a7b5a5b82db923f9b64e3a22793192a2eb6547c4d8d3cb72222c738cdd"
+  ],
+  "failed_txs/part-00099.parquet": [
+   4761382,
+   "9940814fe28372195be41d5046d0f605aad494199fd1095373a452fd678fc00a"
+  ],
+  "failed_txs/part-00100.parquet": [
+   4819646,
+   "c43fc1256c934ca7d92bf8c7c5e5f89dddf58a7b23e8e1223d8d168877b3082c"
+  ],
+  "failed_txs/part-00101.parquet": [
+   4872511,
+   "13a8bde915018f8a58f92620ef1da7d62c689d49189ff7bab797cce2a695d4f0"
+  ],
+  "failed_txs/part-00102.parquet": [
+   4795015,
+   "a58496aef639f820632f01c0db663f8bc7ed0e0bdcc136353fcbb73528f16e72"
+  ],
+  "failed_txs/part-00103.parquet": [
+   5000664,
+   "f845be45069cecc1976d5e85595242158c85279c3cf78c44f98cf8ac40ba7064"
+  ],
+  "failed_txs/part-00104.parquet": [
+   4807264,
+   "71d2d4277da48d2b6d570076fc6b7b0f102ba104d87a7d627bdae9dbeca1e8d4"
+  ],
+  "failed_txs/part-00105.parquet": [
+   4734387,
+   "ce806dabda54788c14f0d81a6e35347ea3b3c9a2cba3f2fcd9de1bd02c06e5fa"
+  ],
+  "failed_txs/part-00106.parquet": [
+   4857994,
+   "f2e8af3c6525f6ac69982e80773170a1993b411b6ff58f5258f7bf445c08d85d"
+  ],
+  "failed_txs/part-00107.parquet": [
+   4811916,
+   "7f3eed4ddae63d7eb28da90f0e0742657a61eb60346a006715118db91a873c08"
+  ],
+  "failed_txs/part-00108.parquet": [
+   4972757,
+   "524eecbcacf2e20855dd74de9b9cea837ad1725ac8928540b10340781838f500"
+  ],
+  "failed_txs/part-00109.parquet": [
+   5029129,
+   "a2a38fd515d725db88e8039c5f022ea862dc1ce524f3a47e6eafc76654f8c9cd"
+  ],
+  "failed_txs/part-00110.parquet": [
+   4840172,
+   "7e7c455ada3f6e401dd0f7f7081f4d64b49f7fe2ff8d8d584607d6cc66a20c72"
+  ],
+  "failed_txs/part-00111.parquet": [
+   5025514,
+   "3f3d80538d4e6a81c6c14f2780456a2c95b96b4e5c08a4847993e53f5325e9d4"
+  ],
+  "failed_txs/part-00112.parquet": [
+   5010465,
+   "53c1d0c27fae0a54a0d90cbeeb5ce100383e677edbc74d776b4c8f7acb46ec7e"
+  ],
+  "failed_txs/part-00113.parquet": [
+   5230421,
+   "84cbb3374801951b1be97b55ee8674b9c606d2769f7bd87e110e5d8149b16fff"
+  ],
+  "failed_txs/part-00114.parquet": [
+   5150232,
+   "0e503ab2abdf4618b6b441acce2f456a13bedcd4288007fa53405331341397ad"
+  ],
+  "failed_txs/part-00115.parquet": [
+   5237533,
+   "72fcc393dcf3ec40fc9e673a34dbb80dc6ff2d68059f7308818096cc807ba2be"
+  ],
+  "failed_txs/part-00116.parquet": [
+   5437421,
+   "2e33134ca0337b0f18807870034984e6a11ef990fc8a603938f4f57ee40f5d7a"
+  ],
+  "failed_txs/part-00117.parquet": [
+   5150441,
+   "c1e7b188e42ad61ce7aed236ae6384f46233cfdb283fd421b7341f7671f343b2"
+  ],
+  "failed_txs/part-00118.parquet": [
+   5149288,
+   "e42c1a70d0c0ddd8cb5dbad5069deb2eaebe483dfc09c70ad6d58c001a73718d"
+  ],
+  "failed_txs/part-00119.parquet": [
+   5143736,
+   "1a6d5469d2092ce6f40ce9875f67a07473fc74955da9cbe6d1fdacbd9255ad25"
+  ],
+  "failed_txs/part-00120.parquet": [
+   5203574,
+   "671b80b49a44b07e6e2bccb6c0a087ebce457479f20e58bf8ad0132aefb0f41b"
+  ],
+  "failed_txs/part-00121.parquet": [
+   4997911,
+   "70314a43c4c8c378ee608307d7fbea0de202736ac164e79aec88bc1fece4af0e"
+  ],
+  "failed_txs/part-00122.parquet": [
+   4946233,
+   "0ad5b32cbb7c1c5810f9f67d9fa5f7f73da168964dc5460fc1883bc4bd839cce"
+  ],
+  "failed_txs/part-00123.parquet": [
+   4653168,
+   "f73a0c4a5bb908ee188a5041f395c62a3bf3c5b26eed5465f257fec313284e42"
+  ],
+  "failed_txs/part-00124.parquet": [
+   4850517,
+   "fd2ccd7bb8f3f8512ba2d7609c645b771b83610b04f05c6d61392e73b04db1c4"
+  ],
+  "failed_txs/part-00125.parquet": [
+   4923219,
+   "571d30703346b6c1df56e4041251efdd87ebb09984f7bbf3f00080ad36822a47"
+  ],
+  "failed_txs/part-00126.parquet": [
+   5020054,
+   "a0c78b8a6f6f597e2e2177d7836bf3225d50cc761c23c314e0c118ae815713fe"
+  ],
+  "failed_txs/part-00127.parquet": [
+   5089893,
+   "8693f979b739f326c8eef61ea6ce66aaefd68cd00f9b5e4b714c5201f7b0ecee"
+  ],
+  "failed_txs/part-00128.parquet": [
+   5040542,
+   "3a959677b91e974aa6bf84af39c5e6422d41cb274fc2d77a4b96757811c21f7a"
+  ],
+  "failed_txs/part-00129.parquet": [
+   4980633,
+   "938e8cda5cd465f65bf36b1848b07e289762f1a08174164f367c463446ad6c98"
+  ],
+  "failed_txs/part-00130.parquet": [
+   4997351,
+   "caeafd77ce15e3c67874844d705fbd4c8b1128dac175a75a41b0130cbc7f598b"
+  ],
+  "failed_txs/part-00131.parquet": [
+   5154576,
+   "f0c9bc4184500998377d494151c9dd5b2a1697e3d8c38b09d28257e99b71082e"
+  ],
+  "failed_txs/part-00132.parquet": [
+   5033348,
+   "090cbd59ebd4f525db19ca166a1ab139fdf0992c4a154a3d97e6d71e59efe6a6"
+  ],
+  "failed_txs/part-00133.parquet": [
+   5020231,
+   "54d361878d7b4a455aa2df5c8fafea90de3158d1bad2433827f48c5b3cedf31c"
+  ],
+  "failed_txs/part-00134.parquet": [
+   4966951,
+   "3e1765726bb60a8d946893f07884e9dde5caebd499c6d55aab2a22a3be9c6151"
+  ],
+  "failed_txs/part-00135.parquet": [
+   5143539,
+   "946b25641b4d89b9f5b43e3e9cbcb866cf8c75ad7bf5a3c63ffab93205d822b6"
+  ],
+  "failed_txs/part-00136.parquet": [
+   5136829,
+   "d0d4c63f2d57a0c8720b1075c5d8015b937888d216f05573edd56087dab4122c"
+  ],
+  "failed_txs/part-00137.parquet": [
+   5021733,
+   "d430936bfb867191ff7bb35fbfb287f02c51611b035ef0b92ab463a51949df4d"
+  ],
+  "failed_txs/part-00138.parquet": [
+   4891529,
+   "cdd4bda7dfd5118e7c5a8b8f7afd4dbfbb26e7bdec2df0bf3594b68a56c489b5"
+  ],
+  "failed_txs/part-00139.parquet": [
+   4793746,
+   "1c69f9d3c15d55e31654f59ead9afa6c2b7b536b1d6e5f9c887a5fce7350c046"
+  ],
+  "failed_txs/part-00140.parquet": [
+   4720331,
+   "b8aca884198632deeb74c974de3b5160f194de6100d59cfd84139e9a34753846"
+  ],
+  "failed_txs/part-00141.parquet": [
+   4637680,
+   "d8e1c765213aff3cdbd365b8acf60bdc0578c8f409e0f09e2ec4d73d9a410c91"
+  ],
+  "failed_txs/part-00142.parquet": [
+   4398993,
+   "e57a59fe6e12ed17e6bfc3551aa4944d8ba3a632f47ea1a09c045b43a6399289"
+  ],
+  "failed_txs/part-00143.parquet": [
+   4645812,
+   "a38ab35c75cc2e9c0fee0918baae80f9089bdf594b15ef39b7e7dc1eec1e49af"
+  ],
+  "failed_txs/part-00144.parquet": [
+   4052640,
+   "3509331393f42603be9930cd4109b4d395b0df8f87dcd322523d5d8671103433"
+  ],
+  "failed_txs/part-00145.parquet": [
+   1786544,
+   "bd83d71cc8c1c885d7c813667f4a8d2b33d7685e0fb8023fa255ca53be3362b9"
+  ],
+  "pump/AddQuoteControlMintEvent/part-00000.parquet": [
+   12188,
+   "2ea2595ec4d1d9f58b3f02b4b0b4b3e7c01c74ba467867951a8619b1733755e7"
+  ],
+  "pump/AdminCtoEvent/part-00000.parquet": [
+   14513,
+   "2ae4f58d073828dba4ed50e81fa752c99adafe213992ce6e31224d94e31d8d21"
+  ],
+  "pump/ClaimCashbackEvent/part-00000.parquet": [
+   881575,
+   "ab919c2e852cc2586c506f74f4fe71d585b05a3f62f2a3d5025483d344b21c1f"
+  ],
+  "pump/CloseUserVolumeAccumulatorEvent/part-00000.parquet": [
+   20620592,
+   "df8adaa16ed03e8d1137895b333d49e9229cd30729ae3702f5a3bd4c27dcaa39"
+  ],
+  "pump/CollectCreatorFeeEvent/part-00000.parquet": [
+   2981099,
+   "0bca451fcb7e9e73d19a84e9d788e8ea8d3b1d5bf3a548b150e188bbc58887b1"
+  ],
+  "pump/CompleteEvent/part-00000.parquet": [
+   214826,
+   "5bab32410c383ded087341cf765a76e068532d2e7aad9f0d2e12f2bccced53c5"
+  ],
+  "pump/CompletePumpAmmMigrationEvent/part-00000.parquet": [
+   193119,
+   "cb494e3c7359b383ef03091de966b143e4823c86a0f168140dcbebfd37dc404e"
+  ],
+  "pump/CreateEvent/part-00000.parquet": [
+   11003297,
+   "feab901759780aa93a4ff6d857181ef5821d8e89a76f4615f25f448695960e53"
+  ],
+  "pump/DistributeCreatorFeesEvent/part-00000.parquet": [
+   7972866,
+   "1bdbcd444be05874232c80996ff041d69555f00a4f229a44e1b6d0eed53d0308"
+  ],
+  "pump/DistributeFeeToHoldersEvent/part-00000.parquet": [
+   29282003,
+   "ae03d01ed08acbf802507d442977d23d96a33b15abc8a5f3885941075e7db04e"
+  ],
+  "pump/DistributeFeeToHoldersEvent/part-00001.parquet": [
+   14792857,
+   "d1cf3cc59e9ff0ad43ec9a1b0a2eb9f93f6496d9f631ebd8d7ccad3c95a37565"
+  ],
+  "pump/ExtendAccountEvent/part-00000.parquet": [
+   2721344,
+   "c95485dabc759855c298c28554efff0fcd1e6997ebe92e1ba7e63562d8e94a66"
+  ],
+  "pump/InitUserVolumeAccumulatorEvent/part-00000.parquet": [
+   1714024,
+   "7f411502fa8411cf7c46b17abf9a514d55b516187239c56f63d4dbb287193d75"
+  ],
+  "pump/MigrateBondingCurveCreatorEvent/part-00000.parquet": [
+   1799865,
+   "1783e86d7b6a802418964d4aff50b7ce688cb2af10197e99db4cba5adc2131b8"
+  ],
+  "pump/SetQuoteControlMintReservesEvent/part-00000.parquet": [
+   25979,
+   "92eb56732c6961f8e04aed51dd3b2b218934e41a2816c80538756a2faf35072b"
+  ],
+  "pump/TradeEvent/part-00000.parquet": [
+   44200717,
+   "74c4aee775ff70496c20edf362c306eb73a0d49fc2445e8093601323f52557a2"
+  ],
+  "pump/TradeEvent/part-00001.parquet": [
+   44780359,
+   "50cbdd94970bb7e430d023df9bc4d4985b875e7bc32aae66ff6ef2f28a171f55"
+  ],
+  "pump/TradeEvent/part-00002.parquet": [
+   44894293,
+   "b3aef21c3cc2cd6e7ab4af3625a519705bcc552284ee3ed00c279fb9f541143f"
+  ],
+  "pump/TradeEvent/part-00003.parquet": [
+   45130685,
+   "5249d78b9195e2c8cd3b8b5ea232a498480de6e12ff90f06972c33e56a5660ac"
+  ],
+  "pump/TradeEvent/part-00004.parquet": [
+   44674653,
+   "2f9ff63de76b76c1bf7b085ee8454e4c69a430af8450b4702288f3a67582c126"
+  ],
+  "pump/TradeEvent/part-00005.parquet": [
+   44787591,
+   "7b51b7c1ddfffbb42a27ca3438463e91c8c7b7948cbbfc048a08a7db877be504"
+  ],
+  "pump/TradeEvent/part-00006.parquet": [
+   44867068,
+   "0fb94be63b4e055cf1757620eeed137ff64b5a9c1cbbc91382000716193218d3"
+  ],
+  "pump/TradeEvent/part-00007.parquet": [
+   44316807,
+   "0399e77920526356979cbc8ae6b8239addd643f4af0d59d7504c34dcbc1c614a"
+  ],
+  "pump/TradeEvent/part-00008.parquet": [
+   44720970,
+   "e7f14ac2d857d21f8f210bf6aea2eac746f468d52d808fc7b67ca31dd807954a"
+  ],
+  "pump/TradeEvent/part-00009.parquet": [
+   45049490,
+   "2ea79fcd9a45b22d178d8ae177f1bca1be5abc18094fb590e5df4f22d6ee613f"
+  ],
+  "pump/TradeEvent/part-00010.parquet": [
+   45124296,
+   "a7b767ee2932cc666d7ff30914e37535bc1b7c995b842b89ea469583f5178da0"
+  ],
+  "pump/TradeEvent/part-00011.parquet": [
+   44686844,
+   "ce29aa9bed8ec20669b8938f7737e227df5c7afebfc9d255f57733860b7b457e"
+  ],
+  "pump/TradeEvent/part-00012.parquet": [
+   45095036,
+   "b74c85ba567d89770cd2674f1dc8883b26268efd652d2a1843d64ebea543826d"
+  ],
+  "pump/TradeEvent/part-00013.parquet": [
+   44474478,
+   "a2ea5d0117fa56c9ace53a430272da567b3b74608f65d1f8fc648f5ef2c86f54"
+  ],
+  "pump/TradeEvent/part-00014.parquet": [
+   44963559,
+   "009189f4a63bc6bdbcba586535581f7613555aafe0a4652f6c1f61dabb206a23"
+  ],
+  "pump/TradeEvent/part-00015.parquet": [
+   16061432,
+   "77ca0a4c33f2f0dbe7803d81c29be6f28e293b1941680d9873769bc41ca444b0"
+  ],
+  "pump_amm/AdminCtoPoolEvent/part-00000.parquet": [
+   13398,
+   "bb485cd1d626d5f157b311b76c430bcd6ca780d28034a42e6f973944ab575779"
+  ],
+  "pump_amm/BoostBuyAndBurnEvent/part-00000.parquet": [
+   2545456,
+   "87dc2dd6f31b59a495cea98c12e04e54fb0d2c715f9b81ba6557e10a83fdfb54"
+  ],
+  "pump_amm/BuyEvent/part-00000.parquet": [
+   56735675,
+   "0a0f78a98a8cbedf0e8f47c6167ee7bfd51cc0510aff067be75a9e37ce43c958"
+  ],
+  "pump_amm/BuyEvent/part-00001.parquet": [
+   58948597,
+   "dce5985877b9f219ea653aced711d0b1df0325a1b7281cca765a0efb47d443e3"
+  ],
+  "pump_amm/BuyEvent/part-00002.parquet": [
+   58910368,
+   "ed38152fbb77f617fcdc98cce0f331d7378835b8bc3ce682fa66ce5104c96200"
+  ],
+  "pump_amm/BuyEvent/part-00003.parquet": [
+   58729645,
+   "2e52e463cd62dcd97fa9e906a89aab506d199eec93b2b386f5470a3def8a680b"
+  ],
+  "pump_amm/BuyEvent/part-00004.parquet": [
+   58655260,
+   "cc1bce5a8ba539dd72cded70f0b455d6889c2f6c8937ba571c7ffd8c3130e446"
+  ],
+  "pump_amm/BuyEvent/part-00005.parquet": [
+   58803106,
+   "20f0cf1e954daa20e92fc9d49332a33ebf6fa366f3313389007b6c052e6121db"
+  ],
+  "pump_amm/BuyEvent/part-00006.parquet": [
+   58549895,
+   "5c86bf87a0002e3d5cb93d0032747803403dcc24c8aec19e32df4abc29e4965a"
+  ],
+  "pump_amm/BuyEvent/part-00007.parquet": [
+   59035569,
+   "b7c83186b1288a1df2c3ac5641dd8c167c70ee6f0371c626f8380689a2871804"
+  ],
+  "pump_amm/BuyEvent/part-00008.parquet": [
+   59084226,
+   "713befb2e60f18ec47b1994f956af674c80137bb2ab69d2fdbb70ca019bbea1a"
+  ],
+  "pump_amm/BuyEvent/part-00009.parquet": [
+   58497626,
+   "fa1f0d17c14577f33b92be4f64c1b5e7d81d70c71299b272f553be1e9b9a4b78"
+  ],
+  "pump_amm/BuyEvent/part-00010.parquet": [
+   57853461,
+   "faf57e6006e7b75dc5146a8cd49d0e6c8ea26bc222541e5d8e508128b4cf8a19"
+  ],
+  "pump_amm/BuyEvent/part-00011.parquet": [
+   58568279,
+   "d614c5ed727b68c176a2460a0a29f3276eaef3defaf9272b42274c5ee6e11742"
+  ],
+  "pump_amm/BuyEvent/part-00012.parquet": [
+   58036804,
+   "7f95edf56f6149a04e3174bf3ca7b8378259e35006b9dc4d96f9bdb6ed97f2cd"
+  ],
+  "pump_amm/BuyEvent/part-00013.parquet": [
+   58381190,
+   "ae42f82fa01aca8b7a70a1c04344946d7784fc6953e4a90bf2ec8d3265dc4241"
+  ],
+  "pump_amm/BuyEvent/part-00014.parquet": [
+   59050702,
+   "8ff5492d06a0a97116fb49d2886626c565adf26e6537e7c0cbdf24e496fd5e26"
+  ],
+  "pump_amm/BuyEvent/part-00015.parquet": [
+   58134945,
+   "b412dbeacc537d12b36b3d6c1f6a87c7ed6cf9c5de3fd0af15b9394f0f6cb114"
+  ],
+  "pump_amm/BuyEvent/part-00016.parquet": [
+   58228071,
+   "1df1d997a81f77a1aa594cefc58e7f664bdb980749ed75210120462af8cd6a6e"
+  ],
+  "pump_amm/BuyEvent/part-00017.parquet": [
+   58866499,
+   "ef85d1ebddf652e0f652e664eb22a60eb99b52308350a69b5077ba7ff2782dd5"
+  ],
+  "pump_amm/BuyEvent/part-00018.parquet": [
+   59509694,
+   "350bd4f1b80594018f6a300718fa512ba507f8e1985933d1d5c546977d3b1268"
+  ],
+  "pump_amm/BuyEvent/part-00019.parquet": [
+   59619713,
+   "8d29a460ba7ef14d2a67ee192d301f7907c50dde833fe67daad5ebedb4f2e704"
+  ],
+  "pump_amm/BuyEvent/part-00020.parquet": [
+   59317072,
+   "701dbb275eca668df950b7423f2f861feb98df5e080536a10bbde0bf4da5eb0a"
+  ],
+  "pump_amm/BuyEvent/part-00021.parquet": [
+   58265379,
+   "ff66f5559cd8cdb3b711bd22f1a1159c162b82e445bdadca8f9f7a14498c9e06"
+  ],
+  "pump_amm/BuyEvent/part-00022.parquet": [
+   58590232,
+   "8e87822465568985042b4a1d429951c3641d0beb4f281f5cf34b577740bceb00"
+  ],
+  "pump_amm/BuyEvent/part-00023.parquet": [
+   58399048,
+   "05e03c22cc3899e283b4aec851511ab6433e0b2b9d037c92188a7b44028e446d"
+  ],
+  "pump_amm/BuyEvent/part-00024.parquet": [
+   58101718,
+   "c2b3d6818601ef28e1bf848ccede45bd9707064f33165b03c0f8de765b30ba01"
+  ],
+  "pump_amm/BuyEvent/part-00025.parquet": [
+   58861630,
+   "e2e3fa8d308276a237830b4bd424194e64bc27173ac6d902cebc5eb91fb078fa"
+  ],
+  "pump_amm/BuyEvent/part-00026.parquet": [
+   59115033,
+   "d27284f1937e58add3c8c8c7a046e1650e20f218300a87c9c65cb804165412fa"
+  ],
+  "pump_amm/BuyEvent/part-00027.parquet": [
+   58699554,
+   "50bf6e03d6e02f4a1827a1a3d5e9afd31b422dd87c2593253ad284cc7e19f4cf"
+  ],
+  "pump_amm/BuyEvent/part-00028.parquet": [
+   58755568,
+   "bfd698cbb3eaedb8a2548ca25bbc4cfb7871ddb09353824d37138066924191bf"
+  ],
+  "pump_amm/BuyEvent/part-00029.parquet": [
+   58650441,
+   "0307c474564bb193aaebe05da0d69de8d315c33b14c7394ee8d388c7aa5d57da"
+  ],
+  "pump_amm/BuyEvent/part-00030.parquet": [
+   57622242,
+   "02e9735986ddf717877f0fa506637a77f1efa2e74ddc6a21e1051f6258b063ca"
+  ],
+  "pump_amm/BuyEvent/part-00031.parquet": [
+   31707278,
+   "71203f460e2b150cfe3e90307637cad2d199e99b07f3299cc35ffcbd02a917bf"
+  ],
+  "pump_amm/ClaimCashbackEvent/part-00000.parquet": [
+   1432697,
+   "44014807e1944ab88bda4b7bca59ca8de891e0855626d5b8b6be3009e1340069"
+  ],
+  "pump_amm/CloseUserVolumeAccumulatorEvent/part-00000.parquet": [
+   30757566,
+   "9fc033c09581dd7ec31329a901ddcfb2d5a61587aa13de11dcd6db4de0dea206"
+  ],
+  "pump_amm/CloseUserVolumeAccumulatorEvent/part-00001.parquet": [
+   27873455,
+   "d76c81488f319736b2c9e0f18ce83df7e85698efd5c99fd35e0f33b36beea734"
+  ],
+  "pump_amm/CollectCoinCreatorFeeEvent/part-00000.parquet": [
+   874312,
+   "a991e312534cb1365b31d3e70dd12753975022e136e7d4b268923169bc25708f"
+  ],
+  "pump_amm/CreatePoolEvent/part-00000.parquet": [
+   1059215,
+   "1cae623fb3f6a546a49ee5a25e1089bbd5e8fd7c3956abbb354ff7c64f309ee2"
+  ],
+  "pump_amm/DepositEvent/part-00000.parquet": [
+   43693,
+   "df5517b858df0b6ae0517c79fd7a833e59ffc14d7c78b521e5c410e4893ad8a5"
+  ],
+  "pump_amm/ExtendAccountEvent/part-00000.parquet": [
+   335948,
+   "a7407d6fe33b4d1ecb385647e08b4e5afe8021954188cf31f255a3c8a13e6bbc"
+  ],
+  "pump_amm/InitBoostEvent/part-00000.parquet": [
+   137952,
+   "929ea38eb112e1ce0617ab76760568e62e99ed757f35807664292314aae49596"
+  ],
+  "pump_amm/InitUserVolumeAccumulatorEvent/part-00000.parquet": [
+   3841048,
+   "841eb837e089fc06cf2673bc56917b0b7bb998a27e48397d17322ccd3176a0ca"
+  ],
+  "pump_amm/MigratePoolCoinCreatorEvent/part-00000.parquet": [
+   14792,
+   "06bfa4ec2bffdd1f58e058ec48bffbb9936b652b0977c08b7f879d3ce5cd55aa"
+  ],
+  "pump_amm/SellEvent/part-00000.parquet": [
+   56806832,
+   "0be7699df3424dbd9118f2a0dea90f27b173b0e8eb64a2f961348ffc82a9496c"
+  ],
+  "pump_amm/SellEvent/part-00001.parquet": [
+   59263387,
+   "7829bddda61c5e26f6fe5591d7e45ca3aef53e477d46ab0667c2441c17e22f48"
+  ],
+  "pump_amm/SellEvent/part-00002.parquet": [
+   59686219,
+   "bb6e48778aff162b4c471d370d1857f2de4766e710751826bdc47cecdfc00b91"
+  ],
+  "pump_amm/SellEvent/part-00003.parquet": [
+   58855089,
+   "5da718d14dcb31603b209f8a9926bb711addc1300948e31b1f55d893726edce3"
+  ],
+  "pump_amm/SellEvent/part-00004.parquet": [
+   59010524,
+   "c248bde8a0d7a338bb1104b583a7359139422b19a3abda0563ffe5b5ddb10d06"
+  ],
+  "pump_amm/SellEvent/part-00005.parquet": [
+   59058477,
+   "31d705d4096ba5dedb8085288028228a3d4d7b9fdd4b73c4998da41b8a13f9bc"
+  ],
+  "pump_amm/SellEvent/part-00006.parquet": [
+   58833215,
+   "9bf8f6d1ce73c8c49dde61ed1b358223dfddac44bd5afda4029e33e2d10bff14"
+  ],
+  "pump_amm/SellEvent/part-00007.parquet": [
+   58815029,
+   "a47287124af342f1915b95e0b1eda3d2e5d328e01c79efa75935db57fb90c844"
+  ],
+  "pump_amm/SellEvent/part-00008.parquet": [
+   59515063,
+   "74716e8b72e321a83793ab680e9d5121123055f659331da3dfa5b2e15f963c8e"
+  ],
+  "pump_amm/SellEvent/part-00009.parquet": [
+   59109567,
+   "ecb9a26022e28a58ebefcb60f845e07eb8a25fa49509c38603cdf04a7f532a87"
+  ],
+  "pump_amm/SellEvent/part-00010.parquet": [
+   58751275,
+   "11b51c727f791b2fe19dde4c4372eeb2321c8c56637493a79c20d4343b69c647"
+  ],
+  "pump_amm/SellEvent/part-00011.parquet": [
+   58162010,
+   "2e216dee120bc36dee3d6c0f1408d2a39cf7913d65d955684f50a723eced5ec0"
+  ],
+  "pump_amm/SellEvent/part-00012.parquet": [
+   58126702,
+   "5db45d56b4708af8d798a45d91e838bc9e4788e3e6241dae5bd18a6f0b46b22d"
+  ],
+  "pump_amm/SellEvent/part-00013.parquet": [
+   58304862,
+   "d4a07f6668e80fa868e16af76c1aac85ee0fa55bbfc1d5f397e75a62d189c457"
+  ],
+  "pump_amm/SellEvent/part-00014.parquet": [
+   58474148,
+   "898e7d35a8d61f48b6ebebf74bcfe79d8ed4024f3edcaa255b5cbb1aa7fe67e3"
+  ],
+  "pump_amm/SellEvent/part-00015.parquet": [
+   58525280,
+   "52a3ae37bbe6465fd64be53c5c1a312ec3440ba829faac07226a2fdfa7108c80"
+  ],
+  "pump_amm/SellEvent/part-00016.parquet": [
+   58387711,
+   "897406f9fccc124f68e9ab95b222cfae7b69ee69211c8f17747fee7797f74492"
+  ],
+  "pump_amm/SellEvent/part-00017.parquet": [
+   58208591,
+   "f67a1e24dda4d67366ad83bc57612bc1cbe7ee26f4901d0aa5433923658fa92e"
+  ],
+  "pump_amm/SellEvent/part-00018.parquet": [
+   58676854,
+   "d8e32a7fbf0a0daf85816679ad71538ddbc55750462c2d825d38837389086baf"
+  ],
+  "pump_amm/SellEvent/part-00019.parquet": [
+   59646513,
+   "74bc7403c8d49c3edc6bfe82978141613b4b0b4af628a767a7bd8b3b7009f9c4"
+  ],
+  "pump_amm/SellEvent/part-00020.parquet": [
+   60128620,
+   "19517c174e5037610dfdf6a9160a39f7cd741ca882e525535ec3fd0dac2d462e"
+  ],
+  "pump_amm/SellEvent/part-00021.parquet": [
+   59814630,
+   "acbd9aa80f77829740e33690abfb05de098f64c5876b7c7c3503c54c487dbe1e"
+  ],
+  "pump_amm/SellEvent/part-00022.parquet": [
+   59495668,
+   "1fd6007732e3da888e45c8e8fdc400410da063652a5721d3e1ef0a56c2600928"
+  ],
+  "pump_amm/SellEvent/part-00023.parquet": [
+   59887335,
+   "e78a25b78a7b74854a72ec3c34a029e49d9e80709418739717f93188993642f4"
+  ],
+  "pump_amm/SellEvent/part-00024.parquet": [
+   59251056,
+   "91e7b340a1fdb7529e3251e9d82804cbd1aeb1601f7c340f9d9b7b80796c18b3"
+  ],
+  "pump_amm/SellEvent/part-00025.parquet": [
+   58266092,
+   "aa802eaaadd9d318072c876e93bc5930d9e8e00bf3a32c67d235939fbfa2861e"
+  ],
+  "pump_amm/SellEvent/part-00026.parquet": [
+   58798273,
+   "8642d9541391710bb58c1d2942782e0dbac6f7a6c56a80a5b61622208b49a379"
+  ],
+  "pump_amm/SellEvent/part-00027.parquet": [
+   58036489,
+   "5243e636e4120350d683a8ae671a6d3cd3ca93825a23accdac1090473c0adc29"
+  ],
+  "pump_amm/SellEvent/part-00028.parquet": [
+   59419363,
+   "4df599b933ea5d3983f75725bcd63fca8a0d0b2de4e27b5442d690b216ac514c"
+  ],
+  "pump_amm/SellEvent/part-00029.parquet": [
+   59180091,
+   "4bd337bd234aaf8c57da06f436c664933c74c1a28e6bc2aaefd55306037ba3f4"
+  ],
+  "pump_amm/SellEvent/part-00030.parquet": [
+   59204355,
+   "08d9f82b3082a38f9333b64d5c5319a9434ca1691c394a64620aef78ad7e984f"
+  ],
+  "pump_amm/SellEvent/part-00031.parquet": [
+   59053749,
+   "dd1a5f84abd2d193aca2b52d9d29c2ba659f34daa0fa3f8757c268b8304e4a75"
+  ],
+  "pump_amm/SellEvent/part-00032.parquet": [
+   59811310,
+   "61cc798fdcd4b58bdfea80dcc885865812e85d22b896477a8082938e9e5d5f34"
+  ],
+  "pump_amm/SellEvent/part-00033.parquet": [
+   59333436,
+   "adcc99162f823af4ecbe6201e334db6a6377bfe6affff8429f5a1fadde36e53b"
+  ],
+  "pump_amm/SellEvent/part-00034.parquet": [
+   58152851,
+   "48f0dab021c5d17486bf442bbf062acdf3f1a40e280aa34ab9fa928c7fc23b5b"
+  ],
+  "pump_amm/SellEvent/part-00035.parquet": [
+   36613284,
+   "f406420f5e503a75c76b123cf3111a08a3aa0f13c7e361c75dc34a4d19a5e4c0"
+  ],
+  "pump_amm/WithdrawEvent/part-00000.parquet": [
+   653411,
+   "8a7e05c5659da2f4e9e9d498a03f1550a6db7d1481e2d7bab45833a006218c47"
+  ]
+ },
+ "451440000-451656000": {
+  "_manifest.json": [
+   2236,
+   "0694039b478ea7eaad15d52973750eedf81d068580e2046fa860dd45daa4766a"
+  ],
+  "blocks/part-00000.parquet": [
+   3084988,
+   "dac3bfdbf9f9cd49ebf82a32fe238ae76427d4f994e865c4bd0bd37d000b9098"
+  ],
+  "blocks/part-00001.parquet": [
+   271460,
+   "54e7f34b487402b641f19dbb8c4860a3fcaa6ff5594e0036c638ad1b37ca2519"
+  ],
+  "failed_txs/part-00000.parquet": [
+   3227931,
+   "820a85b174a98d061e87ed7a7e983f98b17c0c0cc43787f60c006cd81cefa8ba"
+  ],
+  "failed_txs/part-00001.parquet": [
+   3279176,
+   "274046448c365c987fe89d2e52c8e9a14952bfb30044e070d491dd695a0dc978"
+  ],
+  "failed_txs/part-00002.parquet": [
+   3424253,
+   "cdfd5c70baa694fb26b2391f70e39480eb3d34da6e1a03348cf3450e5ea90e50"
+  ],
+  "failed_txs/part-00003.parquet": [
+   3388629,
+   "ab716d07bf4a384c0ec9cd4aab87702b5544bb85ae6313292b01ade8dc538d95"
+  ],
+  "failed_txs/part-00004.parquet": [
+   3383875,
+   "c389a564c47e17d814f677f1c4fc429f235a1226bbb2aa4d774824ada23ea4c6"
+  ],
+  "failed_txs/part-00005.parquet": [
+   3380885,
+   "6fea28ee5abaa340209ef65f04693fb1a7b2087475ed98fd3c95c7d8ba744d12"
+  ],
+  "failed_txs/part-00006.parquet": [
+   3384970,
+   "bcb2d7ef3bd521c16b46c194602368dc778566949569c7e0e8148b4c69317e85"
+  ],
+  "failed_txs/part-00007.parquet": [
+   3464659,
+   "43e3bd82b304edaff8c8d6ccb02b52cb382154d9bd1655e9dbec4a753d4c0f43"
+  ],
+  "failed_txs/part-00008.parquet": [
+   3337643,
+   "9df3bab9f3f0a062b3bf7ab4e8c5764a272636f5f615bbce0a61274b119bd8a1"
+  ],
+  "failed_txs/part-00009.parquet": [
+   3392718,
+   "f234314671f9ea77381737f4e2044f21c261b567339e782af99b4b18f010810f"
+  ],
+  "failed_txs/part-00010.parquet": [
+   3319777,
+   "400b1a11682d05096f5fdf642b403de2069a811a5bf345ae6e6ea49a1ad9a9e4"
+  ],
+  "failed_txs/part-00011.parquet": [
+   3309958,
+   "9441c9ccef50974c36213f6e763a92a2f9ae8f9686b082e6bcecd03d0d36ab46"
+  ],
+  "failed_txs/part-00012.parquet": [
+   3249132,
+   "1fd489a4b88d0cf642b7a141af98399232924bd695382b67450831ef7223aca1"
+  ],
+  "failed_txs/part-00013.parquet": [
+   3275668,
+   "08f8c16f2bca8c27941e6339946d98704ef0146bb4b750fdfc34d480f50247df"
+  ],
+  "failed_txs/part-00014.parquet": [
+   3330666,
+   "3e4515aac3c6e0b79f5ca5268a713bfeedc353b536621b7f6c8efcce6c7cf934"
+  ],
+  "failed_txs/part-00015.parquet": [
+   3402426,
+   "7b96b9d4196a73cc6896f79160c84f14fcef1d7f8e70536f5d74005f3ae2d6e5"
+  ],
+  "failed_txs/part-00016.parquet": [
+   3357109,
+   "726584322e1a317ec98c4edd6a4a6de6c093f62ca7cb187581ce64844f896af7"
+  ],
+  "failed_txs/part-00017.parquet": [
+   3308902,
+   "cf7b11331f2cc87474316db1a4bab7134eec23be63fa1a436b040d6db9bafada"
+  ],
+  "failed_txs/part-00018.parquet": [
+   3260250,
+   "2b02b03599881b0d086d6dffc296796af10bf901a0947127801786468bb3bfc5"
+  ],
+  "failed_txs/part-00019.parquet": [
+   3319962,
+   "769dd3ddd13bb62bb46cea239ee72767ea36c3e7cc54b0c975d32f4c7ac86f63"
+  ],
+  "failed_txs/part-00020.parquet": [
+   3344272,
+   "2e3475e451abeb432efaa05b62778f9437e8184af6dbd5d7ae9681b3a393cd8d"
+  ],
+  "failed_txs/part-00021.parquet": [
+   3365096,
+   "c09658dfe6d7aba2da76d32bd7c8795a82cf827b2211fc1f6d00de260b1fa48c"
+  ],
+  "failed_txs/part-00022.parquet": [
+   3305519,
+   "3ed3e3d0ac35a76659adac0e1c5061d650a72107e59ea6d0fc7758fca70f4546"
+  ],
+  "failed_txs/part-00023.parquet": [
+   3399897,
+   "ef60a8937615eed166979184aea5005655d4fe838905a93f08233f2737b90b77"
+  ],
+  "failed_txs/part-00024.parquet": [
+   3309993,
+   "8143fac0da35929171d5b2b1b2cc597796b2a875ff9b8655bbbe29f15363687c"
+  ],
+  "failed_txs/part-00025.parquet": [
+   3323160,
+   "2384da9be733f5dd407af5309177edabfec163a572fda58612ff4787bc9bb357"
+  ],
+  "failed_txs/part-00026.parquet": [
+   3461759,
+   "d794085fe3037b032c38aef43d61ddbd204bf214cd72d0ac1b0f1908ee4ebf2b"
+  ],
+  "failed_txs/part-00027.parquet": [
+   3284941,
+   "3def0e12a7d56512e6c1ec91d19335e96a85cfce3829cbf5c4a2c413b0f8808d"
+  ],
+  "failed_txs/part-00028.parquet": [
+   3448997,
+   "e682f20038e72cc546b76ab1d0570383c7041c5ec0ac8cd21ffb247612abe3a8"
+  ],
+  "failed_txs/part-00029.parquet": [
+   3347898,
+   "a82f82f23c0d63db76126a4d5275d1b5db90bb4dc97c1a4acdf3101da6cc1eb9"
+  ],
+  "failed_txs/part-00030.parquet": [
+   3382934,
+   "9d83d7a9b5e8080ad8b21309dd4371cf4d2a5fbc2c37191a4f25bd88c8d1b423"
+  ],
+  "failed_txs/part-00031.parquet": [
+   3359030,
+   "b2b43bafecf91f6d3478dbea18947d9af17ff25114784a4d0fbcdd37518c98d5"
+  ],
+  "failed_txs/part-00032.parquet": [
+   3307455,
+   "e409df9672d7dd93067c2eabb60f2ced419387e2488244e126fd4c2aa04a788a"
+  ],
+  "failed_txs/part-00033.parquet": [
+   3317890,
+   "5f86dcd326b51ce5cb52f52586e0e507a80d559ab5df1157fd8a909f6d30865a"
+  ],
+  "failed_txs/part-00034.parquet": [
+   3364015,
+   "56836c4247d306b125f5f9789dccabe9df5af057855cd2c27157fd594294d9ed"
+  ],
+  "failed_txs/part-00035.parquet": [
+   3407546,
+   "60100fc484474eb291ae5e470ea466a4a5fddb2a9088f8bf82c51b6715ae1285"
+  ],
+  "failed_txs/part-00036.parquet": [
+   3293239,
+   "bc5d2c7158f973bed1e428ae4949f91ac223a55452c80da6c8675ca122023700"
+  ],
+  "failed_txs/part-00037.parquet": [
+   3309166,
+   "55399fb73e64860b8b3fb1d3a35fba93cc5cb935ca000534003c4b476c570fa6"
+  ],
+  "failed_txs/part-00038.parquet": [
+   3415694,
+   "e2bad166e8165039705005a0ebbe6d371a6e50f0b565b8bc64d26c8f38769534"
+  ],
+  "failed_txs/part-00039.parquet": [
+   3333066,
+   "feac2c33fb1ef6e5af1b267cd4514b74dabbdc578dc932829d22cbd830e9a960"
+  ],
+  "failed_txs/part-00040.parquet": [
+   3222203,
+   "5f0313c451864e1334414b5f8ef9035ed0884f836bad7e1d3939e4a5c4a854c3"
+  ],
+  "failed_txs/part-00041.parquet": [
+   3196064,
+   "8258e2480e225b7e7388b30214d24477642e3abcf27518ecacf16d5bf60cc2ae"
+  ],
+  "failed_txs/part-00042.parquet": [
+   3300419,
+   "9730eb80c6cb4387965f71dce5dc47c34953f650e70758b16518790311f7ceee"
+  ],
+  "failed_txs/part-00043.parquet": [
+   3341243,
+   "c2cb97b82209975d2a43261c6681be3269a4e056acc539eac5d20e533f665e33"
+  ],
+  "failed_txs/part-00044.parquet": [
+   3263041,
+   "4bf497ae2d3a8111445256b4a0c990ee61a5f9d13e03320331dcdff5e4ae3af4"
+  ],
+  "failed_txs/part-00045.parquet": [
+   3364447,
+   "7bdc78658acf8ec59297accf2e86d1e55093ded837c76f4fe99a60f6780e64e8"
+  ],
+  "failed_txs/part-00046.parquet": [
+   3368685,
+   "4ebf7e5e2dc80581caa4b2cf68ed66e01542dd7f47db47df12b89a99f01fe79c"
+  ],
+  "failed_txs/part-00047.parquet": [
+   3260531,
+   "e3c7773fcee72d75c11721023c4cecb726beda559af70a1a3e2a1035e972398d"
+  ],
+  "failed_txs/part-00048.parquet": [
+   3197642,
+   "daba6e91a1357cb067b7abbf13e1ce38fd7355b979fa4ca82d0c097b8af0a460"
+  ],
+  "failed_txs/part-00049.parquet": [
+   3247066,
+   "4a19e5833966e2b77c7d02627e963b7fd39c730213a2cb772d341e0d2cca4084"
+  ],
+  "failed_txs/part-00050.parquet": [
+   3229734,
+   "099823551685cd20d00da55c7110186af3aa43e42b9e53cadd2532aa5d66f8c7"
+  ],
+  "failed_txs/part-00051.parquet": [
+   3339413,
+   "dfee9c538ae6d4c0401c899e0458dbd8dae27d3f046d725459376c4662a028aa"
+  ],
+  "failed_txs/part-00052.parquet": [
+   3237351,
+   "6531f199d309684fa48442177bb4d2c54899bef41ea7da2e5faa8c74ab3764ff"
+  ],
+  "failed_txs/part-00053.parquet": [
+   3365320,
+   "f98defe6c41006887d77755927b4c0988e2d7a85b1b24af8524f4bf1d1b758c1"
+  ],
+  "failed_txs/part-00054.parquet": [
+   3339538,
+   "6282ea6c8f91e434498e2f7006cd399c904e0f9d869813a53ac12c844f09ea60"
+  ],
+  "failed_txs/part-00055.parquet": [
+   3396789,
+   "9856132026a4d3aa1ddcfc60e4584b13718584deedd2006c0e1065811c25f2ae"
+  ],
+  "failed_txs/part-00056.parquet": [
+   3250886,
+   "d7faa2f9578d929809b7969a30272b7d9f3c9f13c0ba3b1fe821cfa77045ec9b"
+  ],
+  "failed_txs/part-00057.parquet": [
+   3402685,
+   "513cdee9e7c0a189e055965c4fb7fe9f40943ef3c897dbfc30f42d21aebcc2de"
+  ],
+  "failed_txs/part-00058.parquet": [
+   3335847,
+   "9b432dd30fbebaae7044caede691bf54d588d79feef5739234dc60792576cc5f"
+  ],
+  "failed_txs/part-00059.parquet": [
+   3326183,
+   "a18bcb38b122fe9ce40f33457ba97ec89e79e14e85a6de7061d733567f34f3f5"
+  ],
+  "failed_txs/part-00060.parquet": [
+   3335671,
+   "10a5b7081c1697ca7190087c2e60ff2b947e83376eff2648774b369bdb553834"
+  ],
+  "failed_txs/part-00061.parquet": [
+   3352763,
+   "1923fd86554ee9ce9a56d57e6ed64d47f634c3276aa4e078aee5cf991fa8d082"
+  ],
+  "failed_txs/part-00062.parquet": [
+   3371867,
+   "a38594c85ead1fd2006f784bec2064f6ca96c5e1d11b85923d9d7b13e835a75d"
+  ],
+  "failed_txs/part-00063.parquet": [
+   3402300,
+   "5950b6afc98d5f757d3f9cb46089452cd9d238e63c3d45091a4c3ae005f004c4"
+  ],
+  "failed_txs/part-00064.parquet": [
+   3370078,
+   "cccc4de93a10586b2d8c5a98df4c6b12e28e233ac6ef0765368fdfe6812b0ee0"
+  ],
+  "failed_txs/part-00065.parquet": [
+   3424802,
+   "98e2d4547c98ea2115a403a0133d2e2689bf7e2cac3af4e18f162e5e3ab39932"
+  ],
+  "failed_txs/part-00066.parquet": [
+   3415764,
+   "9244210a381f89e5f9ad8ecb59331770b41c256350babe9d82226886fc9d5392"
+  ],
+  "failed_txs/part-00067.parquet": [
+   3538861,
+   "ee42d9982a34780e9e82122c33cf011ca19301eb13e8e86efb0d97f02a21dd20"
+  ],
+  "failed_txs/part-00068.parquet": [
+   3529442,
+   "165e29d576051cd4e07928340dfb77d49749d27c133b7c058db964eae9ca4ecd"
+  ],
+  "failed_txs/part-00069.parquet": [
+   3561437,
+   "115b610f4421485766cfc477582be692c4012cb10c76a30ab55f47c358128a24"
+  ],
+  "failed_txs/part-00070.parquet": [
+   3460730,
+   "cc9df795b08316f4bccbb8a66acbaaf499b9d63f9249176925733b162e62a2ba"
+  ],
+  "failed_txs/part-00071.parquet": [
+   3395738,
+   "9658d3f079ae5ab163c7e930acfb321948c2e7c2d36472e08afb0a1d6540820c"
+  ],
+  "failed_txs/part-00072.parquet": [
+   3408073,
+   "19f2b2326749c712d2eeb7ad7ec6c5940828f3dd59770ef8bbc08471d65d0b02"
+  ],
+  "failed_txs/part-00073.parquet": [
+   3394470,
+   "49feed411aa753dfa515bd9729a565cf6bb0e2526d992b0b0f3f228d7b3156c2"
+  ],
+  "failed_txs/part-00074.parquet": [
+   3376983,
+   "c4149174379810ebae6af01076478fb8090203407b2612660c532829531c8b0b"
+  ],
+  "failed_txs/part-00075.parquet": [
+   3341803,
+   "f4c6887df45cd73c6e0fbd7465f08b289b3647186d7ebd1fa452c1c4d6a6a3dd"
+  ],
+  "failed_txs/part-00076.parquet": [
+   3311670,
+   "c0199d4fa13bbafe30c1c875115e5a44c78bfe8d05aa5b178212e8fe8758d3c8"
+  ],
+  "failed_txs/part-00077.parquet": [
+   3382101,
+   "393d98fd111c8d0f4487ed20973d625cffd99b6b148a3cf15eaacccd661673df"
+  ],
+  "failed_txs/part-00078.parquet": [
+   3415109,
+   "e65a6e83ed1eaafaae52017c160cc57bc6c1adc522b2136d402bbe6aaf8b0331"
+  ],
+  "failed_txs/part-00079.parquet": [
+   3411730,
+   "a0feee94fad8f38e32298def5600ed65b8c85cdae91a974f4ce78bdfeb972d6d"
+  ],
+  "failed_txs/part-00080.parquet": [
+   3391209,
+   "ec4f90bd77955d690ea6875722ed180cab77fced99fc3d18d04f4556bdb9f2ca"
+  ],
+  "failed_txs/part-00081.parquet": [
+   1841518,
+   "4fcf5470209efbaa46cbb617c381984598ebff8f3f92ba08c2ff6e845d06ba61"
+  ],
+  "pump/ClaimCashbackEvent/part-00000.parquet": [
+   525557,
+   "fef46c97b71c83a591cb877f2e606810ac9a2511f088ffbf3ca699078eddbb0c"
+  ],
+  "pump/CloseUserVolumeAccumulatorEvent/part-00000.parquet": [
+   11489559,
+   "ba64ae8f1992d6717084e9a1b6b6c2a8ba510bcb4d35cd4a687c8ce2e0f7749d"
+  ],
+  "pump/CollectCreatorFeeEvent/part-00000.parquet": [
+   2272009,
+   "3f236ae0c5f96ebdbf9fe94c5f45ff161a9d8ab47ac829ef14bf982d5c7a0d40"
+  ],
+  "pump/CompleteEvent/part-00000.parquet": [
+   137318,
+   "9ee30469def673429a09bd59c466126e14cac86c5434bf151284f684d84bcb50"
+  ],
+  "pump/CompletePumpAmmMigrationEvent/part-00000.parquet": [
+   146641,
+   "c86ed9d83eb6902438ffc935a6324141f4c195f8a9a7b2a2dec0092d91c4d95f"
+  ],
+  "pump/CreateEvent/part-00000.parquet": [
+   5957056,
+   "e9450cd1dec14e38df1c6f90d26f92600bf8131700be0edd17f6de0fd1e348ba"
+  ],
+  "pump/DistributeCreatorFeesEvent/part-00000.parquet": [
+   2801050,
+   "196545f2634cfee528562ce8011ec241b8a4e085f57ad988db4daea2af0dcfbb"
+  ],
+  "pump/DistributeFeeToHoldersEvent/part-00000.parquet": [
+   15408768,
+   "d82e64c351f708dee7b5d901985cf4a80a52d7965c383711e5388655f3515a6e"
+  ],
+  "pump/DistributeFeeToHoldersEvent/part-00001.parquet": [
+   5364472,
+   "a1191d428c254b8945bef1ae24b9a0205734bd376614eb2bb4c19e5f7992ca41"
+  ],
+  "pump/ExtendAccountEvent/part-00000.parquet": [
+   1919529,
+   "9754a424fd71e43d470a75e00b339ea10dcd1ce083cfeb77be30ff2022ef7ae5"
+  ],
+  "pump/InitUserVolumeAccumulatorEvent/part-00000.parquet": [
+   1084906,
+   "6610a7a9824b2047b2c1452b765311cc59ffe3a476701a8429f90e57ef6d7907"
+  ],
+  "pump/MigrateBondingCurveCreatorEvent/part-00000.parquet": [
+   473591,
+   "2b5a8a7afbb064bbe13fe4f93ffa6c8e2619b0e490f729b5a5c505fa30b0b4e4"
+  ],
+  "pump/TradeEvent/part-00000.parquet": [
+   35581597,
+   "5e73e4518e10cd6806491d26bccace668b37a0e26d5eb4a5d3330dc2fea9ecf1"
+  ],
+  "pump/TradeEvent/part-00001.parquet": [
+   35500205,
+   "bbf4630bd557219b8c7a32db3a33286b2ecee290bf51b927f1c0de23fdbd3df5"
+  ],
+  "pump/TradeEvent/part-00002.parquet": [
+   36127007,
+   "41b06de6636d936ad71a1de20f161f7f4a1ab22aa46cfbff2bbcaf1e50406af6"
+  ],
+  "pump/TradeEvent/part-00003.parquet": [
+   35776381,
+   "005c8267c9c3674d2f7f23c2cf3cce879644d73af501f52ec0bb4bb7dedd972b"
+  ],
+  "pump/TradeEvent/part-00004.parquet": [
+   35822586,
+   "7ff002b786cf1d3a1d782683818e133a51a4d6d724a462f9347114a0f8514659"
+  ],
+  "pump/TradeEvent/part-00005.parquet": [
+   36070937,
+   "a4e18e30b6a90d378c9b7fe50afae28d3f1f6b0fd4e4be43d50216959bf1ee93"
+  ],
+  "pump/TradeEvent/part-00006.parquet": [
+   36470142,
+   "dca7b62c0076614d44c86477fc730bf9862ea4ceeced66bd2668644005a873fc"
+  ],
+  "pump/TradeEvent/part-00007.parquet": [
+   36710578,
+   "057e0d2a881b4894a3128dff5f7aae7af46ffcc7b6b1b1fba813b0ce6ad3d124"
+  ],
+  "pump/TradeEvent/part-00008.parquet": [
+   35892776,
+   "c29a11095ff25f972d1d1d7595ccc5fa11e5ea311f083e7a4b207e6e9cf8ecd6"
+  ],
+  "pump/TradeEvent/part-00009.parquet": [
+   35952685,
+   "e30dbff09eeaeb834aee128e25a109091b5004493102226028626a735e642e75"
+  ],
+  "pump/TradeEvent/part-00010.parquet": [
+   35823552,
+   "48301115674d34d3843913bec58e1630fcb3229a887b5bd7734082cf91657222"
+  ],
+  "pump/TradeEvent/part-00011.parquet": [
+   34637196,
+   "aeeef443c5c9c8c3c4fd2386deeab0debcb9ee5166845bbbafefabe9321720f2"
+  ],
+  "pump/TradeEvent/part-00012.parquet": [
+   1247873,
+   "b6643aced79c0cce08c6fede1f1987687ec6f2ed5de57adf11b66f9ba7890803"
+  ],
+  "pump_amm/BoostBuyAndBurnEvent/part-00000.parquet": [
+   1739744,
+   "09621149365d73fd1e39884005dacbff64320ef36a9e69e69dae3ec57b29a582"
+  ],
+  "pump_amm/BuyEvent/part-00000.parquet": [
+   49673843,
+   "e0f161f6fc68b8cdf2f069fff6393e9d13321585153253740fa198529acffcfe"
+  ],
+  "pump_amm/BuyEvent/part-00001.parquet": [
+   49320478,
+   "bd2086d2c60a9fe5fc71d8107dfe5f88f4327b071f36687ec86ee76a4840e395"
+  ],
+  "pump_amm/BuyEvent/part-00002.parquet": [
+   49685904,
+   "a281f740c31d23a5c2ec3b13bf1142deca3c7f878ddfab03fca850227b8250ce"
+  ],
+  "pump_amm/BuyEvent/part-00003.parquet": [
+   49560818,
+   "3359524a7972efa269e5458b14fde7941c696a6309e09a54f3ce693fb06d732a"
+  ],
+  "pump_amm/BuyEvent/part-00004.parquet": [
+   49749986,
+   "2432c37205fd02e7096c144321e51c61e0a8c43d2670f00018ed48597bd6dc70"
+  ],
+  "pump_amm/BuyEvent/part-00005.parquet": [
+   49802698,
+   "ba122e22a1d9e59d5b61629974af29223414446f98c029a8fd0946bc968c45eb"
+  ],
+  "pump_amm/BuyEvent/part-00006.parquet": [
+   49862314,
+   "4edd9428ec0d9482fdaca94fb0c5d6e2ce6489fe4bb0e176dd0b86e91bb72039"
+  ],
+  "pump_amm/BuyEvent/part-00007.parquet": [
+   50030352,
+   "7eb4f7178053e5400fd71d323bc4453ed321824dd4adb3fb21b532aa51302c9b"
+  ],
+  "pump_amm/BuyEvent/part-00008.parquet": [
+   49913573,
+   "ce770e425bfbf147d223e366a6436f77e4cf7ff78c266d2f62d08175f3f4bf48"
+  ],
+  "pump_amm/BuyEvent/part-00009.parquet": [
+   50133193,
+   "751a449eb00b95f057009b7bf6b0c616c36f4947d58a593984888b551a01631d"
+  ],
+  "pump_amm/BuyEvent/part-00010.parquet": [
+   49991254,
+   "efa1c2f311afaf461345d562e036c12ab9cbb29ad03c8aefaf7fd01440bef69f"
+  ],
+  "pump_amm/BuyEvent/part-00011.parquet": [
+   49767407,
+   "23e9f6ac0124a53f7372a8f7e19d0179f9a7e7794151995212f4a3d8f749a73f"
+  ],
+  "pump_amm/BuyEvent/part-00012.parquet": [
+   49603371,
+   "1067ab04fdb10c29bf6ac219c0daeddb51227be35578b48046ac3d4e60b5d553"
+  ],
+  "pump_amm/BuyEvent/part-00013.parquet": [
+   49346061,
+   "5df681fd620c366054c7b5675632c86ffefb70a08ea5e78f981c4767b5d9ad7e"
+  ],
+  "pump_amm/BuyEvent/part-00014.parquet": [
+   49493169,
+   "4b45281cf8f1bb2906e2e21d9ba34df1fda0e95440c7f123d6da71a40647d119"
+  ],
+  "pump_amm/BuyEvent/part-00015.parquet": [
+   49779344,
+   "d9d40ca7115e32648ffae48df070a3cd2b704c8c02805bb57fac7dcbafdfa3cc"
+  ],
+  "pump_amm/BuyEvent/part-00016.parquet": [
+   50215778,
+   "835bf11f60a9bae0c0a8cf5701eae22b33fa588cdc860f4e4f8fe3a89482537e"
+  ],
+  "pump_amm/BuyEvent/part-00017.parquet": [
+   50494616,
+   "17a85e111482dc6c777abb5eb817394aaa2c7ee4cf01be888cee74a6b863b02e"
+  ],
+  "pump_amm/BuyEvent/part-00018.parquet": [
+   50119426,
+   "e9cada69d6e9672d198604cf185200d69e7736145cb58bb152d291c831904bd7"
+  ],
+  "pump_amm/BuyEvent/part-00019.parquet": [
+   49988424,
+   "5166875eb3a4a276c94d894f8aff7e3892e0e0a9f89b52d148228cd792cfb975"
+  ],
+  "pump_amm/BuyEvent/part-00020.parquet": [
+   49560848,
+   "283f6efea076b0b2a6014a787d2b25d5edf52cd470b0c80fbb563505713305cf"
+  ],
+  "pump_amm/BuyEvent/part-00021.parquet": [
+   49550130,
+   "d392f765403114e357ef50879af11ee66339b85d4fdbbe988a1221b98d1df81e"
+  ],
+  "pump_amm/BuyEvent/part-00022.parquet": [
+   48811162,
+   "8914477622856e294dec9824cc8e324ec86c443516d3bbb468d04ae155d1d2de"
+  ],
+  "pump_amm/BuyEvent/part-00023.parquet": [
+   31312505,
+   "bbf860bd1f412aeaef3edbc3b1f0b2572c350c7b082c635a3e3b12cedf516593"
+  ],
+  "pump_amm/ClaimCashbackEvent/part-00000.parquet": [
+   1311790,
+   "b37a66e1180a790455cf93fe08bbcf58eaceedcb4b2523dfd324f7524d24e1ba"
+  ],
+  "pump_amm/CloseUserVolumeAccumulatorEvent/part-00000.parquet": [
+   22922677,
+   "3fb627fdc169eb5a8717c53088c87848d2e808fd33a2079f5c8b409f67e27c34"
+  ],
+  "pump_amm/CloseUserVolumeAccumulatorEvent/part-00001.parquet": [
+   14886487,
+   "b74afdc8902c0c6baa591856cd499cf78b97c83326f1d99f53e62d971a94ac3e"
+  ],
+  "pump_amm/CollectCoinCreatorFeeEvent/part-00000.parquet": [
+   766761,
+   "67433be1663a2582f5e3f2da37791ddbada76151a10c6088dccc176ec3853350"
+  ],
+  "pump_amm/CreatePoolEvent/part-00000.parquet": [
+   838187,
+   "7967ea3a04d34fb7abf5248cde3acbf5589848c8b0ab15139ed428223d7e816f"
+  ],
+  "pump_amm/DepositEvent/part-00000.parquet": [
+   38120,
+   "718bbe05b81791642f4bff313550f9123ff2efdc31f0a5c66944912a9b8790c1"
+  ],
+  "pump_amm/ExtendAccountEvent/part-00000.parquet": [
+   241707,
+   "b4048ceaae0f186eb77978a729367f34c947e9af7c5056d584b044d86cea3e7e"
+  ],
+  "pump_amm/InitBoostEvent/part-00000.parquet": [
+   106716,
+   "4ee80ac33fa90320fe943048ad8fba8ef405ef6de3a0531be32bf39417f20f75"
+  ],
+  "pump_amm/InitUserVolumeAccumulatorEvent/part-00000.parquet": [
+   1971326,
+   "846c8241b4e27dc7faafa8efa3d072b2c8a3946aa002d948fd73d67e552ddb3b"
+  ],
+  "pump_amm/MigratePoolCoinCreatorEvent/part-00000.parquet": [
+   11390,
+   "f77581fe70bdb75522dd4c124f2ec3b563a94707e4149bc6f52b2ed4b49aeafd"
+  ],
+  "pump_amm/SellEvent/part-00000.parquet": [
+   50031179,
+   "58934f5800dd8eac0fc98c73bb34ea4e124a8b3c689447cd87cfb119ab754f78"
+  ],
+  "pump_amm/SellEvent/part-00001.parquet": [
+   50631876,
+   "817069db445aa369c30e8f4f0e732c94937f8d101f9171c6e98f6a2cb6c2a274"
+  ],
+  "pump_amm/SellEvent/part-00002.parquet": [
+   49781844,
+   "6190cf2f24b1a314654a6b8ab07aca950d5b0c15a072820ac3b0edd36268b034"
+  ],
+  "pump_amm/SellEvent/part-00003.parquet": [
+   49868789,
+   "d9c1da460d4470c90312c5e9610855e942d052974583edf42d6738c0342c6586"
+  ],
+  "pump_amm/SellEvent/part-00004.parquet": [
+   49924245,
+   "a125be0181b3c51a6a23dc49c1ebf7d14c66d168a51c846313080aa9ab78bb15"
+  ],
+  "pump_amm/SellEvent/part-00005.parquet": [
+   49853640,
+   "dd703aa3e52217e8b587c6dcfcf99fc6c8d17a0793ac4c8136d76794061b13ff"
+  ],
+  "pump_amm/SellEvent/part-00006.parquet": [
+   49990330,
+   "26ad2a8410444236a7a1e68ff63ee78c432790426e9d15451e07a309a53de510"
+  ],
+  "pump_amm/SellEvent/part-00007.parquet": [
+   49513850,
+   "e61af52f4bc73dafb419e4a3dbcd360d2f2298bc2c6b0e463fb60d270e9af8da"
+  ],
+  "pump_amm/SellEvent/part-00008.parquet": [
+   50048221,
+   "0aafce4d3a01da0eb661d3fdee427b32359c557753bfe0a409ecb9a204ad33b7"
+  ],
+  "pump_amm/SellEvent/part-00009.parquet": [
+   50224664,
+   "caaa25f8e309b961b41d7f74a5f16877acab1fb1126b2b90872dcfe016d20553"
+  ],
+  "pump_amm/SellEvent/part-00010.parquet": [
+   50032193,
+   "390dd8f952b6d2a4b77c8e5f2174849f3e115c41687c4e3ea192d829a2295774"
+  ],
+  "pump_amm/SellEvent/part-00011.parquet": [
+   50396122,
+   "aeaa3b8d1cb21cb83831e339bf6ec0887a6328e3b25487443be703130f676934"
+  ],
+  "pump_amm/SellEvent/part-00012.parquet": [
+   50724252,
+   "ddfe452e0620e9ea1c672e8e36139257a393ec65d539484f5b8ee0579e6f6f19"
+  ],
+  "pump_amm/SellEvent/part-00013.parquet": [
+   50571810,
+   "b01e885d97bf3b4dcfb37bcc5ed5b807e958a2424a6025c2015ec8b8e414329c"
+  ],
+  "pump_amm/SellEvent/part-00014.parquet": [
+   49597731,
+   "10217dc6d4d0fec84aabed22a091cfb7d1d7ce65a645baa211783ad7c1f6f092"
+  ],
+  "pump_amm/SellEvent/part-00015.parquet": [
+   49740338,
+   "7921061450736fb3e2295b8fd417118e5223bf0bd8685c6d051968b81a80e987"
+  ],
+  "pump_amm/SellEvent/part-00016.parquet": [
+   49364627,
+   "be89153a2d5ae62a0d8a43069349ebfcc58158be7fa05e31b832427d3f42ef81"
+  ],
+  "pump_amm/SellEvent/part-00017.parquet": [
+   49537270,
+   "248e365f9b174d790b339c7a751f1b4736d7ce110e158d4d0912687507373b3d"
+  ],
+  "pump_amm/SellEvent/part-00018.parquet": [
+   50336287,
+   "31cce07fe7977935750ae198279ccba3f2f05cfa15818ccf5583eeaccbb6f064"
+  ],
+  "pump_amm/SellEvent/part-00019.parquet": [
+   49598778,
+   "0ab9a4fec4b2f827c4cd2b5739bbf488868ef52834fe3d89ec3b12d5161b2cd5"
+  ],
+  "pump_amm/SellEvent/part-00020.parquet": [
+   49860358,
+   "120d8d565d28514d8e4a7ed947764cb953d5e4b61e5b6c154525809f01e2cd12"
+  ],
+  "pump_amm/SellEvent/part-00021.parquet": [
+   50313571,
+   "5e778bf4deeb5b2b2a7985a290118ff6acf165d8fbebc0c10ea54211fb133771"
+  ],
+  "pump_amm/SellEvent/part-00022.parquet": [
+   49754794,
+   "f9499dec4ede294abde9b41c7f628d86f24fad72da7746179f691d282e9d66fe"
+  ],
+  "pump_amm/SellEvent/part-00023.parquet": [
+   49709024,
+   "d0f63fb229b811aee957b30200436ffb3efe0f50194f1f4c54d3d636b851b085"
+  ],
+  "pump_amm/SellEvent/part-00024.parquet": [
+   49940526,
+   "bdf7a9a4516a69a8c08222e6372b4d544fa6bec352b3e29efe4db502a5d62633"
+  ],
+  "pump_amm/SellEvent/part-00025.parquet": [
+   49887812,
+   "3da9c4e19c2d77e9d57eb7cd54c264d2be65215b2b88492df4b1deedeb82fed4"
+  ],
+  "pump_amm/SellEvent/part-00026.parquet": [
+   50028356,
+   "2b0b046ff836c80b899313b6a5380f90b367f8e762616411e62ddedf8217607a"
+  ],
+  "pump_amm/SellEvent/part-00027.parquet": [
+   50015347,
+   "663e02c435e637881164013178061ab0ff9be4eb991f750b46bcc863ba1a4224"
+  ],
+  "pump_amm/SellEvent/part-00028.parquet": [
+   49082323,
+   "cf5cacd29dbf0a714ed90198edb566cbdb6d8818427dae72944c61d3e85d926e"
+  ],
+  "pump_amm/SellEvent/part-00029.parquet": [
+   20801424,
+   "7f430cb8b596dd0864049231eb1f77146627c1ec74f8b774c27d86e48a3d4cb8"
+  ],
+  "pump_amm/WithdrawEvent/part-00000.parquet": [
+   608956,
+   "2faff07b5887efbf1b31c1a7c8e78c926d81dfbf3fb9f7f176f42917c745da3d"
+  ]
+ },
+ "451656000-451872000": {
+  "_manifest.json": [
+   2396,
+   "56e84a4f6a678ee4ec616824c6917927f4f966571882cbd55df8327cb1c80ed2"
+  ],
+  "blocks/part-00000.parquet": [
+   3109565,
+   "b4e77c8395d3f5233ace9cc10a718bf48c0ec6a22409fd671d1080fca1ff09c8"
+  ],
+  "blocks/part-00001.parquet": [
+   272544,
+   "aac244c815146da9915b0f82403599a313e6de117a7f8f0f653e9fa791f7d9c5"
+  ],
+  "failed_txs/part-00000.parquet": [
+   3348099,
+   "0c525fc34dae8b3ec5f954308ef18b6897e567c6df8c81997d7b114d2e4b39ab"
+  ],
+  "failed_txs/part-00001.parquet": [
+   3388870,
+   "85191911067a08124a49bba0a8b687e280ba5b30a90ee47774d97c20e9914bba"
+  ],
+  "failed_txs/part-00002.parquet": [
+   3288381,
+   "71247ac33210903a239f9e186309869411febc296edcf640b07415781398c7a5"
+  ],
+  "failed_txs/part-00003.parquet": [
+   3400578,
+   "efb474a6f95a29404c0b2ad737269d016ffeceda6d6aad980bc387611c0fa195"
+  ],
+  "failed_txs/part-00004.parquet": [
+   3232051,
+   "65c01b4e1d0ae335eb26128e1f624a47423baf82c07c4a5c72ad3f156ae640b3"
+  ],
+  "failed_txs/part-00005.parquet": [
+   3267224,
+   "30121863508bced5d2249b61ec9828ee17eb34088f295d0ad1e06d8a6a31c771"
+  ],
+  "failed_txs/part-00006.parquet": [
+   3354989,
+   "d718fa7ceac5c0ffe61b911e3b280150f138a47343d6a0057dc216a0e018f1c2"
+  ],
+  "failed_txs/part-00007.parquet": [
+   3344034,
+   "cfbe6c9d7144264d1642a8b067563774b2b833a1502eb552e514007a171ff5bd"
+  ],
+  "failed_txs/part-00008.parquet": [
+   3375755,
+   "7be64dd690a291abda9251982acb03a9f413ea420cd99218e098724dc86f8e3a"
+  ],
+  "failed_txs/part-00009.parquet": [
+   3345814,
+   "35149d18e1a3649c9cc7eba3cbe621d1fb248b6d7b83c393562d522d0255ca85"
+  ],
+  "failed_txs/part-00010.parquet": [
+   3264988,
+   "d0b1da500f39f92429029ba326de59fa460d49c41db893105d0ef6b13192cc6c"
+  ],
+  "failed_txs/part-00011.parquet": [
+   3302184,
+   "921c9857045dde3711c6b614865fa7e841f9a7c35b028d799e918fc9c13ac6fd"
+  ],
+  "failed_txs/part-00012.parquet": [
+   3241751,
+   "14470f18f746212ca078c6569ac96dc52856be25e5579ab57d00828b5d1daf4e"
+  ],
+  "failed_txs/part-00013.parquet": [
+   3294460,
+   "e1142caa861071ed707a62d4fb8d7d8a31eccfc04e97d9c7e6b733147cca3d3f"
+  ],
+  "failed_txs/part-00014.parquet": [
+   3293182,
+   "c676e025496f695b421ec9fa3bd676e98e132b911b7acbe03c38298eadf9265a"
+  ],
+  "failed_txs/part-00015.parquet": [
+   3380642,
+   "dcf036ffed6fb01378dd1020d082c410e0000c996a1c05b316b10efc9399b379"
+  ],
+  "failed_txs/part-00016.parquet": [
+   3358013,
+   "40bb2739797cc0cb86fa37f3750c1e0191eaf23424383334ac7f77f390744a7a"
+  ],
+  "failed_txs/part-00017.parquet": [
+   3315556,
+   "d4ee865b406bcd94f4fb2a139d86b0f5d7cc3cb64a5671a3290f33f47e1f4006"
+  ],
+  "failed_txs/part-00018.parquet": [
+   3294279,
+   "21e5550a0c5eacc8e9642c8e98080ff6f2485ac64ecda01f98e30813002fd062"
+  ],
+  "failed_txs/part-00019.parquet": [
+   3346864,
+   "be08853dc902d25448e0eede88bca6f5515651e63d9c0d44fcd96d796b168bed"
+  ],
+  "failed_txs/part-00020.parquet": [
+   3299778,
+   "2c1ce4c4cb4b559389e41bf0a19bbc1e44776a8babf2817bd7050cf9a2b8e012"
+  ],
+  "failed_txs/part-00021.parquet": [
+   3395790,
+   "9ee159d7a67d53dbb09f819fc08668a86c198f39e47875044bef5acfa930b80e"
+  ],
+  "failed_txs/part-00022.parquet": [
+   3291732,
+   "ff85a14632b8e6e256c0757265a18f6532e166fb920e489158727eb494eb81d4"
+  ],
+  "failed_txs/part-00023.parquet": [
+   3220960,
+   "e6068e79462dd06a2c3fe66d5d9da25c06986a10d585142c53daec72eaa781cd"
+  ],
+  "failed_txs/part-00024.parquet": [
+   3188177,
+   "e60525c028e98afc04ed62772e76eecaeb7cb542b708bc7c81a21295ea4345d4"
+  ],
+  "failed_txs/part-00025.parquet": [
+   3196781,
+   "612a8ae59861f5625ebc96cca293b0945201e812b19ff924d1eb500326d0f15f"
+  ],
+  "failed_txs/part-00026.parquet": [
+   3301915,
+   "f8c7d88740597d80b504f07841edd251731330a6df125202884e3bfe721ba2ec"
+  ],
+  "failed_txs/part-00027.parquet": [
+   3566085,
+   "9f1f6e17cfff722839106d663707ce18272349bca1a673d08ebd2bd91c0f13e1"
+  ],
+  "failed_txs/part-00028.parquet": [
+   3299153,
+   "cdb0ca2f78937f576d48ffc353664be138e15e683c44199fb31a868a6acbcc68"
+  ],
+  "failed_txs/part-00029.parquet": [
+   3378460,
+   "a93017de1e3ab745a7c0fdf81d0488f7bcd9cd4f1f3f7d77ec250616ad0dfb95"
+  ],
+  "failed_txs/part-00030.parquet": [
+   3265115,
+   "581c0b67b50cdc40868e4579d1c32c882688fa6c8a0c578c861e028a63330b1b"
+  ],
+  "failed_txs/part-00031.parquet": [
+   3250087,
+   "e2e8cade6fe4bedc2991d260a319e338b40cda89ca11532ff91e5e2508476f76"
+  ],
+  "failed_txs/part-00032.parquet": [
+   3164550,
+   "5fb1f485bb09cc2f92165ce711382d58e4de77edaa82188fe337d2fb1fc21a28"
+  ],
+  "failed_txs/part-00033.parquet": [
+   3168046,
+   "74f4a81dbdc46da095da06d93b9c95adddc43c8b2af5538e42b4ec31d2450e0a"
+  ],
+  "failed_txs/part-00034.parquet": [
+   3325701,
+   "3e322c875ea6d0abe7b8ab7dcf689cc4ca9caa36e5e491cf3b2d42870ff31d81"
+  ],
+  "failed_txs/part-00035.parquet": [
+   3219141,
+   "9cc447973c72d476f2a8c27a35f4746906016831b91b58e6fa6be62eea1ec65a"
+  ],
+  "failed_txs/part-00036.parquet": [
+   3333965,
+   "c5ea69503d9c5e1b0d53cacf9087c3e138534f41d1303a72e0dd43c47c4acc2d"
+  ],
+  "failed_txs/part-00037.parquet": [
+   3331434,
+   "a963de7319d2029b67503717495196f40e262e35e4713ab0333cc54fd2fc18fa"
+  ],
+  "failed_txs/part-00038.parquet": [
+   3337325,
+   "110b914337a3c7a5fbe8c5f11d2b2de204aab75ab81b1d89f09444accbcac45a"
+  ],
+  "failed_txs/part-00039.parquet": [
+   3261185,
+   "ae5a9dbccadb83bd76abf3eb1ba09ee26cd443ae7224fd16f0e13f6556ff1f24"
+  ],
+  "failed_txs/part-00040.parquet": [
+   3279691,
+   "8c7acc4d9233e7ac2a18e021a454f55dbde575114cfe35c48146d66179355aa9"
+  ],
+  "failed_txs/part-00041.parquet": [
+   3257672,
+   "1c6fe68f53723fdbbf9544a2124781a2241986914f85d9e24d8ab94ea3ca86c8"
+  ],
+  "failed_txs/part-00042.parquet": [
+   3275068,
+   "0a5b58ffa1d76f915e43157f01a9695d50e20be4b25293c037e1c1462107ca69"
+  ],
+  "failed_txs/part-00043.parquet": [
+   3362460,
+   "2b0ad44177679136784a18283299dea37694a2e015695749ca12b04bebfc2bf4"
+  ],
+  "failed_txs/part-00044.parquet": [
+   3327345,
+   "482032382469b0d4c48757e6bf2a568bfb0d154ff81deca82a46dac0d8449973"
+  ],
+  "failed_txs/part-00045.parquet": [
+   3283420,
+   "c33c44cfc79ad7fbff582f983b8a5d9877d0e7f1ee072b64043bd5f56f8d8d89"
+  ],
+  "failed_txs/part-00046.parquet": [
+   3393961,
+   "8812260c48d3889c9d298d483d3947e79ab7be6eac1664d47776c0b85b5f38d7"
+  ],
+  "failed_txs/part-00047.parquet": [
+   3464510,
+   "0a4e0f8e7976b5b1639fa6976148dd57fad29c44549aa6fd487fab1668ea2aad"
+  ],
+  "failed_txs/part-00048.parquet": [
+   3405506,
+   "35abf2e40ccbe1eb52cc560de25343ebd22fb46fdd143c42f7a312ce0988a8ab"
+  ],
+  "failed_txs/part-00049.parquet": [
+   3375690,
+   "60ef6fdecb495f2dafdd99d61e4877302d6801adba82216c8fbbdc6c957dc13a"
+  ],
+  "failed_txs/part-00050.parquet": [
+   3427453,
+   "08231715700de428054f81a1936093c63f8df2632855efeb0504bbd9d74d04f7"
+  ],
+  "failed_txs/part-00051.parquet": [
+   3358244,
+   "122a5a2b06ef8bec187f23b15f71d029856477e3dbf129bcfaef633116e5f315"
+  ],
+  "failed_txs/part-00052.parquet": [
+   3404396,
+   "9683a6ae675eecbee1e050f21b03cca59b1c761f2ecf7cf220ba74d73d6743b9"
+  ],
+  "failed_txs/part-00053.parquet": [
+   3498236,
+   "ff9d34fd21195171573ae43051576ff6675c36b400c8adb1c104369f49e8fa88"
+  ],
+  "failed_txs/part-00054.parquet": [
+   3552724,
+   "5b14c49b479bcdca722e74b0627877a13cf4090b2db7597c44be91655f126669"
+  ],
+  "failed_txs/part-00055.parquet": [
+   3461019,
+   "c1b44f88f77b2b4fe55d2385a595dbe32c6e04a63976fb0a00f1b3cbc0c29309"
+  ],
+  "failed_txs/part-00056.parquet": [
+   3458958,
+   "e271b23f4245e37caf7b8a501e36b81b40966db55f004863f30d23aca4e31213"
+  ],
+  "failed_txs/part-00057.parquet": [
+   3548211,
+   "cfab1abe132ed731e12bf74c72211cb77804f5492b953b8068f798c6fa27b1bb"
+  ],
+  "failed_txs/part-00058.parquet": [
+   3445165,
+   "39dcb005ccce149eabab58fc2e84b4393e517d788b34d06392c578b3d864016a"
+  ],
+  "failed_txs/part-00059.parquet": [
+   3249864,
+   "9a9a2ea06e0d0f605b312579f5fab53df2ad731d21a593bc03f4aa53d88aad10"
+  ],
+  "failed_txs/part-00060.parquet": [
+   3356984,
+   "8b1559821c097bea075eb90942a882f3fb55bfdaf55ea2619b7389d2cee690c9"
+  ],
+  "failed_txs/part-00061.parquet": [
+   3274663,
+   "a253a2e91f6bf5b77d75b9e939b0140a074532f2a136e30aae08dedc50adba45"
+  ],
+  "failed_txs/part-00062.parquet": [
+   3205076,
+   "ebc5abd5aeef1d6748409e64f2c742d31e83edc15ac75a4ec9e0417b9acce05c"
+  ],
+  "failed_txs/part-00063.parquet": [
+   3299921,
+   "b7f7dfcd8670680819e5bc42a520040cdb3f50cc2d05ba071b82c069837e64df"
+  ],
+  "failed_txs/part-00064.parquet": [
+   3340384,
+   "53603d5fc1b6f7636470811ed2aec3f2ce79bf81b5c0bd2fdd0e202b806a9829"
+  ],
+  "failed_txs/part-00065.parquet": [
+   3455724,
+   "24db786e80146592e57651bc5d355e815e1bddf1d4adcd9d660f79aff2864fb2"
+  ],
+  "failed_txs/part-00066.parquet": [
+   3473278,
+   "94c083d9060aa006ef3c3066b90de2ee4b1087f2b2a088f938113ae486ef29fa"
+  ],
+  "failed_txs/part-00067.parquet": [
+   3410198,
+   "994f83f19b9ee072bfc00abc6b0de5bc8d31e635a4301aab872aa401da031c4f"
+  ],
+  "failed_txs/part-00068.parquet": [
+   3317358,
+   "a165a213e58300bfaa6af3a330b38263550dfe5c3412dbb582fab9c74769b74e"
+  ],
+  "failed_txs/part-00069.parquet": [
+   3546359,
+   "8d7e64644172615f8bf58423dbf9b574a1f9cd91f1856991ebb8e0f4b372cdc3"
+  ],
+  "failed_txs/part-00070.parquet": [
+   3428470,
+   "b8d7692be54c635d9f79fc3794c607492e03d4816fb4c4685fe576611ad45424"
+  ],
+  "failed_txs/part-00071.parquet": [
+   3331080,
+   "b2e528dc81f79ba2b3853dc6c38b4a8c07e001b2de4e9c35e3e911d75286eeb9"
+  ],
+  "failed_txs/part-00072.parquet": [
+   3337029,
+   "239e023ff7546d1babaf225464ffc5fd0da0731d83c77013eb3d99fbbdae9148"
+  ],
+  "failed_txs/part-00073.parquet": [
+   3422953,
+   "012342cf55d72b045161a4d94e1f51090fd32e72bbf2d004d9f0c9fc1f02d177"
+  ],
+  "failed_txs/part-00074.parquet": [
+   3387852,
+   "3dbc5e1be6a804251d04c9a10fb956353037b28572e5fed80351cab888b825ba"
+  ],
+  "failed_txs/part-00075.parquet": [
+   3339524,
+   "f07b8cf8a3fc66267033d914d654ffd4ad3344f84113220307c38823cb733ca6"
+  ],
+  "failed_txs/part-00076.parquet": [
+   3378156,
+   "631dc0943a133d819b2517583c29bd53df5f372b175012e970f3782b9dce9a98"
+  ],
+  "failed_txs/part-00077.parquet": [
+   3378378,
+   "cf2d07bd9055087423c4b0134a1a71072398baa5bec257491e844144db2183ae"
+  ],
+  "failed_txs/part-00078.parquet": [
+   3218523,
+   "1c20c575765027631ac4aef2633b56e8cac0909bf732b684802a2e807898b771"
+  ],
+  "failed_txs/part-00079.parquet": [
+   3316689,
+   "f234c9b5b43e4fb5dfa306f823e2a5b43f0048249dccd9a3afb01ed50789973e"
+  ],
+  "failed_txs/part-00080.parquet": [
+   3257186,
+   "adf0909b446c75ac965b547387557c719daba7b179ddb9a933b4b09ba4cfc565"
+  ],
+  "failed_txs/part-00081.parquet": [
+   3321658,
+   "bb8f319b011c0cd10ff8c493a54ed9f5f40f64d16649f364f504b2aff4af0c8d"
+  ],
+  "failed_txs/part-00082.parquet": [
+   3314679,
+   "ebaf0043bac64014c09dd80bd991d3001548c87594ab6fc84fd0061c5e68e1a0"
+  ],
+  "failed_txs/part-00083.parquet": [
+   3212427,
+   "676c1138ac633fcfedd38b983347dc8c23c463e9f1f37226fcd16fe861628bc9"
+  ],
+  "failed_txs/part-00084.parquet": [
+   3279017,
+   "4f4f96fe4cc5f627fde40b38715d10ac40b1d878c8186f77997828c05672e01b"
+  ],
+  "failed_txs/part-00085.parquet": [
+   3321534,
+   "a2e58fc937a16da0b1fb73939beb18fef71620853602e6e04f3c85b865a2ffaf"
+  ],
+  "failed_txs/part-00086.parquet": [
+   3270310,
+   "92ec5df67b10423493cc8097ed14a59533bf6c18a20f3f17895277cd2f5df84e"
+  ],
+  "failed_txs/part-00087.parquet": [
+   3254407,
+   "efc7ea803f84c165fbcb8a7024994c66f852447a06ca73217467b8243b98e0bb"
+  ],
+  "failed_txs/part-00088.parquet": [
+   3241788,
+   "d1035a2ba82c0450cbc1a56c9d36a19650ff265cc7437996940645e449987657"
+  ],
+  "failed_txs/part-00089.parquet": [
+   3334396,
+   "f001ae903ea6f7806f60aa1dd36403dab3f74174f13a4c47ae1b8f92f164160c"
+  ],
+  "failed_txs/part-00090.parquet": [
+   3416328,
+   "71bc59637d004a62c04c7fb524869a1b50567721bff06712b16fcda23eb11ed7"
+  ],
+  "failed_txs/part-00091.parquet": [
+   3326363,
+   "fe79f0e6b2901f31cc466ff9b047f76572dc597b7dc20bb45262d1c49030848e"
+  ],
+  "failed_txs/part-00092.parquet": [
+   3360273,
+   "3506b287739d5dadd5b85ebe21e40f99c5b194e7c7001d02e0ce5b8b1048fb30"
+  ],
+  "failed_txs/part-00093.parquet": [
+   3354383,
+   "2242f45705267b9ea145c19d56609e64842faa8a7410cfc46c5ac752370b032e"
+  ],
+  "failed_txs/part-00094.parquet": [
+   3255473,
+   "c35edd81aec7bbab7e36bcd386fcf1585dd18d72194d311147b0660005620e73"
+  ],
+  "failed_txs/part-00095.parquet": [
+   3133538,
+   "3009423c4f7b07c8e67e522154dd36d99ecbd693a115bb61f70f52f9623cdaac"
+  ],
+  "failed_txs/part-00096.parquet": [
+   3123770,
+   "996e228324fc1c61286582e38d9aafe1683641c4dba4470eda87636c6d2376a3"
+  ],
+  "failed_txs/part-00097.parquet": [
+   3181431,
+   "f29a884f1c100af5d9bdf8ae1916633ebb1ccd0a7bdf2fa3fae22cf3068e493c"
+  ],
+  "failed_txs/part-00098.parquet": [
+   3263184,
+   "3799d9a3cecccaaff7102cb804868f1fc4d60db899a36169a008d74451e13ba1"
+  ],
+  "failed_txs/part-00099.parquet": [
+   3359743,
+   "9d7b8b01691fa82a86f15812aff8e08ede4d899fe6dfbf2298a445e332d500d0"
+  ],
+  "failed_txs/part-00100.parquet": [
+   3251614,
+   "f83781009f433870b5ca6db48df559ad0eddaf5b86e209ce51149f6c4a4cb6ad"
+  ],
+  "failed_txs/part-00101.parquet": [
+   3319570,
+   "77dee41566e4c4804944571d846626cf21add9d91827d14bf1702d77225b877b"
+  ],
+  "failed_txs/part-00102.parquet": [
+   3309875,
+   "6d0843344791d3195c3355d7357d9f56f946e2497023832a3ad0df63e3343a58"
+  ],
+  "failed_txs/part-00103.parquet": [
+   3391278,
+   "f19afcec8c6c83fc6b26fb7b6ab058c189fecac0ce9eed87c85df89158697415"
+  ],
+  "failed_txs/part-00104.parquet": [
+   3396985,
+   "ae576c70d8d1d046bc4bd22f18bd47f220747078b72d5015eec1e1ce64502eca"
+  ],
+  "failed_txs/part-00105.parquet": [
+   3299921,
+   "d30126f55cd10ac0b1693dde94970df37afd5fbc921279c77d974c420f836f3a"
+  ],
+  "failed_txs/part-00106.parquet": [
+   3300765,
+   "f391f266dff8f8f29f9c23ee01b64baf3150bff24ba4d37d501a241c0acfda72"
+  ],
+  "failed_txs/part-00107.parquet": [
+   3285525,
+   "5f4759fae0058d5174d8f0769b72eaa0976169656a73fcc79da48dd45b0c8e07"
+  ],
+  "failed_txs/part-00108.parquet": [
+   2765588,
+   "27694d9cd55b6c8254bcfc87bbf7b7644069ee6330bd3e500fe6b0d5fc60d21f"
+  ],
+  "pump/AddQuoteControlMintEvent/part-00000.parquet": [
+   9843,
+   "5ebbc3352d2d7e3f83ca779f43fd8916bb9c7f0f476880c13d2b473812e698d4"
+  ],
+  "pump/AdminCtoEvent/part-00000.parquet": [
+   12726,
+   "69bb21a32514a949734c0755b5d61aba4951da3fd6464802f5ca5657266ddfab"
+  ],
+  "pump/ClaimCashbackEvent/part-00000.parquet": [
+   1085899,
+   "263a95a485f1cf3ef5fb876690afa230c3354ab9f9fca0de72890e63216c90a8"
+  ],
+  "pump/CloseUserVolumeAccumulatorEvent/part-00000.parquet": [
+   15953860,
+   "9677ece670abd025a79ea0f985f4dc100094fcc8908e470cb867c64b0de7bd6a"
+  ],
+  "pump/CloseUserVolumeAccumulatorEvent/part-00001.parquet": [
+   3915506,
+   "a911862209bd7ccee2235810c4d8f084c60ee13590dc4e0e83587d5182d21558"
+  ],
+  "pump/CollectCreatorFeeEvent/part-00000.parquet": [
+   2571426,
+   "bc06d83929025acaa903b4a4afd36e208ea250341f253fff180212257cca582e"
+  ],
+  "pump/CompleteEvent/part-00000.parquet": [
+   229036,
+   "49a324b685bc37249047bc4f7b214af97322a8c654dd706325bee02ed3fc8774"
+  ],
+  "pump/CompletePumpAmmMigrationEvent/part-00000.parquet": [
+   241377,
+   "8e43f621418a9a908911753035ad98a7c8a253797b5feb8eef895aaca229a7f9"
+  ],
+  "pump/CreateEvent/part-00000.parquet": [
+   8067447,
+   "68232b8847932cf94b74c4ae96421f542bc9e3ea7ee9f0ebb9cb7aca3a9c1c8c"
+  ],
+  "pump/DistributeCreatorFeesEvent/part-00000.parquet": [
+   2778875,
+   "8fe5883aadabd6fe91a94f3f14e71f76109cea870053aec7f4fc517c1bd65b81"
+  ],
+  "pump/DistributeFeeToHoldersEvent/part-00000.parquet": [
+   15516043,
+   "edf100ff0c551dc4fe3f2275ad31445828fda7e4e9623578ae52458c03a29cf4"
+  ],
+  "pump/DistributeFeeToHoldersEvent/part-00001.parquet": [
+   4236888,
+   "6bde59015e87d053ae28cd1da4f0f60bfc0290250f7dfd0bfe157965b637a087"
+  ],
+  "pump/ExtendAccountEvent/part-00000.parquet": [
+   2483306,
+   "d98e8a5b4d082530f6c6a6b0ca5dadbb8fa25827ba24a0e7f6fa84636eb5dc6f"
+  ],
+  "pump/InitUserVolumeAccumulatorEvent/part-00000.parquet": [
+   1361003,
+   "ec6411990906ba18bbdfe209f900f52ab5efbf8009586382221224866361c0ec"
+  ],
+  "pump/MigrateBondingCurveCreatorEvent/part-00000.parquet": [
+   590291,
+   "dfde2fb7fe22b619388fc0f2530a584fa66c43045e6eb66473c9105a82464049"
+  ],
+  "pump/SetQuoteControlMintReservesEvent/part-00000.parquet": [
+   17218,
+   "afe627c8351495c03cb2e8d404bad5ebf12727109015ac32b460a1893c909464"
+  ],
+  "pump/TradeEvent/part-00000.parquet": [
+   36853601,
+   "4210ee0809b978f0d9ac34e8bbe41bfebf8ed1ad1bfc4e8e83b4d813370a2bf1"
+  ],
+  "pump/TradeEvent/part-00001.parquet": [
+   36393035,
+   "eb8e8dda3f2848f772ce9abf8ac37976eb7957ab0addaec49825ae36cb860c65"
+  ],
+  "pump/TradeEvent/part-00002.parquet": [
+   36768591,
+   "8d7908ba0cfe9426894d957199fcae1cd3e33f819ef12b447a8593affa3ef3ab"
+  ],
+  "pump/TradeEvent/part-00003.parquet": [
+   36709291,
+   "4f82374871a76ff98c580843f14a1eff575f245e5fe8c94df351f579cd2a6c45"
+  ],
+  "pump/TradeEvent/part-00004.parquet": [
+   36915756,
+   "bb08711431dbbb69556d2f13a1655cab68bc9b205f77b61ab5e4d9cecea30265"
+  ],
+  "pump/TradeEvent/part-00005.parquet": [
+   36393757,
+   "edef55eb81330c58fd3a66ace95ecc77bad2f4b5d983ee807fc463fa55c67e93"
+  ],
+  "pump/TradeEvent/part-00006.parquet": [
+   36758300,
+   "e057adb0297f46c757aef3ddcdbbd90cb6e4aa73f79329333f05e23369e63f14"
+  ],
+  "pump/TradeEvent/part-00007.parquet": [
+   36624827,
+   "f5fac69a730e85d2fca055499378f49ca9f53d8fd4d4d86dd8e51bd6e2b10e4d"
+  ],
+  "pump/TradeEvent/part-00008.parquet": [
+   36778551,
+   "15f7efd3d877bb2e1da4b5db97cae71c19f7c8ffe593677fe5e1ae863b57676d"
+  ],
+  "pump/TradeEvent/part-00009.parquet": [
+   36732905,
+   "0920652a9c289b3bb0d5f4b56b658a2a8513591c2c2f969bc5b22ed3f394f314"
+  ],
+  "pump/TradeEvent/part-00010.parquet": [
+   36750535,
+   "b8fb66ab77df1560c558ed311e355a59e566cc53de9714ec5e5bb929bcc0204b"
+  ],
+  "pump/TradeEvent/part-00011.parquet": [
+   36515975,
+   "be488541ceaf24d4dd0fa6dc1f53becff428ea3c2409d652e979f0e79d548cd7"
+  ],
+  "pump/TradeEvent/part-00012.parquet": [
+   36663173,
+   "2abbd97dcba5cc88b0dee7c46e3169757b40e333761f3175d587593584322da6"
+  ],
+  "pump/TradeEvent/part-00013.parquet": [
+   36114991,
+   "96febbff64417f7b9dbaa9ad8aa841766aae71bf3ea7824deef8a5f330c806f0"
+  ],
+  "pump/TradeEvent/part-00014.parquet": [
+   36833938,
+   "b8885b0274fb0322b104ac7467dbcd9da205ad3be1c974f38da19ca531c0e154"
+  ],
+  "pump/TradeEvent/part-00015.parquet": [
+   15848393,
+   "7b24de8d1b7192fdbfa80552f741367da1d2b65c1b52131064ba3fd907e50e1e"
+  ],
+  "pump_amm/AdminCtoPoolEvent/part-00000.parquet": [
+   10712,
+   "7b394f6fb828c7c0ad5c50a97037dafe96e88114fd5da6964daaefd37065baa8"
+  ],
+  "pump_amm/BoostBuyAndBurnEvent/part-00000.parquet": [
+   2887737,
+   "5b0af833bfad04549c4a3d1bc129872f26cb3c73bd280d72220f519ed89c6526"
+  ],
+  "pump_amm/BuyEvent/part-00000.parquet": [
+   49462309,
+   "639faa9cf777435523c75726d40ad449321aa2f21d499ac00262d29faff77f10"
+  ],
+  "pump_amm/BuyEvent/part-00001.parquet": [
+   50592520,
+   "dc08bdea1e2a6954633cc79107f3136d49100442185a4c8d8bc0465cf08c25ad"
+  ],
+  "pump_amm/BuyEvent/part-00002.parquet": [
+   50501264,
+   "daf0d53c8ccfdc7ea95c00b74b8b7969b8bf02c6126f55c5d8c8f2faf2a14806"
+  ],
+  "pump_amm/BuyEvent/part-00003.parquet": [
+   49920192,
+   "6d44a9ce251495e98fc2d5951a5dcb5bf283cae8ca4adb9024d49072d4497c4b"
+  ],
+  "pump_amm/BuyEvent/part-00004.parquet": [
+   49722860,
+   "7b2d35bc154494704259ffa74d05e0ea6d23440e5d3661f66af2a356119d2e5e"
+  ],
+  "pump_amm/BuyEvent/part-00005.parquet": [
+   49822167,
+   "88766fcba80673f3f0b49ebf99795d9302c32152cf5fb40e82e05a5a6b5050e1"
+  ],
+  "pump_amm/BuyEvent/part-00006.parquet": [
+   48741630,
+   "dc7d5e098c2ade9c2ea9267a482d30ed7efb6f8cc56286bcb341ddd89b355f13"
+  ],
+  "pump_amm/BuyEvent/part-00007.parquet": [
+   48990613,
+   "eda781f39ed03ff6c772889daf78d64e95d7a23e669258f31f5ceb3c741887f0"
+  ],
+  "pump_amm/BuyEvent/part-00008.parquet": [
+   49621144,
+   "8a5fb800087f59ed25e1c13aafe25022870daa995b7b1edec8855ef3f00dae06"
+  ],
+  "pump_amm/BuyEvent/part-00009.parquet": [
+   49562662,
+   "d86586ccd3d35cb2a954d96ca8283dd583704d5d50d0733a525e2b53cf162d0a"
+  ],
+  "pump_amm/BuyEvent/part-00010.parquet": [
+   50443260,
+   "fd849842d8112a8804b66328e540d5442aead44e44ed5dfbf5a82e85598129c5"
+  ],
+  "pump_amm/BuyEvent/part-00011.parquet": [
+   50587116,
+   "20f60edb28f8b15ddde81f71faa149cc08b1af3615705299d3291f185db32fca"
+  ],
+  "pump_amm/BuyEvent/part-00012.parquet": [
+   50078185,
+   "9f37acad769316c059ba3162b784b50a34d6c86a39e93dad00197129df1a67d5"
+  ],
+  "pump_amm/BuyEvent/part-00013.parquet": [
+   49460644,
+   "004740466ae0d3eb1a4fa37ad205135dac46a58391f8028476ef1a8db7c37b75"
+  ],
+  "pump_amm/BuyEvent/part-00014.parquet": [
+   49581588,
+   "1ee95ad49de960d5f9ce11cd9c75f81e7e8a286f3dc295b8f2e29df56dddb510"
+  ],
+  "pump_amm/BuyEvent/part-00015.parquet": [
+   49694343,
+   "22ecce024d92638f7ebafb54ccb34bec5e779d21d6fcb7a53cac61ed8a7bbba9"
+  ],
+  "pump_amm/BuyEvent/part-00016.parquet": [
+   49080954,
+   "0faf50562ce6d3ac560fb114111fce9006d325f0a21b3a25aa2d373e2418d681"
+  ],
+  "pump_amm/BuyEvent/part-00017.parquet": [
+   50013880,
+   "9daa6878abad0dadc36846831da4fe0a90f48b602c59471f160f701a41e4315b"
+  ],
+  "pump_amm/BuyEvent/part-00018.parquet": [
+   50851718,
+   "34937dd4b09af2a158284236e5f2b065e1a314af8bbd2decb9f1799260f38d33"
+  ],
+  "pump_amm/BuyEvent/part-00019.parquet": [
+   50723476,
+   "877e6e2c0c25b0b772e9dffe8ec158665f0d47d351e313bdb6a719382597fcaa"
+  ],
+  "pump_amm/BuyEvent/part-00020.parquet": [
+   50344854,
+   "8e35be8e39152d3556226fecca8ff3ebd3e387438a2d73e1827e325c53afc1eb"
+  ],
+  "pump_amm/BuyEvent/part-00021.parquet": [
+   49854844,
+   "e1011beb1ee7e5e3f8156f86e785a9476dc86d363d5ba52e669294d748b6b26d"
+  ],
+  "pump_amm/BuyEvent/part-00022.parquet": [
+   49659459,
+   "68911ba283d4986f28e7cb01cf39b5685a85d12e30668f71f6e764e09ee1d2cf"
+  ],
+  "pump_amm/BuyEvent/part-00023.parquet": [
+   49802982,
+   "2126ecc78f9e8118c7751f33bf4b76bd8a312d38f23f57dd1e9e2eeeb41bc42c"
+  ],
+  "pump_amm/BuyEvent/part-00024.parquet": [
+   49827357,
+   "2162a44b8030bb2c16332f32f4da591ec51800495d21a654dad38cd7729dae9d"
+  ],
+  "pump_amm/BuyEvent/part-00025.parquet": [
+   49981845,
+   "cd9e01a5d242d753da97a90cecab10b35f770123885399755768821ca28a538e"
+  ],
+  "pump_amm/BuyEvent/part-00026.parquet": [
+   49625412,
+   "a4c7af8c7eec927cd0f441ba3619f714301cbab71962cf7ebc92f92099481aaf"
+  ],
+  "pump_amm/BuyEvent/part-00027.parquet": [
+   48590528,
+   "8283960655885dfee1c3c32f403392d5c5a3b76b9c1d2304a7490b23eff70a86"
+  ],
+  "pump_amm/BuyEvent/part-00028.parquet": [
+   48200913,
+   "caed05be5d79368083581a9b1e2c9abd109d69681c7b4c84784ce0a8a0a93199"
+  ],
+  "pump_amm/BuyEvent/part-00029.parquet": [
+   48515755,
+   "2ee5af02571057479f95114e56f458536002a776f9955b942922c2aa8f6c637b"
+  ],
+  "pump_amm/BuyEvent/part-00030.parquet": [
+   45106992,
+   "744262b39f0b2b60f5e72d28016a6cdd3359580b360577ae19455fe524afcead"
+  ],
+  "pump_amm/ClaimCashbackEvent/part-00000.parquet": [
+   1347793,
+   "f74f25aeeded408db0b1a050a293fd7744854dddfca787a8b6c677f74b428ffc"
+  ],
+  "pump_amm/CloseUserVolumeAccumulatorEvent/part-00000.parquet": [
+   23291748,
+   "efb459bb1a2af22b78407c7b6e79a29262befd1586d995d66adf9d41aaae98c4"
+  ],
+  "pump_amm/CloseUserVolumeAccumulatorEvent/part-00001.parquet": [
+   23028016,
+   "d9ac461c50c76a697a706c043b591cd6fafa997be5e06c473b9d2e8f8be668f6"
+  ],
+  "pump_amm/CloseUserVolumeAccumulatorEvent/part-00002.parquet": [
+   9056618,
+   "2d67048e5518cba9540074fa81592f4e505c657427ca0457f9836e27328506d4"
+  ],
+  "pump_amm/CollectCoinCreatorFeeEvent/part-00000.parquet": [
+   855727,
+   "101aea7850e079417c6e6cbc6e99f4f675107d04029f3d6ec4461ad020b92f10"
+  ],
+  "pump_amm/CreatePoolEvent/part-00000.parquet": [
+   990692,
+   "4f51fd6ef5d6c2da15eaa2da271cf27ad545885c9d41783c1b3ad14c182cf5d3"
+  ],
+  "pump_amm/DepositEvent/part-00000.parquet": [
+   34097,
+   "97e2ca91fbcd1057b03794cdb7dba0b28e013b4437c08ebbe35c915895cd812d"
+  ],
+  "pump_amm/ExtendAccountEvent/part-00000.parquet": [
+   308879,
+   "a0eb90ad92e88632b0c629328cc1baea371ce5360946eec8ecafa935ff48afb7"
+  ],
+  "pump_amm/InitBoostEvent/part-00000.parquet": [
+   172160,
+   "5405520fb8101d4487b951acdb91b6022f121ea82dd3fb72c0083a06246337de"
+  ],
+  "pump_amm/InitUserVolumeAccumulatorEvent/part-00000.parquet": [
+   2379795,
+   "2602c97876fa6436018a2e709719670e0c85aed63097dfacf85114078ca9dbbe"
+  ],
+  "pump_amm/MigratePoolCoinCreatorEvent/part-00000.parquet": [
+   12521,
+   "71c511bc249c55b238e78abc56d6c28843500ca9b0876546af9be4e2018dd100"
+  ],
+  "pump_amm/SellEvent/part-00000.parquet": [
+   50199079,
+   "45316a1ba1ad5788e8e2f0cf459e18e4dbff5f2ac2713df924e716ed6c2d41b8"
+  ],
+  "pump_amm/SellEvent/part-00001.parquet": [
+   50316681,
+   "5fa1e025daa95cff0c9b2418025688f6e8f86ee3365c854ffc9df5884579ba78"
+  ],
+  "pump_amm/SellEvent/part-00002.parquet": [
+   50199879,
+   "e8087c71d0d1a1056644aa6d7da2f3dc15756ed538e12e3ab7057a1517158096"
+  ],
+  "pump_amm/SellEvent/part-00003.parquet": [
+   50285123,
+   "e082f639f0f7fc9b65efe316707359eef3743ed82234aa0a48d864f22f54e5bc"
+  ],
+  "pump_amm/SellEvent/part-00004.parquet": [
+   50310517,
+   "f317c5f1e388a5302eac1e772acab79b8f7215955d4eb57b343f12a6d61b483a"
+  ],
+  "pump_amm/SellEvent/part-00005.parquet": [
+   50099725,
+   "b95168d0ec724962c637aaf2758ebfc57fd94ae75bd97435404a7639827bbbde"
+  ],
+  "pump_amm/SellEvent/part-00006.parquet": [
+   51147806,
+   "9f570e6bda1faefe59881359786fcad7ce9c26f038f21113e04d8f3ce92761c3"
+  ],
+  "pump_amm/SellEvent/part-00007.parquet": [
+   50507112,
+   "0f59eb9320f5869aedfd4b601e4be5443bb1fc691aa4759c1a908a0b28c13149"
+  ],
+  "pump_amm/SellEvent/part-00008.parquet": [
+   50419532,
+   "8714687e076f7c196f329dab210b888d5e507748dbfd1ea2a53caf47ab81c69e"
+  ],
+  "pump_amm/SellEvent/part-00009.parquet": [
+   50206824,
+   "eaa8351c94f578118124c82a4a9f34c90f9bb2a88ceb465cbe6f15270a961a80"
+  ],
+  "pump_amm/SellEvent/part-00010.parquet": [
+   50134010,
+   "ca50f2f112ed99866f4b2837991207c89ed07b8ece4f9ca24d31a985f32ac8b1"
+  ],
+  "pump_amm/SellEvent/part-00011.parquet": [
+   50290200,
+   "93779d4592ff8cdd08b1a5fbbeb5c4daf6297c91f88b4f583f0bec32d08768c7"
+  ],
+  "pump_amm/SellEvent/part-00012.parquet": [
+   50485796,
+   "79d73e45133f33e47e19160736e8c73c7c92f9260dc8463b19886c48d6592d99"
+  ],
+  "pump_amm/SellEvent/part-00013.parquet": [
+   51023267,
+   "1f51a5287fdb562b0b50cee995d97cd7bb99f68571c6ecf8af4f9237a4db1314"
+  ],
+  "pump_amm/SellEvent/part-00014.parquet": [
+   51009161,
+   "0fbd8351f8b1d586f20c81bc9bfa4b98f75ebd27d3b422bca650887478f0fbe4"
+  ],
+  "pump_amm/SellEvent/part-00015.parquet": [
+   50811568,
+   "00d7cd2f2d7c8d9436c02f4255ac7b24a8e1a846357aeda9916c15c56579ffea"
+  ],
+  "pump_amm/SellEvent/part-00016.parquet": [
+   50325048,
+   "4dc40dd5ba242ed83949cb4f610cbab683da3cfce98fd7ae8570f9eaffa910fb"
+  ],
+  "pump_amm/SellEvent/part-00017.parquet": [
+   49966004,
+   "76fe38be23f4f6ea42b5d9ebbc66b09310bd2c57dd383b108bbd36e00ec20ccd"
+  ],
+  "pump_amm/SellEvent/part-00018.parquet": [
+   49678244,
+   "ad0ed72246bc9c678277b3daf86e0b38379d2c8a530106d839c83af832a5a9c5"
+  ],
+  "pump_amm/SellEvent/part-00019.parquet": [
+   50096709,
+   "d8a024d9abc88eab6f8386f1642834163e2470e93e0f4651f1351cd14bf3b7fe"
+  ],
+  "pump_amm/SellEvent/part-00020.parquet": [
+   50137873,
+   "bdabed4cf50a6267d5d83af99f74af9ace77b06315cfef20d9faa61e8bfd1807"
+  ],
+  "pump_amm/SellEvent/part-00021.parquet": [
+   50601095,
+   "663abfc7e88ef325c501a7426cbc7765d60233bfc1a669434e9dc5f2f003eaa5"
+  ],
+  "pump_amm/SellEvent/part-00022.parquet": [
+   50430709,
+   "bd58d0ee77d05367c81901ddfe8fcf8dff513dae532363beb0c22a4220890a23"
+  ],
+  "pump_amm/SellEvent/part-00023.parquet": [
+   50873780,
+   "3248f10b2e5540e7c18ca26aba99cee2751d42bf3beb9ab08a59689604bce204"
+  ],
+  "pump_amm/SellEvent/part-00024.parquet": [
+   50282781,
+   "e4625bad54880cc02dc6ed995bd211c8d602d1126b3f6922ae9c707d7f897684"
+  ],
+  "pump_amm/SellEvent/part-00025.parquet": [
+   50292765,
+   "28d5c0391da463b714eba3695c83e3377b5c7c39c043938b2f96a6dfc83130a8"
+  ],
+  "pump_amm/SellEvent/part-00026.parquet": [
+   49969404,
+   "5e648eeb0f1bdb741a7b9491d770f906156f5e12095f8658ae6a23ce7a8466bd"
+  ],
+  "pump_amm/SellEvent/part-00027.parquet": [
+   50566667,
+   "abb9ac9be880860b36383f923d4c59f84189ccb41cc3b34f7dce848a7e25d0f3"
+  ],
+  "pump_amm/SellEvent/part-00028.parquet": [
+   49714773,
+   "8cf5991f6f965fea6efe6b7347a6a5d9bd34252cba24601d90fc320e2ec50aad"
+  ],
+  "pump_amm/SellEvent/part-00029.parquet": [
+   49663425,
+   "044e964a6952b5bc40d1af65234ac05301085a1c76bdde4d4acfd5ebbd03f0d0"
+  ],
+  "pump_amm/SellEvent/part-00030.parquet": [
+   50295349,
+   "3fa81f8dd71aeaf95421bd7f6c92aa6bf242b5e7d40de4856d5634a5dd19215a"
+  ],
+  "pump_amm/SellEvent/part-00031.parquet": [
+   50336148,
+   "32424a829c8f322c9c1961d8fb657cd73fe458518ba5a7403171d81d35e8ec64"
+  ],
+  "pump_amm/SellEvent/part-00032.parquet": [
+   49634858,
+   "8e380e30bf0afaca150a4e0be2ad2c029b22aed9d97c8c88832374fa39584c80"
+  ],
+  "pump_amm/SellEvent/part-00033.parquet": [
+   49307468,
+   "fa4f6a21f7edfa724e2eb5ce218d0b152d0f21b86c40451bde777faccaf83b78"
+  ],
+  "pump_amm/SellEvent/part-00034.parquet": [
+   49064893,
+   "1471edcb4b3cd755760eb2d05bf886758baa2daa5a949711d6c66323fe69244e"
+  ],
+  "pump_amm/SellEvent/part-00035.parquet": [
+   50671309,
+   "5d9fcb0dc18bbf63e004880b20b8d7dcb07d3ef7c2ca7e5b90439a7706bfafdd"
+  ],
+  "pump_amm/SellEvent/part-00036.parquet": [
+   50384631,
+   "944afac9bf6ffa5c4c0cfea33d00ec6c58d67e96ddeda2793e31b11fb84a3170"
+  ],
+  "pump_amm/SellEvent/part-00037.parquet": [
+   50393418,
+   "ef7d12aceb813ccb6f4a248d0f72be14b13120e66ab63c8216bad186222307e7"
+  ],
+  "pump_amm/SellEvent/part-00038.parquet": [
+   10868230,
+   "0863090af715420322413bd899395c9674f0019d786e407049dfdef1048b85cd"
+  ],
+  "pump_amm/WithdrawEvent/part-00000.parquet": [
+   595918,
+   "6f6bd201797c261bcb42b3d9efeae3928ca357e58549eedc530c795d07b49852"
+  ]
+ }
+}

@@ -51,7 +51,7 @@ def check(parts=None, store=None, log=print):
     if tuple(got) != TRIGGERS:
         bad.append(f"triggers with a trigger leg, rt_tx: {tuple(got)} != {TRIGGERS}")
     # a4c: K3's positions at d = 1
-    _, ret = settle_sql(Scenario.from_cfg("base", load_defaults()))
+    _, ret = settle_sql(Scenario.from_cfg("base", load_defaults()), 1)  # the frozen numbers below: rule 1 (Codex review #6)
     con.execute(f"""CREATE TEMP TABLE pos AS
     SELECT family, pool, t, trigger_trader, day, d, entry_failed, {ret} AS ret FROM read_parquet('{parts}/*.parquet')
     WHERE segment = 'pool_reversed' AND variant = 'tp4_T600' AND size_sol = 0.5 AND q = 0.5 AND NOT skipped

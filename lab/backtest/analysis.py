@@ -242,13 +242,16 @@ def f7_candidate(run_dir, store=STORE, segment="pool_reversed", size=0.5):
     lines += ["## 7. Candidate capital simulation: organic pools at t, 1 open position per pool, daily loss limit 1 SOL, "
               "24 h pool cooldown after a total loss", "",
               f"10 SOL, {size:g} SOL per trade, at most {MAX_POSITIONS} positions, base costs. Skips: pool busy, pool cooling down, "
-              "daily limit reached, positions full or cash short.", ""]
+              "daily limit reached, positions full or cash short. The daily loss counts each position on its exit's UTC day "
+              "(as paper); the day columns are the trigger-day series.", ""]
+    from .capital_ceiling import slot_days
+    day_of = slot_days(con)  # st: the store attached for section 4
     rows = []
     for var, d, q in con.execute(f"SELECT DISTINCT variant, d, q FROM f WHERE size_sol = {size} ORDER BY ALL").fetchall():
         trades = con.execute(f"""SELECT entry_slot, exit_slot, cost, pnl_base, entry_failed, day, pool, proceeds, d_ms / d
                                  FROM f WHERE size_sol = {size} AND variant = '{var}' AND d = {d} AND q = {q} AND farm = 'organic'
                                  ORDER BY entry_slot, exit_slot""").fetchall()
-        rows.append((var, d, q) + _capital_limited(trades, CAPITAL_SOL * 1e9, MAX_POSITIONS, 1e9, 86_400_000))
+        rows.append((var, d, q) + _capital_limited(trades, CAPITAL_SOL * 1e9, MAX_POSITIONS, 1e9, 86_400_000, day_of=day_of))
     lines += _table(["variant", "d", "q", "signals", "taken", "skip pool busy", "skip cooldown", "skip daily limit", "skip full/cash",
                      "final SOL", "max drawdown %", "positive days", "days", "worst day SOL", "mean day SOL"], rows) + [""]
     path = os.path.join(run_dir, "f7_reversed_candidate.md")
@@ -306,37 +309,58 @@ def f7_competition(run_dir, store=STORE, segment="pool_reversed", break_even_tip
     return path
 
 
-def _capital_limited(trades, start, max_positions, daily_loss, cooldown_ms):
+def _capital_limited(trades, start, max_positions, daily_loss, cooldown_ms, day_of=None):
     """The candidate's capital simulation: at most one open position per pool, no new entries on a
     UTC day once its realized P&L reaches -daily_loss, and no entry in a pool for cooldown_ms after
     a total loss there (exit proceeds below 10% of the entry cost). trades: (entry_slot, exit_slot,
-    cost, pnl, failed, day, pool, proceeds, ms_per_slot), in lamports."""
+    cost, pnl, failed, day, pool, proceeds, ms_per_slot[, attempt_slot]), in lamports. A caller whose
+    first slot is an earlier decision supplies attempt_slot separately. The limit books a position's
+    P&L on the UTC day it is realized (day_of(exit), required with a finite daily_loss; Codex review
+    #5); the day columns stay the trigger-cohort series (capital_ceiling.capital_days)."""
     import heapq
     from collections import defaultdict
 
     cash, open_, locked, peak, mdd = start, [], 0, start, 0.0
+    failed_fees = []
     taken = skipped = skip_pool = skip_day = skip_cool = 0
-    day_pnl = defaultdict(float)
+    if daily_loss != float("inf") and trades and day_of is None:
+        raise ValueError("_capital_limited: a daily loss limit needs day_of (the exit day's UTC day)")
+    day_pnl = defaultdict(float)  # the trigger cohort (the reported day columns)
+    exit_day_pnl = defaultdict(float)  # the limit's book: P&L on the day it is realized
     open_pools, cool_until = defaultdict(int), {}
 
     def settle_until(slot):
         nonlocal cash, locked, peak, mdd
-        while open_ and open_[0][0] <= slot:
+        while (open_ and open_[0][0] <= slot) or (failed_fees and failed_fees[0][0] <= slot):
+            if failed_fees and (not open_ or failed_fees[0][0] <= open_[0][0]):
+                attempt, day, pnl = heapq.heappop(failed_fees)
+                cash += pnl
+                day_pnl[day] += pnl
+                if day_of is not None:
+                    exit_day_pnl[day_of(attempt)] += pnl
+                continue
             exit_slot, cost, back, pool, day, pnl, rug_until = heapq.heappop(open_)
             cash, locked = cash + back, locked - cost
             open_pools[pool] -= 1
             day_pnl[day] += pnl
+            if day_of is not None:
+                exit_day_pnl[day_of(exit_slot)] += pnl
             if rug_until:
                 cool_until[pool] = max(cool_until.get(pool, 0), rug_until)
             peak = max(peak, cash + locked)
             mdd = max(mdd, 1 - (cash + locked) / peak)
 
     days = set()
-    for entry, exit_, cost, pnl, failed, day, pool, proceeds, mps in trades:
+    for trade in trades:
+        entry, exit_, cost, pnl, failed, day, pool, proceeds, mps = trade[:9]
+        attempt = trade[9] if len(trade) == 10 else entry
+        if len(trade) not in (9, 10) or attempt is None or attempt < entry:
+            raise ValueError("_capital_limited: invalid entry attempt slot")
         days.add(day)
         settle_until(entry)
         cost, pnl = cost or 0, pnl or 0
-        if day_pnl[day] <= -daily_loss:
+        decision_day = day_of(entry) if day_of is not None else day
+        if exit_day_pnl.get(decision_day, 0.0) <= -daily_loss:
             skip_day += 1
             continue
         if cool_until.get(pool, -1) > entry:
@@ -350,8 +374,8 @@ def _capital_limited(trades, start, max_positions, daily_loss, cooldown_ms):
             continue
         taken += 1
         if failed:
-            cash += pnl
-            day_pnl[day] += pnl
+            heapq.heappush(failed_fees, (attempt, day, pnl))
+            settle_until(entry)
             continue
         x = exit_ or entry
         rug = (proceeds or 0) < 0.1 * cost
@@ -437,8 +461,9 @@ def holdout(run_dir, config, store=STORE):
     cfg = load_defaults()
     con = _con()
     src = f"read_parquet('{results_glob(run_dir)}')"
-    pnl, ret = settle_sql(Scenario.from_cfg("base", cfg))
-    _, ret_p = settle_sql(Scenario.from_cfg("pessimistic", cfg))
+    # The hold-out (12 Oct) is frozen and settled under rule 1 (before Codex review #6); it is never re-run.
+    pnl, ret = settle_sql(Scenario.from_cfg("base", cfg), 1)
+    _, ret_p = settle_sql(Scenario.from_cfg("pessimistic", cfg), 1)
     parts = c["parts"]
     part = "CASE " + " ".join(f"WHEN t >= {lo} AND t < {hi} THEN '{k}'" for k, (lo, hi) in parts.items()) + " END"
     groups = {k: [k] for k in parts} | c.get("combined", {})
@@ -463,6 +488,11 @@ def holdout(run_dir, config, store=STORE):
     con.execute("DROP TABLE x")
     points = [tuple(p) for p in c["main_measure"]["points"]] + [tuple(p) for p in c.get("also_points", [])]
     rr = c["risk_rules"]
+    # The daily loss limit's day: each exit slot's UTC day from the store's blocks (Codex review #5; the frozen 12 Oct
+    # hold-out report predates it and is not re-run: the hold-out is used once).
+    from .capital_ceiling import slot_days
+    con.execute(f"ATTACH '{store}' AS st (READ_ONLY)")
+    day_of = slot_days(con)
     out = {"config": os.path.basename(config), "run_dir": run_dir, "candidates": {}}
     for k in c["candidates"]:
         sel = (f"family = '{k['family']}' AND segment = '{k['segment']}' AND variant = '{k['variant']}' "
@@ -488,7 +518,7 @@ def holdout(run_dir, config, store=STORE):
                 trades = con.execute(f"""SELECT entry_slot, exit_slot, cost, pnl, entry_failed, day, pool, proceeds, d_ms / d
                                          FROM h WHERE {sel} AND {pw} ORDER BY entry_slot, exit_slot""").fetchall()
                 sim = _capital_limited(trades, rr["capital_sol"] * 1e9, rr["max_positions"], rr["daily_loss_sol"] * 1e9,
-                                       rr["pool_cooldown_h"] * 3_600_000) if trades else None
+                                       rr["pool_cooldown_h"] * 3_600_000, day_of=day_of) if trades else None
                 pts[f"d{d}_q{q}"] = {
                     "d": d, "q": q, "filled": n, "mean": m, "lo": lo, "hi": hi, "pess_mean": mp, "pess_lo": lop, "pess_hi": hip,
                     "ref_filled": rn, "ref_mean": rm, "vs_ref": None if m is None or rm is None else m - rm,

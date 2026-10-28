@@ -5,6 +5,7 @@ A mayhem twin of the token (same rows) gets no curve entry: the Mayhem agent res
 trades, so a replay cannot price through its legs."""
 
 import json
+import pytest
 import os
 
 import duckdb
@@ -182,7 +183,257 @@ def test_reversed_pool_f7_entry(tmp_path, monkeypatch):
     assert r["entry_slot"] == S + 20
     pre = states[0][1]
     fill = V.rev_buy_token(pre, SIZE)
-    assert abs(r["tokens"] - fill.tokens) <= 2 and abs(r["depth_sol"] * 1e9 - pre.b) < 1
+    assert r["tokens"] == fill.tokens and abs(r["depth_sol"] * 1e9 - pre.b) < 1
     marks = [(V.rev_sell_token(st, fill.tokens).trader_quote - TX) for _, st in states[1:]]
     assert r["n_marks"] == len(marks) and abs(r["mult_6h"] - max(marks) / (SIZE + TX)) < 1e-6 and abs(r["end_6h"] - marks[-1] / (SIZE + TX)) < 1e-6
     assert r["mult_6h"] > 1.2   # the 30 SOL buy at S + 40 lifts the mark
+
+
+def test_thin_curve_mark_includes_our_own_deposit(tmp_path, monkeypatch):
+    """spec-runners-mark-cap-2026-10-24: on a curve with less real SOL than our budget, the mark after the entry is the
+    constant-product sell value of our tokens (minus fees and network cost), capped at the logged reserve PLUS our own net
+    deposit; the old cap (the logged reserve alone) valued the position at roughly the reserve (E71 section 3.3)."""
+    trades = [(S, True, 2 * 10**7, True), (S + 20, True, 2 * 10**7, True), (S + 40, True, 10**7, True)]   # 0.02 / 0.02 / 0.01 SOL
+    rows, states = _curve_rows(trades)
+    _store(tmp_path / "s.duckdb", rows, [])
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    con = runners.connect(str(tmp_path / "s.duckdb"), memory="500MB", threads=1)
+    clock = runners.Clock.from_store(con)
+    runners.setup(con, LO, LO + 5_000, clock)
+    # one moment at S + 10 with the fixed 3-slot delay of the probes: the entry is the S + 20 trade (pre-state = after S)
+    con.execute(f"CREATE OR REPLACE TEMP TABLE mom AS SELECT '{M}' AS key, 'x' AS moment, {S + 10}::BIGINT AS t, 3::BIGINT AS d_slots, 9000::BIGINT AS h1, 54000::BIGINT AS h6, 150::BIGINT AS m1s, 750::BIGINT AS m5s")
+    runners.entries(con, TX)
+    runners.marks(con, TX, LO + 60_000)
+    pre = states[0][1]
+    fill = V.curve_buy_exact_in(pre, SIZE)
+    (q_in, tokens, cost) = con.execute("SELECT q_in, tokens, cost FROM ent").fetchone()
+    assert abs(int(tokens) - fill.tokens) <= 2 and int(q_in) == fill.curve_quote and int(cost) == SIZE + TX
+    assert pre.rq < SIZE // 5, "the fixture curve must be far thinner than the budget"
+    marks = con.execute("SELECT slot, net FROM mk ORDER BY ord").fetchall()
+    assert [m[0] for m in marks] == [S + 20, S + 40]
+    for (slot, net), (_, c) in zip(marks, states[1:]):
+        gross = fill.tokens * c.vq // (c.vt + fill.tokens)
+        capped = min(gross, c.rq + fill.curve_quote)          # the new cap: logged reserve + our own deposit
+        expect = max(0, capped - V.fee(capped, FEE) - V.fee(capped, CFEE)) - TX
+        assert abs(int(net) - expect) <= 2
+        assert int(net) > 0.9 * (SIZE + TX), "the position is worth about what we paid, not the thin reserve"
+        assert c.rq < 0.2 * (SIZE + TX), "the old cap (logged reserve alone) would have given less than 20 % of the cost"
+
+
+def test_thin_normal_pool_mark_includes_our_own_deposit(tmp_path, monkeypatch):
+    """spec-runners-mark-cap-2026-10-24 section 4, normal pool with a virtual quote: real = e - virt < budget. First mark: the
+    gross sell value fits in real + q_in (cap branch, uncapped); second mark after an 80 % liquidity withdrawal: the gross
+    exceeds real + q_in, so only the tokens that drain real + q_in are sold (drain branch). Expected values follow the
+    engine's pool arithmetic on the logged state with the real vault raised by our own deposit."""
+    rows, states = _curve_rows([(S, True, 2 * 10**9, True)])    # a curve row so the token exists; the entry is on the pool
+    B0, REAL, VIRT = 10**12, 2 * 10**8, 10 * 10**9                 # 0.2 SOL real, 10 SOL virtual -> e = 10.2 SOL
+    e0 = REAL + VIRT
+    buy_tokens = 10**9                                             # a small buy by someone else: the entry's reference trade
+    e_delta = (e0 * buy_tokens) // (B0 - buy_tokens) + 1
+    prow = [{"kind": "deposit", "slot": S + 100, "b": 0, "e": 0, "vault": 0, "base": B0, "e_delta": None, "quote_user": REAL},
+            {"kind": "buy", "slot": S + 120, "b": B0, "e": e0, "vault": REAL, "base": buy_tokens, "e_delta": e_delta, "token_buy": True, "sol_amount": e_delta, "token_amount": buy_tokens},
+            {"kind": "withdraw", "slot": S + 200, "b": B0 - buy_tokens, "e": e0 + e_delta, "vault": REAL + e_delta, "base": (B0 - buy_tokens) * 8 // 10, "e_delta": None, "quote_user": (REAL + e_delta) * 8 // 10}]
+    _store(tmp_path / "s.duckdb", rows, [{"pool": "P1", "mint": M, "create_slot": S + 100, "rows": prow}])
+    w = duckdb.connect(str(tmp_path / "s.duckdb"))
+    w.execute(f"UPDATE pool SET vq = {VIRT} WHERE pool = 'P1'")  # the fixture writes vq = 0; here the pool prices with a virtual quote
+    w.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    con = runners.connect(str(tmp_path / "s.duckdb"), memory="500MB", threads=1)
+    clock = runners.Clock.from_store(con)
+    runners.setup(con, LO, LO + 5_000, clock)
+    con.execute(f"CREATE OR REPLACE TEMP TABLE mom AS SELECT '{M}' AS key, 'x' AS moment, {S + 110}::BIGINT AS t, 3::BIGINT AS d_slots, 9000::BIGINT AS h1, 54000::BIGINT AS h6, 150::BIGINT AS m1s, 750::BIGINT AS m5s")
+    runners.entries(con, TX)
+    runners.marks(con, TX, LO + 60_000)
+    venue, tokens, q_in, depth, cost = con.execute("SELECT venue, tokens, q_in, depth, cost FROM ent").fetchone()
+    p0 = V.Pool(B0, e0, 20, 5, 5, 0, VIRT)
+    fill = V.pool_buy_exact_in(p0, SIZE)
+    assert venue == "pool" and int(tokens) == fill.tokens and int(depth) == REAL and int(depth) < SIZE
+    n = fill.curve_quote
+    assert int(q_in) == fill.state.e - p0.e and int(q_in) > n
+    assert int(cost) == fill.trader_quote + TX
+    marks = dict(con.execute("SELECT slot, net FROM mk ORDER BY ord").fetchall())
+    assert set(marks) == {S + 120, S + 200}
+    # mark 1: state after the small buy; gross <= real + q_in -> the uncapped constant-product value (old code: capped at real 0.2 SOL)
+    b1, e1 = B0 - buy_tokens, e0 + e_delta
+    gross1 = e1 * fill.tokens // (b1 + fill.tokens)
+    assert gross1 <= (e1 - VIRT) + q_in and gross1 > e1 - VIRT, "fixture: the cap must bind without our deposit and not with it"
+    f1 = V._fees(V.Pool(b1, e1, 20, 5, 5, 0, VIRT), gross1)[1]
+    assert abs(int(marks[S + 120]) - (gross1 - f1 - TX)) <= 2 and int(marks[S + 120]) > 0.8 * SIZE
+    # mark 2: after the 80 % withdrawal the gross exceeds real + q_in: sell only the tokens that drain real + q_in
+    b2 = b1 - prow[2]["base"]
+    e2 = (REAL + e_delta) + VIRT - prow[2]["quote_user"]
+    real2 = (e2 - VIRT) + q_in
+    gross2 = e2 * fill.tokens // (b2 + fill.tokens)
+    assert gross2 > real2, "fixture: the drain branch must apply"
+    pg2 = _max_payout(b2, e2, fill.tokens, real2)   # reference: the most any sell of <= our tokens can take out of real + q_in
+    assert real2 - pg2 <= 1 and pg2 <= real2, "with a thin pool the reference pays out the whole real reserve (to the lamport)"
+    f2 = V._fees(V.Pool(b2, e2, 20, 5, 5, 0, VIRT), pg2)[1]
+    assert abs(int(marks[S + 200]) - (pg2 - f2 - TX)) <= 2   # +-2 lamports: the reference and the SQL floor at different steps (one per fee tier)
+    assert pg2 > q_in * 9 // 10, "the drain branch pays out about real + our deposit, not real alone"
+
+
+def _max_payout(b, e, pos, real):
+    """Brute-force reference, independent of the harness: the largest gross quote a sell of x <= pos tokens into the
+    constant-product pool (b, e) can take without exceeding the real reserve `real`; out(x) = e * x // (b + x) grows with x,
+    so a search over x finds it."""
+    out = lambda x: e * x // (b + x)  # noqa: E731
+    if real <= 0 or pos <= 0:
+        return 0
+    if out(pos) <= real:
+        return out(pos)
+    lo, hi = 0, pos                      # out(lo) <= real < out(hi)
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if out(mid) <= real:
+            lo = mid
+        else:
+            hi = mid
+    return out(lo)
+
+
+def test_pool_mark_is_min_of_output_and_real_reserve():
+    """Codex finding #3 (2026-10-24): the normal-pool mark must equal, to the lamport, what a sell can really take out of
+    the pool: the constant-product output of our whole position when the real reserve (logged real quote + our own deposit)
+    covers it, else the real reserve itself. Checked against the brute-force search above on synthetic states: Codex's
+    example, thin pools, a drain, a cap that never binds, a deposit above the virtual quote, an empty position, and
+    boundaries where the output and the reserve cross by one lamport."""
+    con = duckdb.connect()
+    cases = [
+        # (b, e, virt, q_in, pos)
+        (10**12, 12 * 10**8, 10**9, 2 * 10**8, 6 * 10**11),      # Codex: R = 4e8, out(pos) = 4.5e8 -> 4e8 (#552 gave 342,857,142)
+        (10**12, 12 * 10**8, 10**9, 2 * 10**8, 10**11),          # out(pos) = 1.09e8 < R: uncapped
+        (10**12, 102 * 10**8, 10**10, 494_000_000, 5 * 10**10),  # the thin fixture pool: real 0.2 SOL, deposit 0.494 SOL
+        (10**12, 10**10, 10**10, 0, 10**11),                     # drain: real reserve 0 and no deposit -> 0
+        (10**12, 10**10, 10**10, 0, 0),                          # empty position -> 0
+        (10**12, 5 * 10**9, 0, 0, 10**11),                       # no virtual quote: R = e >= every output, never binds
+        (10**12, 11 * 10**8, 10**9, 3 * 10**9, 9 * 10**11),      # deposit above the virtual quote: R = 3.1e9 > e; out = 5.2e8
+        (7, 13, 3, 1, 5),                                        # tiny integers: rounding at the boundary
+        (10**6 + 3, 10**6 + 1, 10**5, 7, 999_983),               # odd sizes around the crossing point
+    ]
+    for b, e, virt, q_in, pos in cases:
+        sql = runners._pool_mark(*(f"{v}::HUGEINT" for v in (pos, b, e, virt, q_in)))   # the marks query runs on HUGEINT columns
+        got = int(con.execute(f"SELECT ({sql})::HUGEINT").fetchone()[0])
+        ref = _max_payout(b, e, pos, max(0, e - virt + q_in))
+        assert got >= ref and got - ref <= 1 + e // b, (b, e, virt, q_in, pos, got, ref)
+        assert got <= max(0, e - virt + q_in) or e - virt + q_in >= e * pos // (b + pos), "never more than the real reserve"
+    # the #552 inversion value must not come back for Codex's example
+    H = lambda *a: runners._pool_mark(*(f"{v}::HUGEINT" for v in a))  # noqa: E731
+    got = int(con.execute(f"SELECT ({H(6 * 10**11, 10**12, 12 * 10**8, 10**9, 2 * 10**8)})::HUGEINT").fetchone()[0])
+    assert got == 400_000_000 and got != 342_857_142
+    # monotone in the position and in the deposit
+    vals = [int(con.execute(f"SELECT ({H(x, 10**12, 12 * 10**8, 10**9, 2 * 10**8)})::HUGEINT").fetchone()[0]) for x in (0, 10**10, 10**11, 6 * 10**11, 10**12)]
+    assert vals == sorted(vals) and vals[0] == 0 and vals[-1] == 400_000_000
+    deps = [int(con.execute(f"SELECT ({H(6 * 10**11, 10**12, 12 * 10**8, 10**9, q)})::HUGEINT").fetchone()[0]) for q in (0, 10**8, 2 * 10**8, 3 * 10**8)]
+    assert deps == [200_000_000, 300_000_000, 400_000_000, 450_000_000]
+
+
+def test_forward_window_uses_forward_guard_and_caps_at_the_store_end(tmp_path, monkeypatch):
+    """Released forward stores (owner 2026-10-24): run(..., forward=True) goes through common.forward_guard (store period
+    'forward', start at or after FORWARD_START, window inside the store) and caps mark horizons at the store's end instead of
+    the hold-out start; without the flag a forward store is refused by the dev guard, and a dev store is refused with the flag.
+    The fixture's slots are dev slots, so FORWARD_START is lowered to the fixture start for the wiring test only."""
+    from wallets import common
+    rows, states = _curve_rows([(S, True, 2 * 10**9, True), (S + 300, True, 3 * 10**9, False), (S + 400, True, 10**9, True), (S + 900, True, 2 * 10**9, True)])
+    _store(tmp_path / "f.duckdb", rows, [])
+    w = duckdb.connect(str(tmp_path / "f.duckdb"))
+    w.execute("UPDATE meta SET json = ?", [json.dumps({"ms_per_slot": {str(E): MS}, "period": "forward", "slot_start": LO, "slot_end_exclusive": LO + 60_000})])
+    w.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    # without --forward: the dev guard sees a window past... no, the window itself is dev-sized here; make it reach the hold-out
+    with pytest.raises(ValueError):
+        runners.run(LO, common.HOLDOUT_START + 1, str(tmp_path / "o0"), store=str(tmp_path / "f.duckdb"), memory="500MB", threads=1)
+    # with --forward on real slots the store start (a dev slot) is before FORWARD_START: refused
+    with pytest.raises(ValueError):
+        runners.run(LO, LO + 5_000, str(tmp_path / "o1"), store=str(tmp_path / "f.duckdb"), memory="500MB", threads=1, forward=True)
+    # a dev store (no period) with --forward: refused
+    _store(tmp_path / "d.duckdb", rows, [])
+    monkeypatch.setattr(common, "FORWARD_START", LO)
+    with pytest.raises(ValueError):
+        runners.run(LO, LO + 5_000, str(tmp_path / "o2"), store=str(tmp_path / "d.duckdb"), memory="500MB", threads=1, forward=True)
+    # a window outside the store: refused
+    with pytest.raises(ValueError):
+        runners.run(LO, LO + 70_000, str(tmp_path / "o3"), store=str(tmp_path / "f.duckdb"), memory="500MB", threads=1, forward=True)
+    # the wiring: forward store, window inside, horizons capped at the store end, nothing cut by the hold-out
+    info = runners.run(LO, LO + 5_000, str(tmp_path / "o4"), store=str(tmp_path / "f.duckdb"), memory="500MB", threads=1, forward=True)
+    assert info["forward"] is True and info["store_period"] == "forward" and info["cap"] == LO + 60_000 and info["hi_ext"] <= LO + 60_000
+    assert info["entries"] >= 1
+    con = duckdb.connect()
+    assert con.execute(f"SELECT bool_or(cut) FROM '{tmp_path}/o4/entries-{LO}.parquet'").fetchone()[0] is False
+    # back to the dev rule for other tests: the module cap is reset by the next dev window
+    runners.window(duckdb.connect(str(tmp_path / "d.duckdb")), LO, LO + 5_000)
+    assert runners.CAP == common.HOLDOUT_START
+
+
+def test_boost_row_takes_the_tiers_of_the_last_trade_before_it_in_tx_order(tmp_path, monkeypatch):
+    """E75 A/B RED (2026-10-24): a boost / withdraw / deposit row has no fee tiers of its own; the harness took them from a trade
+    of the same pool with an ASOF on the slot alone, which is a tie among all trades of that slot and was resolved at random per
+    run (three creator tiers in one slot moved a peak mark by 5 bps between runs). Now the tiers (and the virtual quote) come from
+    the last trade BEFORE the row in the full transaction order, deterministically: two trades in the boost's slot with different
+    creator tiers, the boost between them in tx order -> the earlier trade's tier, the same on a second run."""
+    rows, states = _curve_rows([(S, True, 2 * 10**9, True)])
+    B0, E0 = 10**12, 30 * 10**9
+    p0 = V.Pool(B0, E0, 20, 5, 5, 0)
+    t1 = V.pool_buy_exact_in(p0, 10**9); p1 = t1.state
+    t2 = V.pool_buy_exact_in(p1, 10**9); p2 = t2.state
+    prow = [{"kind": "deposit", "slot": S + 100, "b": 0, "e": 0, "vault": 0, "base": B0, "e_delta": None, "quote_user": E0},
+            {"kind": "buy", "slot": S + 200, "b": p0.b, "e": p0.e, "base": t1.tokens, "e_delta": p1.e - p0.e, "token_buy": True, "sol_amount": 10**9, "token_amount": t1.tokens},
+            {"kind": "boost", "slot": S + 200, "b": p1.b, "e": p1.e, "vault": p1.e, "base": 10**8, "e_delta": 5 * 10**7, "quote_user": None},
+            {"kind": "buy", "slot": S + 200, "b": p2.b, "e": p2.e, "base": t2.tokens, "e_delta": 7 * 10**7, "token_buy": True, "sol_amount": 10**9, "token_amount": t2.tokens}]
+    _store(tmp_path / "s.duckdb", rows, [{"pool": "P1", "mint": M, "create_slot": S + 100, "rows": prow}])
+    w = duckdb.connect(str(tmp_path / "s.duckdb"))
+    # tx order inside slot S + 200: buy A (tx 10, creator 65) < boost (tx 20) < buy B (tx 30, creator 75); the fixture wrote tx 1 for all
+    w.execute(f"UPDATE pool SET tx_index = 10, creator_bps = 65 WHERE kind = 'buy' AND slot = {S + 200} AND base = {t1.tokens}")
+    w.execute(f"UPDATE pool SET tx_index = 20 WHERE kind = 'boost'")
+    w.execute(f"UPDATE pool SET tx_index = 30, creator_bps = 75 WHERE kind = 'buy' AND slot = {S + 200} AND base = {t2.tokens}")
+    w.execute("UPDATE pool SET lp_bps = NULL, protocol_bps = NULL, creator_bps = NULL, cashback_bps = NULL WHERE kind IN ('boost', 'deposit')")  # as the store: no tiers of their own
+    w.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    got = []
+    for _ in range(2):
+        con = runners.connect(str(tmp_path / "s.duckdb"), memory="500MB", threads=2)
+        clock = runners.Clock.from_store(con)
+        runners.setup(con, LO, LO + 5_000, clock)
+        got.append(con.execute("SELECT kind, tx_index, lp, pr, cr, cb FROM pl WHERE slot = ? ORDER BY tx_index", [S + 200]).fetchall())
+        con.close()
+    assert got[0] == got[1], got
+    by_kind = {(k, tx): (lp, pr, cr) for k, tx, lp, pr, cr, cb in got[0]}
+    assert by_kind[("buy", 10)] == (20, 5, 65) and by_kind[("buy", 30)] == (20, 5, 75)
+    assert by_kind[("boost", 20)] == (20, 5, 65), "the boost takes the tiers of the trade before it in tx order (65), never the later 75"
+
+
+def test_slot_asof_would_pick_the_later_trade_but_ord_asof_picks_the_earlier(tmp_path, monkeypatch):
+    """LAB should-fix on #586: a fixture where the two joins MUST differ. The boost's only same-slot trade comes AFTER it in tx
+    order (creator tier 75, virtual quote 9); the last trade before it sits in an earlier slot (tier 65, virtual quote 7). A
+    slot-only ASOF (o.slot >= t.slot) can only return the same-slot trade -> 75 / 9; the ord ASOF returns the earlier slot's
+    trade -> 65 / 7. The same for a withdraw (placed before the boost, which resets the virtual quote) and a deposit row, and
+    the result is identical over two runs."""
+    rows, states = _curve_rows([(S, True, 2 * 10**9, True)])
+    B0, E0 = 10**12, 30 * 10**9
+    p0 = V.Pool(B0, E0, 20, 5, 5, 0)
+    t1 = V.pool_buy_exact_in(p0, 10**9); p1 = t1.state
+    t2 = V.pool_buy_exact_in(p1, 10**9); p2 = t2.state
+    prow = [{"kind": "deposit", "slot": S + 100, "b": 0, "e": 0, "vault": 0, "base": B0, "e_delta": None, "quote_user": E0},                      # before any trade: no tiers at all
+            {"kind": "buy", "slot": S + 150, "b": p0.b, "e": p0.e, "base": t1.tokens, "e_delta": p1.e - p0.e, "token_buy": True, "sol_amount": 10**9, "token_amount": t1.tokens},   # tier 65, vq 7
+            {"kind": "withdraw", "slot": S + 200, "b": p1.b, "e": p1.e, "vault": p1.e, "base": 10**7, "e_delta": None, "quote_user": 10**6},            # tx 15
+            {"kind": "boost", "slot": S + 200, "b": p1.b, "e": p1.e, "vault": p1.e, "base": 10**8, "e_delta": 5 * 10**7, "quote_user": None},          # tx 20 (a boost resets the virtual quote: it comes after the withdraw)
+            {"kind": "buy", "slot": S + 200, "b": p2.b, "e": p2.e, "base": t2.tokens, "e_delta": 7 * 10**7, "token_buy": True, "sol_amount": 10**9, "token_amount": t2.tokens}]   # tx 30, tier 75, vq 9
+    _store(tmp_path / "s.duckdb", rows, [{"pool": "P1", "mint": M, "create_slot": S + 100, "rows": prow}])
+    w = duckdb.connect(str(tmp_path / "s.duckdb"))
+    w.execute(f"UPDATE pool SET tx_index = 10, creator_bps = 65, vq = 7 WHERE kind = 'buy' AND slot = {S + 150}")
+    w.execute(f"UPDATE pool SET tx_index = 15 WHERE kind = 'withdraw'")
+    w.execute(f"UPDATE pool SET tx_index = 20 WHERE kind = 'boost'")
+    w.execute(f"UPDATE pool SET tx_index = 30, creator_bps = 75, vq = 9 WHERE kind = 'buy' AND slot = {S + 200}")
+    w.execute("UPDATE pool SET lp_bps = NULL, protocol_bps = NULL, creator_bps = NULL, cashback_bps = NULL, vq = NULL WHERE kind IN ('boost', 'withdraw', 'deposit')")
+    w.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    got = []
+    for _ in range(2):
+        con = runners.connect(str(tmp_path / "s.duckdb"), memory="500MB", threads=2)
+        runners.setup(con, LO, LO + 5_000, runners.Clock.from_store(con))
+        got.append(con.execute("SELECT kind, tx_index, lp, pr, cr, cb, virt FROM pl WHERE kind IN ('boost', 'withdraw', 'deposit') ORDER BY slot, tx_index").fetchall())
+        con.close()
+    assert got[0] == got[1], got
+    by = {k: (lp, pr, cr, virt) for k, tx, lp, pr, cr, cb, virt in got[0]}
+    assert by["boost"][:3] == (20, 5, 65), "the boost's only same-slot trade (tier 75) lies after it: the tier must be the earlier slot's 65"
+    assert by["withdraw"][:3] == (20, 5, 65) and int(by["withdraw"][3]) == 7, "withdraw: tiers and virtual quote of the trade before it, not of the later same-slot trade (9)"
+    assert by["deposit"][:3] == (0, 0, 0) and int(by["deposit"][3]) == 0, "a deposit before any trade has no tiers and no virtual quote"

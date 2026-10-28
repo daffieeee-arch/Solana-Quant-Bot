@@ -31,6 +31,9 @@ import os
 import sqlite3
 import sys
 from collections import Counter
+from types import SimpleNamespace
+
+from backtest.costs import Scenario, settle
 
 # Per table: the key columns and the compared columns (the journal schema of paper/journal.py).
 TABLES = {
@@ -42,12 +45,18 @@ TABLES = {
     "exits": (("family", "variant", "key", "t"),
               ("day", "entry_slot", "exit_decision_slot", "exit_slot", "exit_reason", "tokens", "cost", "proceeds", "pnl", "ret",
                "exit_attempts", "cf_graduation", "seed_pool", "vault_capped", "reverted_direct", "reverted_router",
-               "sells_dropped", "sells_scaled", "peak_mark", "peak_slot", "n_flow_slots", "cap_slots")),
+               "sells_dropped", "sells_scaled", "peak_mark", "peak_slot", "n_flow_slots", "cap_slots", "settle_rule")),
     "positions": (("family", "variant", "key", "t"), ("entry_slot", "cost", "tokens", "status")),
 }
 # State the two runs must share: the same groups and the same costs, or the comparison means nothing.
-STATE_KEYS = ("groups", "cost_scenario", "feed")
+STATE_KEYS = ("groups", "cost_scenario", "feed", "settle_rule")
 SHOWN = 50
+# The one difference a freed pool may make to a signal both runs have: one saw the pool busy, the other entered.
+FREED_SIGNAL = {("skipped", "busy"), ("entered", None)}
+# The exits columns a write-off ends earlier than the run without it (the exit, its day and attempts, the P&L, and the
+# diagnostics counted over the hold); entry, size, cost, cap and the flags must match.
+WRITE_OFF_COLS = {"day", "exit_decision_slot", "exit_slot", "exit_reason", "pnl", "ret", "exit_attempts", "n_flow_slots",
+                  "reverted_direct", "reverted_router", "sells_dropped", "sells_scaled", "peak_mark", "peak_slot"}
 # The signals scope (C1b): the signal columns that do not depend on positions (block_time, d_ms and farm_complete are
 # NULL in a replay, engine.py:656-659, 731-732), and the farm gates, which _signal checks before busy (engine.py:737-742).
 SIGNAL_COLS = ("day", "venue", "orientation", "depth", "trigger_trader", "farm", "pool_seen_slot", "farm_window_complete",
@@ -89,6 +98,12 @@ def _rows(path, table, keys, cols, lo_day, hi_day):
         if not have:
             return {}
         sel = [c if c in have else f"NULL AS {c}" for c in (*keys, *cols)]
+        if table == "exits" and "settle_rule" in cols:
+            # A historical journal has one rule in state (absent means rule 1). New rows pin their own rule.
+            old = db.execute("SELECT v FROM state WHERE k = 'settle_rule'").fetchone()
+            old_rule = int(old[0]) if old else 1
+            i = (*keys, *cols).index("settle_rule")
+            sel[i] = f"COALESCE(settle_rule, {old_rule}) AS settle_rule" if "settle_rule" in have else f"{old_rule} AS settle_rule"
         where, params = [], []
         if "day" in have and lo_day:
             where.append("day >= ?")
@@ -268,19 +283,56 @@ def report_signals(res):
     return lines
 
 
+def settlement_matches(row, scenario, rule, *, check_return=False):
+    """Check the complete cost arithmetic before waiving a write-off versus late-sale difference.
+
+    The scenario must be known, and absent values are not zero. This is stricter than checking a delta: two equally
+    corrupted P&Ls must not explain each other. The existing settle function remains the only cost model.
+    """
+    if scenario is None or type(rule) is not int or rule not in (1, 2):
+        return False
+    if any(type(row.get(c)) is not int for c in ("cost", "proceeds", "exit_attempts", "pnl")):
+        return False
+    if min(row["cost"], row["proceeds"]) < 0 or row["exit_attempts"] < 1:
+        return False
+    if type(row.get("exit_slot")) is not int or not isinstance(row.get("exit_reason"), str):
+        return False
+    result = SimpleNamespace(entry_failed=False, cost=row["cost"], proceeds=row["proceeds"],
+                             exit_attempts=row["exit_attempts"], exit_slot=row["exit_slot"], exit_reason=row["exit_reason"])
+    pnl, ret, _ = settle(result, scenario, rule)
+    return row["pnl"] == pnl and (not check_return or row.get("ret") == ret)
+
+
 def writeoff_causes(path_a, path_b):
     """The causes of an engine without the write-off (A) against one with it (B, engine._write_off_if_stuck), both on the
     same input: `written_off`, B's exit 'written_off' (and its sell fill) where A's position never sold (exit_slot NULL,
     proceeds 0, e.g. closed by the data's end), with the same entry; B's exit at its last decision + d, that decision at or
-    after the rule's deadline (entry_slot + cap_slots), and the P&L apart by the failed attempts only.
-    `written_off_later_sold`: the same write-off where A's position sold later, after B's write-off (the pool got
-    liquidity again: the late sale the write-off forgoes, by the owner's rule); listed apart. `busy_freed`: a row of a
-    (family, variant, key) after B's write-off there (its pool freed, where A's position still held it)."""
-    wo = {tuple(r[c] for c in TABLES["exits"][0]): r for r in _raw(path_b, "exits") if r["exit_reason"] == "written_off"}
-    failed_tx = json.loads(_state(path_b).get("cost_scenario") or "{}").get("failed_tx")
+    after the rule's deadline (entry_slot + cap_slots), the P&L apart by the failed attempts only, and no other exits
+    column apart than those a write-off ends earlier (WRITE_OFF_COLS). `written_off_later_sold`: the same write-off where
+    A's position sold later, after B's write-off (the pool got liquidity again: the late sale the write-off forgoes, by the
+    owner's rule); listed apart. `busy_freed`: after a write-off freed the pool of a (family, variant, key), a signal both
+    runs have whose only difference is busy on one side and entered on the other, and a row of that entered signal
+    (order, fill, exit, position) the busy side has not. A signal only one side has, a row of a signal both entered, or a
+    row both have that differs in anything else stays unexplained (Codex review #7)."""
+    states = [_state(p) for p in (path_a, path_b)]
+    exits = []
+    for p, state in zip((path_a, path_b), states):
+        rows = _raw(p, "exits")
+        for r in rows:
+            if r.get("settle_rule") is None:
+                r["settle_rule"] = int(state.get("settle_rule") or 1)
+        exits.append({tuple(r[c] for c in TABLES["exits"][0]): r for r in rows})
+    wo = {k: r for k, r in exits[1].items() if r["exit_reason"] == "written_off"}
+    costs = json.loads(states[1].get("cost_scenario") or "{}")
+    failed_tx = costs.get("failed_tx")
+    try:
+        scenario = Scenario(**costs) if states[0].get("cost_scenario") == states[1].get("cost_scenario") else None
+    except (TypeError, ValueError):
+        scenario = None  # a missing/incomplete cost model cannot justify a later sale's P&L
     freed = {}
     for k, r in wo.items():
         freed.setdefault(k[:3], []).append(r["exit_slot"])
+    sig = [_rows(p, "signals", *TABLES["signals"], None, None) for p in (path_a, path_b)]
 
     def written_off(table, key, a, b):
         if table not in ("exits", "fills") or a is None or b is None:
@@ -288,28 +340,52 @@ def writeoff_causes(path_a, path_b):
         x = wo.get(tuple(key[:4]))
         if x is None:
             return None
-        if table == "fills":  # its sell fill: B's at the write-off at quote 0; A's without a slot (or a later sale)
+        if table == "fills":  # A fill is explained only through the matching, validated exit pair.
             if key[4] != "sell" or (b["slot"], b["quote"], a["tokens"]) != (x["exit_slot"], 0, b["tokens"]):
                 return None
-            if (a["slot"], a["quote"]) == (None, 0):
-                return "written_off"
-            return "written_off_later_sold" if a["slot"] is not None and a["slot"] > x["exit_slot"] else None
+            parent_key = tuple(key[:4])
+            parent_a = exits[0].get(parent_key)
+            if parent_a is None or any((fill["slot"], fill["quote"], fill["tokens"])
+                                      != (parent["exit_slot"], parent["proceeds"], parent["tokens"])
+                                      for fill, parent in ((a, parent_a), (b, x))):
+                return None
+            return written_off("exits", parent_key, parent_a, x)
+        differ = {c for c in TABLES["exits"][1] if a[c] != b[c]}
         d = x["entry_slot"] - key[3]  # x: B's exits row with every column (cap_slots is not compared)
         b_ok = ((a["entry_slot"], a["tokens"], a["cost"]) == (x["entry_slot"], x["tokens"], x["cost"])
                 and x["exit_slot"] == x["exit_decision_slot"] + d and x["cap_slots"] is not None
                 and x["exit_decision_slot"] >= x["entry_slot"] + x["cap_slots"] and not x["proceeds"])
         if not b_ok:
             return None
-        if (a["exit_slot"] is None and not a["proceeds"] and failed_tx is not None
+        if (a["exit_slot"] is None and not a["proceeds"] and failed_tx is not None and not differ - WRITE_OFF_COLS
                 and x["pnl"] - a["pnl"] == (a["exit_attempts"] - x["exit_attempts"]) * failed_tx):
             return "written_off"
-        if a["exit_slot"] is not None and a["exit_slot"] > x["exit_slot"]:
+        if (a["exit_slot"] is not None and a["exit_slot"] > x["exit_slot"]
+                and a["exit_reason"] not in ("written_off", "end_of_data", "window_end")
+                and not differ - WRITE_OFF_COLS - {"proceeds", "vault_capped", "settle_rule"}
+                and settlement_matches(a, scenario, a["settle_rule"], check_return=True)
+                and settlement_matches(x, scenario, x["settle_rule"], check_return=True)):
             return "written_off_later_sold"
         return None
 
+    def pair(k):
+        """(A's, B's) (status, reason) of the signal k, or None when a side has no such signal."""
+        s = [x.get(k) for x in sig]
+        return None if None in s else tuple((r["status"], r["reason"]) for r in s)
+
     def busy_freed(table, key, a, b):
         slots = freed.get(tuple(key[:3]))
-        return "busy_freed" if slots and key[3] > min(slots) else None
+        if not slots or key[3] <= min(slots):
+            return None
+        p = pair(tuple(key[:4]))
+        if p is None or set(p) != FREED_SIGNAL:
+            return None  # a signal one side lacks, or not busy against entered
+        if table == "signals":
+            if a is None or b is None or {c for c in TABLES["signals"][1] if a[c] != b[c]} - {"status", "reason"}:
+                return None
+            return "busy_freed"
+        entered = 0 if p[0] == ("entered", None) else 1  # the side whose signal entered has the rows, the busy side none
+        return "busy_freed" if (a, b)[entered] is not None and (a, b)[1 - entered] is None else None
 
     return (written_off, busy_freed)
 

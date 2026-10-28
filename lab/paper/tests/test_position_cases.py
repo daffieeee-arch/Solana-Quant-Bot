@@ -38,7 +38,7 @@ def test_the_files_format():
     tables with every column, leaving the positions table empty."""
     assert DOC["format"] == G.FORMAT and [c["name"] for c in DOC["cases"]] == [f.__name__ for f in G.CASES]
     C1.check_ints(DOC)
-    cols = {t: [c.split()[0] for c in TABLES[t][0].split(", ")] for t in G.FIVE}
+    cols = {t: [c.split()[0] for c in TABLES[t][0].split(", ") if c.split()[0] != "settle_rule"] for t in G.FIVE}
     for case in DOC["cases"]:
         name = case["name"]
         assert list(case) == list(G.CASE), name

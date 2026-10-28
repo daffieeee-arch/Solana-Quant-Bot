@@ -17,7 +17,7 @@
   },
   {
    "name": "exits",
-   "cols": "family TEXT, variant TEXT, key TEXT, t INTEGER, day TEXT, entry_slot INTEGER, exit_decision_slot INTEGER, exit_slot INTEGER, exit_reason TEXT, tokens INTEGER, cost INTEGER, proceeds INTEGER, pnl INTEGER, ret REAL, exit_attempts INTEGER, cf_graduation INTEGER, seed_pool INTEGER, vault_capped INTEGER, reverted_direct INTEGER, reverted_router INTEGER, sells_dropped INTEGER, sells_scaled INTEGER, peak_mark INTEGER, peak_slot INTEGER, n_flow_slots INTEGER, cap_slots INTEGER",
+   "cols": "family TEXT, variant TEXT, key TEXT, t INTEGER, day TEXT, entry_slot INTEGER, exit_decision_slot INTEGER, exit_slot INTEGER, exit_reason TEXT, tokens INTEGER, cost INTEGER, proceeds INTEGER, pnl INTEGER, ret REAL, exit_attempts INTEGER, cf_graduation INTEGER, seed_pool INTEGER, vault_capped INTEGER, reverted_direct INTEGER, reverted_router INTEGER, sells_dropped INTEGER, sells_scaled INTEGER, peak_mark INTEGER, peak_slot INTEGER, n_flow_slots INTEGER, cap_slots INTEGER, settle_rule INTEGER",
    "key": "family, variant, key, t"
   },
   {

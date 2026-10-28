@@ -45,7 +45,7 @@ import sys
 import time
 
 from wallets import runners as R
-from wallets.common import HOLDOUT_START, OUT_ROOT, SOL, Clock, connect, git_commit
+from wallets.common import HOLDOUT_START, OUT_ROOT, SOL, Clock, connect, git_commit, guard
 from wallets.markout import ms_case
 
 H24_MS = 24 * 3_600_000
@@ -131,16 +131,20 @@ def labels_and_exits(con):
         own = {"trail30": (f"ord_trail_{H}", f"slot_trail_{H}"),
                "tp2": ("ord_2", "slot_2"), "tp5": ("ord_5", "slot_5"), "tp10": ("ord_10", "slot_10")}
         for rule, (o, s) in own.items():
-            trig.append(f"""SELECT key, moment, t, '{rule}' AS rule, '{H}' AS h, 1.0 AS part,
+            trig.append(f"""SELECT key, moment, t, '{rule}' AS rule, '{H}' AS h, 1.0 AS part, 'own' AS leg,
                 CASE WHEN {o} IS NOT NULL AND {s} <= {cap} AND (ord_stop IS NULL OR {o} < ord_stop) THEN {s}
                      WHEN ord_stop IS NOT NULL AND slot_stop <= {cap} THEN slot_stop END AS trig_slot FROM lab2""")
         for m in (2, 5):
-            # the target part: the target's own trigger (or the stop / the end when the target never comes within H)
-            trig.append(f"""SELECT key, moment, t, 'half{m}' AS rule, '{H}' AS h, 0.5 AS part,
+            # the target part: the target's own trigger; when the target never comes within H, this half trails with the
+            # whole position (the docstring's rule; before 2026-10-24 it waited for the stop or the end: Codex finding #4)
+            trig.append(f"""SELECT key, moment, t, 'half{m}' AS rule, '{H}' AS h, 0.5 AS part, 'target' AS leg,
                 CASE WHEN ord_{m} IS NOT NULL AND slot_{m} <= {cap} AND (ord_stop IS NULL OR ord_{m} < ord_stop) THEN slot_{m}
+                     WHEN ord_trail_{H} IS NOT NULL AND slot_trail_{H} <= {cap} AND (ord_stop IS NULL OR ord_trail_{H} < ord_stop) THEN slot_trail_{H}
                      WHEN ord_stop IS NOT NULL AND slot_stop <= {cap} THEN slot_stop END AS trig_slot FROM lab2""")
             # the trailing part: after the target the first trail mark; without the target the whole-position trail
-            trig.append(f"""SELECT key, moment, t, 'half{m}' AS rule, '{H}' AS h, 0.5 AS part,
+            # the two legs carry a `leg` tag: when both trigger at the same slot (the whole position trails) they must stay two
+            # rows of 0.5 in the fill's GROUP BY, not collapse into one
+            trig.append(f"""SELECT key, moment, t, 'half{m}' AS rule, '{H}' AS h, 0.5 AS part, 'trail' AS leg,
                 CASE WHEN ord_{m} IS NOT NULL AND slot_{m} <= {cap} AND (ord_stop IS NULL OR ord_{m} < ord_stop)
                      THEN CASE WHEN ord_trail{m}_{H} IS NOT NULL AND (ord_stop IS NULL OR ord_trail{m}_{H} < ord_stop) THEN slot_trail{m}_{H}
                                WHEN ord_stop IS NOT NULL AND slot_stop <= {cap} THEN slot_stop END
@@ -150,7 +154,7 @@ def labels_and_exits(con):
     # the fill: the first mark at or after trigger slot + d_slots within H; otherwise (no trigger, or nothing after it) the end-of-H mark
     con.execute("""CREATE OR REPLACE TEMP TABLE fills AS
         WITH f AS (
-            SELECT tr.key, tr.moment, tr.t, tr.rule, tr.h, tr.part, tr.trig_slot,
+            SELECT tr.key, tr.moment, tr.t, tr.rule, tr.h, tr.part, tr.leg, tr.trig_slot,
                    arg_min(k.net, k.ord) FILTER (WHERE tr.trig_slot IS NOT NULL AND k.slot >= tr.trig_slot + l.d_slots AND k.slot <= CASE tr.h WHEN '24' THEN l.cap24 ELSE l.cap72 END) AS fill_net,
                    any_value(CASE tr.h WHEN '24' THEN l.end_net_24 ELSE l.end_net_72 END) AS end_net
             FROM trig tr JOIN lab2 l USING (key, moment, t) JOIN mkx k ON k.key = tr.key AND k.moment = tr.moment AND k.t = tr.t
@@ -219,6 +223,14 @@ def mint_tables(con, clock, lo):
 def assemble(con, clock, lo):
     """One row per entry: identity, fill, labels, exits, runners features, extra features."""
     n = R.assemble(con, clock, lo)   # out: the runners columns (mult_1h, mult_6h = 72 h here, x_tp2 / x_tr30 / x_tr50 without delay, features)
+    # the state row behind each peak: its kind (buy / sell / boost / withdraw / deposit) and whether its slot holds trades of the
+    # pool with more than one fee tier -- the only place where the pre-2026-10-24 slot-ASOF tie could move a mark (ab_labels tolerance)
+    con.execute("""CREATE OR REPLACE TEMP TABLE mixed AS
+        SELECT key, slot, count(DISTINCT (lp, pr, cr, cb)) > 1 AS mixed FROM pl WHERE kind IN ('buy', 'sell') GROUP BY 1, 2""")
+    con.execute("""CREATE OR REPLACE TEMP TABLE peakrow AS
+        SELECT l.key, l.moment, l.t, p24.kind AS peak_kind_24, COALESCE(m24.mixed, false) AS peak_mixed_24, p72.kind AS peak_kind_72, COALESCE(m72.mixed, false) AS peak_mixed_72
+        FROM lab2 l LEFT JOIN pl p24 ON p24.key = l.key AND p24.ord = l.peak_ord_24 LEFT JOIN mixed m24 ON m24.key = l.key AND m24.slot = l.peak_slot_24
+                    LEFT JOIN pl p72 ON p72.key = l.key AND p72.ord = l.peak_ord_72 LEFT JOIN mixed m72 ON m72.key = l.key AND m72.slot = l.peak_slot_72""")
     lab_cols = []
     for H in HORIZONS:
         for m in TARGETS:
@@ -231,23 +243,26 @@ def assemble(con, clock, lo):
         SELECT o.*, (o.entry_slot // 432000)::INTEGER AS epoch, hour(epoch_ms(b.block_time * 1000)) AS hour_utc, isodow(epoch_ms(b.block_time * 1000)) AS weekday,
                l.d_slots, (l.slot_stop - l.entry_slot) * ({ms_case(clock, 'l.entry_slot')}) / 60000.0 AS t_stop_min,
                {', '.join(lab_cols)}, {ex_cols},
+               pk.peak_kind_24, pk.peak_mixed_24, pk.peak_kind_72, pk.peak_mixed_72,
                fx.* EXCLUDE (key, moment, t)
         FROM out o JOIN blocks b ON b.slot = o.entry_slot
         JOIN lab2 l ON l.key = o.key AND l.moment = o.moment AND l.t = o.t
+        LEFT JOIN peakrow pk ON pk.key = o.key AND pk.moment = o.moment AND pk.t = o.t
         JOIN ex e ON e.key = o.key AND e.moment = o.moment AND e.t = o.t
         LEFT JOIN fx ON fx.key = o.key AND fx.moment = o.moment AND fx.t = o.t""")
     return _count(con, "out2")
 
 
-def run(lo, hi, out_dir, size_sol=0.5, cfg=R.DEFAULTS, store=None, memory=None, threads=None):
-    if hi > HOLDOUT_START:
-        raise ValueError(f"slot {hi} reaches into the hold-out (starts at {HOLDOUT_START})")
+def run(lo, hi, out_dir, size_sol=0.5, cfg=R.DEFAULTS, store=None, memory=None, threads=None, forward=False):
+    if not forward:
+        guard(hi)
     t0 = time.time()
     saved = (R.SIZE, R.H6_MS)   # module globals the runners functions read at call time; restored for other callers
     R.SIZE = int(round(size_sol * SOL))
     con = connect(store or os.environ.get("LAB_STORE", "/home/chupa/Solana-project/data-old-faithful-one/lab/store/dev2.duckdb"),
                   memory or os.environ.get("LAB_WALLETS_MEMORY", "1GB"), int(threads or os.environ.get("LAB_WALLETS_THREADS", "2")))
     try:
+        R.window(con, lo, hi, forward)
         clock = Clock.from_store(con)
         cost = R.tx_cost(cfg)
         hi_ext = setup(con, lo, hi, clock)
@@ -266,7 +281,7 @@ def run(lo, hi, out_dir, size_sol=0.5, cfg=R.DEFAULTS, store=None, memory=None, 
     if size_sol == 0.5:
         con.execute(f"COPY mint_peaks TO '{out_dir}/mint_peaks-{lo}.parquet' (FORMAT PARQUET)")
         con.execute(f"COPY early_buyers TO '{out_dir}/early_buyers-{lo}.parquet' (FORMAT PARQUET)")
-    info = {"lo": lo, "hi": hi, "hi_ext": hi_ext, "size_sol": size_sol, "entries": n, "moments": _count(con, "mom"), "tokens": _count(con, "tok"),
+    info = {"lo": lo, "hi": hi, "forward": forward, "cap": R.CAP, "hi_ext": hi_ext, "size_sol": size_sol, "entries": n, "moments": _count(con, "mom"), "tokens": _count(con, "tok"),
             "marks": _count(con, "mk"), "tx_cost_lamports": cost, "commit": git_commit(), "seconds": round(time.time() - t0, 1),
             "per_moment": {m: c for m, c in con.execute("SELECT moment, count(*) FROM out2 GROUP BY 1").fetchall()},
             "hits": {k: v for k, v in con.execute("SELECT moment, {} FROM out2 GROUP BY 1".format(
@@ -287,8 +302,11 @@ def main(argv=None):
     ap.add_argument("--size-sol", type=float, default=float(os.environ.get("LAB_X10_SIZE_SOL", "0.5")))
     ap.add_argument("--cfg", default=R.DEFAULTS)
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "x10-labels"))
+    ap.add_argument("--forward", action="store_true", help="a forward store from epoch 1064 on (common.forward_guard) instead of the dev-only guard; needs its own --out")
     a = ap.parse_args(argv)
-    info = run(a.from_slot, a.to_slot, a.out, a.size_sol, a.cfg)
+    if a.forward and a.out == ap.get_default("out"):
+        ap.error("--forward writes into its own --out, never the development x10-labels")
+    info = run(a.from_slot, a.to_slot, a.out, a.size_sol, a.cfg, forward=a.forward)
     print(json.dumps({k: v for k, v in info.items() if k not in ("per_moment", "hits")}, default=str))
 
 

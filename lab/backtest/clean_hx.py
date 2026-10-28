@@ -42,7 +42,7 @@ import duckdb
 import numpy as np
 
 from . import clean_test as ct
-from .costs import Scenario, settle_sql
+from .costs import SETTLE_RULE, Scenario, settle_sql
 from .store import load_defaults
 from .strategies import EPOCH_SLOTS, F7_BIG_GRID, F7_EXIT_GRID, F7_GRID, F7_LONG_GRID, Clock, f7_exit_variant
 
@@ -270,6 +270,7 @@ def run_hx(a, spec, log=print):
     log(f"control: tp4_T600 equals E20's K3 per epoch; exclusions {len(mints)} mints, {len(pools)} pools")
     # 7. outcomes
     pnl, _ = settle_sql(Scenario.from_cfg("base", load_defaults()))
+    out["settle_rule"] = SETTLE_RULE  # the rule the net was settled with (clean_reports re-settles under it; Codex #6)
     entry_days(con, hg, keep, win, pnl)
     first = f"slot >= (SELECT max(slot) FROM bt WHERE slot <= {lo}) AND slot <= greatest({hi}, (SELECT max(es) FROM h))"
     dates = [x for (x,) in con.execute(f"""SELECT DISTINCT CAST(DATE '1970-01-01' + CAST(block_time // 86400 AS INTEGER) AS VARCHAR)

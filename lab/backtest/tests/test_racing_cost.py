@@ -14,6 +14,16 @@ from backtest import capital_ceiling as cc
 from backtest import racing_cost as rc
 
 LO = cc.DEV[0]
+
+
+def day_of_pairs(pairs):
+    """A SlotDays from (slot, day) pairs in a fixture's own day labels (its change points)."""
+    starts, days = [], []
+    for slot, day in sorted(set(pairs)):
+        if not days or day != days[-1]:
+            starts.append(slot)
+            days.append(day)
+    return cc.SlotDays(starts, days)
 DAYS = ("2026-09-12", "2026-09-12", "2026-09-13", "2026-09-14")
 POOLS = ("A", "B", "C", "D")
 N_T1 = {"A": 0, "B": 1, "C": 2, "D": 3}  # token-buying transactions in t + 1 (the store below)
@@ -92,6 +102,10 @@ def write_store(path):
             legs.append((p, t + 1, 3, 0, -1, "buy", False, 9_999_999, 0, 5000, 20, 5, 30))  # a token sell: not a buy
             legs.append((p, t + 2, 20, 0, -1, "sell", True, 1, 0, 5000, 20, 5, 30))  # t + 2: outside the count
     con.executemany(f"INSERT INTO pool VALUES ({', '.join('?' * 13)})", legs)
+    # Block times: each trigger's slot on its DAYS day (the daily loss limit's exit days).
+    con.execute("CREATE TABLE blocks (slot UBIGINT, block_time BIGINT)")
+    con.executemany("INSERT INTO blocks VALUES (?, ?)", [(trig(i), int(np.datetime64(DAYS[i], "s").astype(np.int64)) + 3600)
+                                                         for i in range(4)])
     con.close()
     return path
 
@@ -120,10 +134,10 @@ def lab(tmp_path):
     # E63's report on run e (capital_ceiling itself).
     con = duckdb.connect()
     cc.load(con, [e], keys)
-    days, cells = cc.compute(con, False)
+    days, cells = cc.compute(con, False, day_of_pairs(con.execute("SELECT t, day FROM r").fetchall()))
     e63 = os.path.join(root, "ceiling.json")
     with open(e63, "w") as f:
-        json.dump({"cells": cells, "days": days}, f, default=str)
+        json.dump({"cells": cells, "days": days, "daily_loss_book": "exit_day"}, f, default=str)
     return {"root": root, "a": a, "b": b, "e": e, "keys": keys, "store": store, "route": route, "e63": e63}
 
 
@@ -182,6 +196,19 @@ def test_the_expectation_is_exact():
     assert abs(e1["sol_day"] - (990 + 0.25 * 1990 + 0.75 * 290) / 1e9) < 1e-15
 
 
+def test_racing_trades_keep_failed_attempt_timing_for_each_delay():
+    # d=0's miss is immediate; a d=1 fallback failure is only known next slot, on the next day.
+    d0 = (LO + 199, None, None, 0, 0, -505_000, True, "2026-09-12", "A", 0, 270.0)
+    d1 = (LO + 199, None, None, 1, 0, -505_000, True, "2026-09-12", "A", 0, 270.0)
+    assert rc.trades_of([d0])[0][9] == LO + 199
+    assert rc.trades_of([d1])[0][9] == LO + 200
+    day_of = cc.SlotDays([LO, LO + 200], ["2026-09-12", "2026-09-13"])
+    for row_, expected_day in ((d0, "2026-09-12"), (d1, "2026-09-13")):
+        _, _, extra = rc.run_days(rc.trades_of([row_]), day_of.days, 10, 0.5, day_of)
+        assert extra["exit_day_pnl"] == {expected_day: -505_000}
+        assert extra["day_pnl"] == {"2026-09-12": -505_000}
+
+
 def test_breakeven():
     assert rc.breakeven([(0, 9, 9), (1, 3, 1), (2, 2, -1), (3, -1, -2), (5, 1, -3)]) == {
         "grid": [1, 2, 3, 5], "first_non_positive_d": 3, "beyond_grid": False, "lower_bound_positive_up_to_d": 1}
@@ -230,6 +257,11 @@ def test_a_run_on_another_grid_than_e63s_is_refused(tmp_path, lab):
     narrow = write_run(str(tmp_path), "narrow", rows_for((1,), ret), variants=("hold300",))
     with pytest.raises(cc.Refused, match="variants"):
         rc.grid_check([narrow, lab["e"]])
+    loose = write_run(str(tmp_path), "loose", rows_for((1,), ret))
+    cfg = json.load(open(os.path.join(loose, "config.json")))
+    json.dump(dict(cfg, slippage_tol=0.10), open(os.path.join(loose, "config.json"), "w"))
+    with pytest.raises(cc.Refused, match="slippage_tol"):  # the tournament's name for --tol
+        rc.grid_check([loose, lab["e"]])
 
 
 def test_a_differing_e63_cell_is_red(lab):

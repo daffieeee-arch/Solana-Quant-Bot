@@ -246,7 +246,7 @@ class SameAsTheDailyReport(unittest.TestCase):
         self.assertIsNotNone(m, md)
         self.assertEqual((s["trades"], s["entry_failed"], s["days"]), tuple(int(x) for x in m.group(1, 2, 3)))
         self.assertEqual(f"{s['mean_sol_per_trade']:+.4f}", m.group(4))
-        self.assertEqual(s["verdict"], m.group(7))
+        self.assertEqual(s["verdict"] if s["assessment"]["applies"] else "no formal verdict", m.group(7))
         # One bootstrap (paper/stoprule.py) for both: the same interval, not one within a tolerance.
         self.assertEqual((f"{s['ci_lo']:+.4f}", f"{s['ci_hi']:+.4f}"), m.group(5, 6))
         m = re.search(r"- final ([\d.]+) SOL, max drawdown ([\d.]+)%, trades (\d+), skipped (\d+)", md)
@@ -296,10 +296,12 @@ class DecisionBoundary(unittest.TestCase):
         out.append(("2026-10-27", -505_000, 0))
         return out
 
-    def journal(self, name, shift):
+    def journal(self, name, shift, settle_rule=None, write_off=False):
         jmod, _ = lab_paper()
         j = jmod.Journal(os.path.join(self.tmp, name, "journal"))
         j.state("groups", json.dumps(self.GROUPS))
+        if settle_rule:
+            j.state("settle_rule", settle_rule)
         j.state("clock_start", json.dumps({"date": "2026-10-26", "reason": "r", "set_at": "2026-10-22T09:30:00+00:00"}))
         j.state("feed", json.dumps({"kind": "live"}))
         j.state("cost_scenario", json.dumps(self.COSTS))
@@ -311,13 +313,19 @@ class DecisionBoundary(unittest.TestCase):
             j.put("exits", family="F7", variant="tp4_T600", key=f"P{t}", t=t, day=day, entry_slot=t + 3, exit_slot=t + 50 if tokens else None,
                   exit_reason="time" if tokens else "entry_failed", tokens=tokens, cost=self.SOL // 2 if tokens else 0,
                   proceeds=self.SOL // 2 + pnl if tokens else 0, pnl=pnl, ret=None, exit_attempts=2 if t % 700 == 0 else 1)
+        if write_off:  # a write-off after 2 failed attempts (paper since #533): rule 1 charges 1 failed_tx, rule 2 both
+            t += 100
+            j.put("orders", family="F7", variant="tp4_T600", key=f"P{t}", t=t, day="2026-10-28", entry_slot=t + 3,
+                  size=self.SOL // 2, status="filled")
+            j.put("exits", family="F7", variant="tp4_T600", key=f"P{t}", t=t, day="2026-10-28", entry_slot=t + 3, exit_slot=t + 90,
+                  exit_reason="written_off", tokens=5, cost=self.SOL // 2, proceeds=0, pnl=-self.SOL // 2, ret=None, exit_attempts=2)
         j.put("heartbeat", minute=29_330_000, day="2026-11-04", last_slot=t + 900, events=3, open_positions=0, gap_slots=0, note="")
         j.commit()
         return j
 
-    def both(self, name, shift):
+    def both(self, name, shift, **kw):
         _, report = lab_paper()
-        j = self.journal(name, shift)
+        j = self.journal(name, shift, **kw)
         report.daily_report(j, "2026-11-04")
         with open(os.path.join(j.dir, "2026-11-04", "report.md")) as f:
             md = f.read()
@@ -362,6 +370,73 @@ class DecisionBoundary(unittest.TestCase):
             self.assertIn("only 10 trading days: below 14 the day bootstrap is coarse", md)
             self.assertIn("### What the verdict rests on", md)
 
+    def test_both_settle_failed_exit_attempts_under_the_journals_rule(self):
+        """Codex review #6: the Paper tab reads the journal's settle rule (state 'settle_rule'; absent: 1) as the daily
+        report does, so a write-off after 2 failed attempts costs 1 failed_tx under rule 1 and 2 under rule 2 on both."""
+        import re
+
+        got = {}
+        for rule in (None, "1", "2"):
+            md, s = self.both(f"rule-{rule}", 0, settle_rule=rule, write_off=True)
+            b = s["assessment"]["basis"]
+            m = re.search(r"failed exit attempts ([\d.]+)", md)
+            self.assertEqual(f"{b['costs_sol']['failed_exit_attempts']:.4f}", m.group(1), rule)  # the tab = the report
+            got[rule] = (b["settle_rule"], b["costs_lamports"]["failed_exit_attempts"])
+        self.assertEqual((got[None][0], got["1"][0], got["2"][0]), (1, 1, 2))
+        self.assertEqual(got[None][1], got["1"][1])
+        self.assertEqual(got["2"][1] - got["1"][1], self.COSTS["failed_tx"])  # the write-off's last failed attempt
+
+    def test_mixed_settle_rules_match_report_and_ui_without_rewriting_pnl(self):
+        """An upgraded journal retains old NULL/rule-1 settlements beside new rule-2 settlements."""
+        import re
+        from unittest.mock import patch
+
+        _, report = lab_paper()
+        j = self.journal("mixed-rules", 0)
+        j.db.execute("UPDATE exits SET exit_attempts = 1")  # isolate the three write-offs' failed fees
+        for i, rule in enumerate((None, 1, 2)):
+            t = 460_030_000 + i * 100
+            pnl = -self.SOL // 2 - (2 if rule == 2 else 1) * self.COSTS["failed_tx"]
+            j.put("orders", family="F7", variant="tp4_T600", key=f"W{i}", t=t, day="2026-10-28",
+                  entry_slot=t + 3, size=self.SOL // 2, status="filled")
+            j.put("exits", family="F7", variant="tp4_T600", key=f"W{i}", t=t, day="2026-10-28",
+                  entry_slot=t + 3, exit_slot=t + 90, exit_reason="written_off", tokens=5,
+                  cost=self.SOL // 2, proceeds=0, pnl=pnl, exit_attempts=2, settle_rule=rule)
+        j.commit()
+        stored = j.db.execute("SELECT key, pnl, settle_rule FROM exits ORDER BY key").fetchall()
+        assessments = []
+        assess = report.assessment
+
+        def capture_assessment(*args, **kwargs):
+            a = assess(*args, **kwargs)
+            assessments.append(a)
+            return a
+
+        with patch.object(report, "assessment", side_effect=capture_assessment):
+            report.daily_report(j, "2026-11-04")
+        with open(os.path.join(j.dir, "2026-11-04", "report.md")) as f:
+            md = f.read()
+        path = os.path.join(j.dir, "journal.sqlite")
+        j.close()
+        s = paper.journal_view(path, now=1_793_793_600)["stop_rule"]
+        b = s["assessment"]["basis"]
+        self.assertEqual(len(assessments), 1)
+        reported = assessments[0]["basis"]
+        self.assertEqual((b["settle_rule"], b["settle_rules"]), ("mixed", [1, 2]))
+        self.assertEqual((reported["settle_rule"], reported["settle_rules"]), ("mixed", [1, 2]))
+        self.assertEqual(b["costs_lamports"], reported["costs_lamports"])
+        self.assertEqual(b["costs_lamports"]["failed_exit_attempts"], 4 * self.COSTS["failed_tx"])
+        self.assertEqual(b["costs_lamports"]["failed_entries"], self.COSTS["failed_tx"])
+        self.assertEqual(re.search(r"failed exit attempts ([\d.]+)", md).group(1),
+                         f"{4 * self.COSTS['failed_tx'] / self.SOL:.4f}")
+        expected_net = sum(p for _, p, _ in self.pnls(0)) - 3 * (self.SOL // 2) - 4 * self.COSTS["failed_tx"]
+        self.assertEqual((b["filled_trades"], b["failed_entries"]), (213, 1))
+        self.assertEqual(b["mean_lamports"], expected_net / 213)
+        self.assertEqual(b["mean_lamports"], reported["mean_lamports"])
+        self.assertEqual(b["ci95_lamports"], reported["ci95_lamports"])
+        with sqlite3.connect(path) as db:
+            self.assertEqual(db.execute("SELECT key, pnl, settle_rule FROM exits ORDER BY key").fetchall(), stored)
+
 
 class TokenNames(unittest.TestCase):
     """Names come from the data we hold, in layers: the paper run's store (pools -> mint, mints' name), the journal's
@@ -387,6 +462,10 @@ class TokenNames(unittest.TestCase):
             db.execute("INSERT INTO state VALUES ('farmer_seed', ?)", [json.dumps({"store": store})])
             db.execute("INSERT INTO learned VALUES ('pool', 'PoolLearned', 3, 1, ?)",
                        [json.dumps(["sol", "normal", "PoolLearned", "MintLive", "normal", "sol", False, "c", 1])])
+            db.execute("INSERT INTO learned VALUES ('token', 'MintLive', 4, 2, ?)",  # graduated: its canonical pool
+                       [json.dumps(["MintLive", 1, "c", False, "11111111111111111111111111111111", 2, "PoolGrad"])])
+            db.execute("INSERT INTO learned VALUES ('pool', 'PoolOther', 5, 3, ?)",  # names MintLive, but not as its mint
+                       [json.dumps(["sol", "normal", "PoolOther", "MintElse", "normal", "sol", False, "MintLive", 3])])
             db.commit()
             db.close()
             root = os.path.join(d, "recorder")
@@ -422,6 +501,10 @@ class TokenNames(unittest.TestCase):
                 paper._name_miss["PoolGap"] = (0, paper._name_miss["PoolGap"][1])
                 self.assertEqual(paper.token_names(["PoolGap"])["PoolGap"]["symbol"], "GAP")
                 self.assertEqual(paper._name_seq.get("Unknown1111"), 1)  # searched up to segment 1
+                # A token page's paper trades: the pools the paper run knows, not only the dev store's
+                self.assertEqual(paper.mint_pools("MintLive"), ["PoolGrad", "PoolLearned"])
+                self.assertEqual(paper.mint_pools("MintStore"), ["PoolStore"])
+                self.assertEqual(paper.mint_pools("Unknown1111"), [])
             finally:
                 paper._dev_names = dev
                 for k in env:
