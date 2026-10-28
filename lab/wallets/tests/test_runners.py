@@ -364,12 +364,13 @@ def test_forward_window_uses_forward_guard_and_caps_at_the_store_end(tmp_path, m
     assert runners.CAP == common.HOLDOUT_START
 
 
-def test_boost_row_takes_the_tiers_of_the_last_trade_before_it_in_tx_order(tmp_path, monkeypatch):
+def test_boost_row_takes_the_tiers_of_the_first_trade_after_it_in_tx_order(tmp_path, monkeypatch):
     """E75 A/B RED (2026-10-24): a boost / withdraw / deposit row has no fee tiers of its own; the harness took them from a trade
     of the same pool with an ASOF on the slot alone, which is a tie among all trades of that slot and was resolved at random per
-    run (three creator tiers in one slot moved a peak mark by 5 bps between runs). Now the tiers (and the virtual quote) come from
-    the last trade BEFORE the row in the full transaction order, deterministically: two trades in the boost's slot with different
-    creator tiers, the boost between them in tx order -> the earlier trade's tier, the same on a second run."""
+    run (three creator tiers in one slot moved a peak mark by 5 bps between runs). #586 took the last trade BEFORE the row; the
+    second E75 diagnosis (2026-10-29) showed that a boost switches the tiers, so the tiers in force after the row are those of the
+    first trade AFTER it in the full transaction order (fallback: the last before). Two trades in the boost's slot with different
+    creator tiers, the boost between them in tx order -> the later trade's tier, deterministically on a second run."""
     rows, states = _curve_rows([(S, True, 2 * 10**9, True)])
     B0, E0 = 10**12, 30 * 10**9
     p0 = V.Pool(B0, E0, 20, 5, 5, 0)
@@ -398,15 +399,15 @@ def test_boost_row_takes_the_tiers_of_the_last_trade_before_it_in_tx_order(tmp_p
     assert got[0] == got[1], got
     by_kind = {(k, tx): (lp, pr, cr) for k, tx, lp, pr, cr, cb in got[0]}
     assert by_kind[("buy", 10)] == (20, 5, 65) and by_kind[("buy", 30)] == (20, 5, 75)
-    assert by_kind[("boost", 20)] == (20, 5, 65), "the boost takes the tiers of the trade before it in tx order (65), never the later 75"
+    assert by_kind[("boost", 20)] == (20, 5, 75), "the boost takes the tiers of the first trade after it in tx order (75): the tiers in force after the boost"
 
 
-def test_slot_asof_would_pick_the_later_trade_but_ord_asof_picks_the_earlier(tmp_path, monkeypatch):
-    """LAB should-fix on #586: a fixture where the two joins MUST differ. The boost's only same-slot trade comes AFTER it in tx
-    order (creator tier 75, virtual quote 9); the last trade before it sits in an earlier slot (tier 65, virtual quote 7). A
-    slot-only ASOF (o.slot >= t.slot) can only return the same-slot trade -> 75 / 9; the ord ASOF returns the earlier slot's
-    trade -> 65 / 7. The same for a withdraw (placed before the boost, which resets the virtual quote) and a deposit row, and
-    the result is identical over two runs."""
+def test_state_rows_take_the_tiers_after_them_and_the_virtual_quote_before_them(tmp_path, monkeypatch):
+    """The boost's only same-slot trade comes AFTER it in tx order (creator tier 75, virtual quote 9); the last trade before it
+    sits in an earlier slot (tier 65, virtual quote 7). Since the second E75 diagnosis (2026-10-29) the tiers of a state row are
+    those of the first trade after it (75) and its virtual quote that of the last trade before it (7): the tier switch happens
+    at the boost, the virtual quote does not. The same for a withdraw (placed before the boost, which carries its own vq) and a
+    deposit before any trade, and the result is identical over two runs."""
     rows, states = _curve_rows([(S, True, 2 * 10**9, True)])
     B0, E0 = 10**12, 30 * 10**9
     p0 = V.Pool(B0, E0, 20, 5, 5, 0)
@@ -434,6 +435,38 @@ def test_slot_asof_would_pick_the_later_trade_but_ord_asof_picks_the_earlier(tmp
         con.close()
     assert got[0] == got[1], got
     by = {k: (lp, pr, cr, virt) for k, tx, lp, pr, cr, cb, virt in got[0]}
-    assert by["boost"][:3] == (20, 5, 65), "the boost's only same-slot trade (tier 75) lies after it: the tier must be the earlier slot's 65"
-    assert by["withdraw"][:3] == (20, 5, 65) and int(by["withdraw"][3]) == 7, "withdraw: tiers and virtual quote of the trade before it, not of the later same-slot trade (9)"
-    assert by["deposit"][:3] == (0, 0, 0) and int(by["deposit"][3]) == 0, "a deposit before any trade has no tiers and no virtual quote"
+    assert by["boost"][:3] == (20, 5, 75), "the boost's only same-slot trade (tier 75) lies after it: the tiers in force after the boost are 75, not the earlier slot's 65"
+    assert by["withdraw"][:3] == (20, 5, 75) and int(by["withdraw"][3]) == 7, "withdraw: tiers of the first trade after it (75), virtual quote of the last trade before it (7, not 9)"
+    assert by["deposit"][:3] == (20, 5, 65) and int(by["deposit"][3]) == 0, "a deposit before any trade: tiers of the first trade after it (65), no virtual quote yet"
+
+
+def test_boost_tier_switch_pattern_of_pool_d3tjrnv4(tmp_path, monkeypatch):
+    """E75 rerun RED #2 (2026-10-29, NAS 99zzzzz789, pool D3tjrNV4... of mint Bwy71b5n...pump, slot 449826994): the last trade before
+    the boost (an earlier slot) had the tiers 2/93/30 bps, the only trade in the boost's slot came after it with 20/5/95 bps: the
+    boost switched the fee schedule. The mark on the boost row must carry the tiers in force after it (20/5/95); a boost with no
+    trade after it falls back to the last trade before it (here a later buy at 20/5/90)."""
+    rows, states = _curve_rows([(S, True, 2 * 10**9, True)])
+    B0, E0 = 10**12, 30 * 10**9
+    p0 = V.Pool(B0, E0, 20, 5, 5, 0)
+    t1 = V.pool_buy_exact_in(p0, 10**9); p1 = t1.state
+    t2 = V.pool_buy_exact_in(p1, 10**9); p2 = t2.state
+    t3 = V.pool_buy_exact_in(p2, 10**9); p3 = t3.state
+    prow = [{"kind": "buy", "slot": S + 150, "b": p0.b, "e": p0.e, "base": t1.tokens, "e_delta": p1.e - p0.e, "token_buy": True, "sol_amount": 10**9, "token_amount": t1.tokens},   # 2/93/30
+            {"kind": "boost", "slot": S + 200, "b": p1.b, "e": p1.e, "vault": p1.e, "base": 10**8, "e_delta": 5 * 10**7, "quote_user": None},                                       # tx 20
+            {"kind": "buy", "slot": S + 200, "b": p2.b, "e": p2.e, "base": t2.tokens, "e_delta": 7 * 10**7, "token_buy": True, "sol_amount": 10**9, "token_amount": t2.tokens},     # tx 30, 20/5/95
+            {"kind": "buy", "slot": S + 250, "b": p2.b, "e": p2.e, "base": t3.tokens, "e_delta": p3.e - p2.e, "token_buy": True, "sol_amount": 10**9, "token_amount": t3.tokens},   # 20/5/90
+            {"kind": "boost", "slot": S + 300, "b": p3.b, "e": p3.e, "vault": p3.e, "base": 10**8, "e_delta": 5 * 10**7, "quote_user": None}]                                        # no trade after
+    _store(tmp_path / "s.duckdb", rows, [{"pool": "P1", "mint": M, "create_slot": S + 100, "rows": prow}])
+    w = duckdb.connect(str(tmp_path / "s.duckdb"))
+    w.execute(f"UPDATE pool SET tx_index = 10, lp_bps = 2, protocol_bps = 93, creator_bps = 30 WHERE kind = 'buy' AND slot = {S + 150}")
+    w.execute(f"UPDATE pool SET tx_index = 20, lp_bps = NULL, protocol_bps = NULL, creator_bps = NULL, cashback_bps = NULL, vq = NULL WHERE kind = 'boost'")
+    w.execute(f"UPDATE pool SET tx_index = 30, lp_bps = 20, protocol_bps = 5, creator_bps = 95 WHERE kind = 'buy' AND slot = {S + 200}")
+    w.execute(f"UPDATE pool SET tx_index = 10, lp_bps = 20, protocol_bps = 5, creator_bps = 90 WHERE kind = 'buy' AND slot = {S + 250}")
+    w.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    con = runners.connect(str(tmp_path / "s.duckdb"), memory="500MB", threads=2)
+    runners.setup(con, LO, LO + 5_000, runners.Clock.from_store(con))
+    got = {slot: (lp, pr, cr) for slot, lp, pr, cr in con.execute("SELECT slot, lp, pr, cr FROM pl WHERE kind = 'boost' ORDER BY slot").fetchall()}
+    con.close()
+    assert got[S + 200] == (20, 5, 95), f"the boost takes the tiers of the first trade after it (the switched schedule), not the earlier slot's 2/93/30: {got}"
+    assert got[S + 300] == (20, 5, 90), f"a boost without a trade after it falls back to the last trade before it: {got}"

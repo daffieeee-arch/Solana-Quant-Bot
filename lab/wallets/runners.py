@@ -175,12 +175,15 @@ def legs(con, lo, hi_ext, mayhem_curve=False):
                    CASE WHEN o.kind = 'boost' THEN o.e + o.e_delta WHEN o.kind = 'withdraw' THEN o.vault + COALESCE(v.virt, 0) - o.quote_user
                         ELSE o.vault + COALESCE(v.virt, 0) + o.quote_user END AS e_post,
                    CASE WHEN o.kind = 'boost' THEN o.vq ELSE COALESCE(v.virt, 0) END AS virt,
-                   COALESCE(t.lp, 0) AS lp, COALESCE(t.pr, 0) AS pr, COALESCE(t.cr, 0) AS cr, COALESCE(t.cb, 0) AS cb
-            -- the fee tiers (and the virtual quote) of a boost / withdraw / deposit row come from the LAST TRADE BEFORE IT in the full
-            -- transaction order (ord), not from any trade in the same slot: an ASOF on the slot alone was a tie among the slot's trades
-            -- and picked one at random per run (E75 A/B, 2026-10-24: three creator tiers in one slot gave peak marks 5 bps apart)
+                   COALESCE(a.lp, t.lp, 0) AS lp, COALESCE(a.pr, t.pr, 0) AS pr, COALESCE(a.cr, t.cr, 0) AS cr, COALESCE(a.cb, t.cb, 0) AS cb
+            -- the fee tiers of a boost / withdraw / deposit row are those in force AFTER it: the first trade after the row in the full
+            -- transaction order (ord) shows them (a boost switches the pool's fee schedule or creator tier: E75 diagnosis 2, 2026-10-29,
+            -- 2/93/30 -> 20/5/95 bps on the same slot); when no trade follows, the last trade before it. Never an ASOF on the slot
+            -- alone: that was a tie among the slot's trades, resolved at random per run (E75 A/B, 2026-10-24, #586). The virtual quote
+            -- of a withdraw / deposit row is the last trade's before it (a boost carries its own vq).
             FROM (SELECT * FROM raw WHERE kind IN ('boost', 'withdraw', 'deposit')) o
             ASOF LEFT JOIN trades t ON t.key = o.key AND o.ord > t.ord
+            ASOF LEFT JOIN trades a ON a.key = o.key AND o.ord < a.ord
             ASOF LEFT JOIN virts v ON v.key = o.key AND o.ord > v.ord)
         SELECT key, 'pool' AS venue, orientation, ord, slot, tx_index, kind,
                kind IN ('buy', 'sell') AS trade, token_buy AS is_buy, sol_amount::HUGEINT AS sol, token_amount::HUGEINT AS tokens, trader, fee_payer, COALESCE(farmer, false) AS farmer,
