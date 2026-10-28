@@ -159,11 +159,13 @@ mod tests {
     fn a_vault_capped_exit_with_dust_gets_the_rent_back() {
         // Codex on c29c545, decided 2026-10-19: the exit burns the remainder and closes the account (exit_net's doc), so a
         // vault_capped exit settles as any other. The dust case: a reversed pool (80 SOL, 3e14 tokens, fees 25+5 bps)
-        // sells 1,850,000,000,202 of 1,850,000,000,203 held tokens (1 raw unit of fee dust) for 488,852,188 lamports.
-        // The numbers are lab-py's (backtest/tests/test_settle_sql.py has the same case): Rust = Python.
+        // sells 1,849,999,999,800 of 1,849,999,999,801 held tokens (1 raw unit of fee dust) for 488,852,188 lamports.
+        // Exact-in rule 2: initial net 1,844,466,600,000 has integer fees 4,611,166,500 + 922,233,300;
+        // its debit is one less than held. The old held=1,850,000,000,203 now spends everything.
+        // backtest/tests/test_settle_sql.py pins the same fee-dust case.
         use crate::venues::{rev_sell_token, Pool};
         let p = Pool { b: 80_000_000_000, e: 300_000_000_000_000, lp_bps: 25, protocol_bps: 5, creator_bps: 0, cashback_bps: 0, virt: 0 };
-        let held = 1_850_000_000_203;
+        let held = 1_849_999_999_801;
         let f = rev_sell_token(&p, held).unwrap();
         assert_eq!((held - f.tokens, f.trader_quote), (1, 488_852_188)); // vault_capped: f.tokens < held
         let base = scenario("base");

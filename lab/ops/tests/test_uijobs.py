@@ -212,6 +212,49 @@ def test_result_rows_are_the_tournament_reports():
     assert round(k3["mean_pnl_sol"], 4) == 0.0029  # the report's d 2 270 ms
 
 
+def test_rows_follow_the_runs_own_settle_rule(tmp_path):
+    """Codex review #6: a run whose summary.parquet was written under rule 1 (before 24 Oct) or rule 2 gives its rows
+    under that rule (run_rule, from the summary's base totals), so a frozen run's job rows stay its report's rows; a
+    summary that fits neither rule is refused; a run without summary.parquet takes the current rule."""
+    pytest.importorskip("numpy")
+    import duckdb
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    sys.path.insert(0, LAB)
+    from backtest.costs import SETTLE_RULE
+    from backtest.report import summarize
+    from backtest.store import load_defaults
+    result = _load("result")
+    sol = 1_000_000_000
+    base = dict(family="F7", variant="tp4_T600", size_sol=0.5, d=1, tau="empirical", q=0.5, segment="pool_reversed",
+                regime="270ms", farm="organic", overlay="none", skipped=False, entry_failed=False, cost=sol // 2,
+                exit_attempts=1, hist_ret=0.0, reverted_router=0, reverted_direct=0, sells_dropped=0, seed_pool=False,
+                cf_graduation=False)
+    rows = [dict(base, day=f"2026-09-{10 + i % 3:02d}", t=i, proceeds=int(sol // 2 * (0.9 + 0.01 * i)), exit_slot=i + 50,
+                 exit_reason="time") for i in range(12)]
+    rows += [dict(base, day="2026-09-11", t=99, proceeds=0, exit_attempts=2, exit_slot=None, exit_reason="outflow")]  # unsold
+    cfg = load_defaults()
+    for rule in (1, 2):
+        run = tmp_path / f"run{rule}"
+        os.makedirs(run / "parts")
+        pq.write_table(pa.Table.from_pylist(rows), run / "parts" / "part-0.parquet")
+        parts = [str(run / "parts" / "part-0.parquet")]
+        summary = summarize(parts[0], cfg, rule=rule)
+        pq.write_table(pa.Table.from_pylist(summary), run / "summary.parquet")
+        con = duckdb.connect()
+        assert result.run_rule(con, parts, str(run), ["tp4_T600"]) == rule
+        (got,) = result.rows(str(run), ["tp4_T600"], "pool_reversed", "organic", 0.5)
+        (want,) = [o for o in summary if o["scenario"] == "base" and o["farm"] == "organic"]
+        assert got["total_pnl_sol"] == want["total_pnl_sol"]
+    t = pq.read_table(run / "summary.parquet").to_pylist()  # rule 2's summary, its base totals moved by 0.1 SOL
+    pq.write_table(pa.Table.from_pylist([dict(o, total_pnl_sol=o["total_pnl_sol"] + (0.1 if o["scenario"] == "base" else 0))
+                                         for o in t]), run / "summary.parquet")
+    with pytest.raises(SystemExit):
+        result.run_rule(duckdb.connect(), parts, str(run), ["tp4_T600"])
+    os.remove(run / "summary.parquet")
+    assert result.run_rule(duckdb.connect(), parts, str(run), ["tp4_T600"]) == SETTLE_RULE
+
+
 def test_a_result_stays_well_under_the_get_cap(monkeypatch, capsys):
     """ui_queue's get refuses a result over MAX_RESULT (64 KB); the dispatcher then fails the job (#470 review). A
     7-epoch job never comes near it: with the job's one --delay-ms each epoch gives one d, so at most 7 (d, regime)

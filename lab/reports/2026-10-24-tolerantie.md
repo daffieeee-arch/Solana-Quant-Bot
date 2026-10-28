@@ -34,7 +34,7 @@ Een "betere tol" voor paper verandert dus beide benen. Deze proef doet precies d
   - H5 bij 0,10: ≈ +19,5 % per positie, tegen ≈ +10,4 % gemiddeld (afgeleid: SOL/dag × 20 dagen / n, op 0,5 SOL);
   - dat past bij de audit: de geweigerde instappen waren vaak winnaars.
 
-  Maar ze verdringen latere posities in dezelfde pools, die even goed waren: ≈ +22,5 %, want één open positie per pool. Netto blijft er weinig over.
+  Maar ze verdringen latere posities in dezelfde pools, die minstens even goed waren (per stuk 2–5 punten beter): ≈ +22,5 %, want één open positie per pool. Netto blijft er weinig over.
 - **Leeglopers:** het aandeel posities dat > 90 % verliest stijgt nauwelijks, van 18,9 % (0,05) naar 19,1 % / 19,2 % bij H5 en van 20,1 % naar 20,7 % / 21,1 % bij C3. De uitstap-herhalingen dalen van 7 % naar 1,4 % / 0,5 %.
 
 > **Correctie 2026-10-24** (Codex-bevinding #5, PR #566 → main 89c0dc9: de dagelijkse verlieslimiet werd op de triggerdag geboekt, paper boekt op de uitstapdag; nu op de uitstapdag. Herberekening report-only, NAS-job 99zzzzz67d op 576db7a, `backtests/capital-exitday-576db7a/` SHA256SUMS 950ecbd5…; `delta-E70.md` b0c64c18… / `.json` b7e0d32f…, `e70/tol.json` fc9979a1…, `e70/tol.md` e6461bb6…; poorten T0–T3 GREEN, T0 nu op de eigen commit e3bef48 van E70 (tag `e70-2026-10-24`; Codex #8)): 1.704 bladeren vergeleken, 402 gewijzigd, **alle met limieten; zonder limieten ongewijzigd (poort GREEN)**. Gepaard verschil met 0,05, met limieten, base, tol 0,02 / 0,10 / 0,15, **oud → nieuw**: H5 10 SOL +0,10 / −0,18 / −0,30 → **+0,74 [−1,18; +2,84] / +0,31 [−1,03; +2,10] / +0,14 [−1,66; +2,30]**; H5 25 SOL −0,05 / −0,79 / −1,16 → +2,02 [−2,38; +7,00] / +1,24 [−2,49; +5,79] / −0,82 [−5,56; +4,62]; C3 10 SOL −2,02 [−4,84; +0,36] / −0,80 / −0,33 → −1,06 [−3,27; +0,81] / +0,19 [−0,86; +1,27] / +0,66 [−0,73; +2,36]; C3 25 SOL −2,53 [−7,83; +1,92] / +0,36 / +0,04 → −2,52 [−7,81; +1,94] / +0,44 [−2,07; +3,01] / +0,11 [−2,23; +2,45]. Basis bij 0,05: H5 10 / 25 SOL +5,62 / +13,47 → +4,42 / +10,61; posities per dag bij 10 SOL 91 / 82 / 77 (0,05 / 0,10 / 0,15) → 77 / 70 / 64. **Conclusie ongewijzigd:** elk gepaard verschil bevat nul, de tolerantie is geen hefboom, 0,05 blijft; nuance: voor H5 kantelt de puntschatting van licht negatief naar licht positief bij lossere tol, binnen de nul. Het oude rapport (`tol-sweep-e3bef48/report/`) blijft staan.
@@ -104,7 +104,7 @@ Een "betere tol" voor paper verandert dus beide benen. Deze proef doet precies d
 - **Gemeenschappelijk = het uitstapbeen.** De instapkosten zijn bij geen enkele gemeenschappelijke positie anders. De opbrengst verschuift gemiddeld ±0,1 %. Een lossere uitstap-tolerantie kost dus bijna niets.
 - **Nieuw tegen verloren = de instap-set.**
   - Bij 0,10 / 0,15 komen er posities bij die 5 % weigerde. Per positie (afgeleid: SOL/dag × 20 / n, op 0,5 SOL): H5 ≈ +20 %, C3 ≈ +22–24 %. Dat is boven het gemiddelde en past bij de bevinding van de audit.
-  - Tegelijk vallen er latere posities in dezelfde pools weg, omdat er één open positie per pool is. Die waren per stuk even goed: H5 ≈ +22–23 %, C3 ≈ +27–28 %.
+  - Tegelijk vallen er latere posities in dezelfde pools weg, omdat er één open positie per pool is. Die waren per stuk minstens even goed (2–5 punten beter): H5 ≈ +22–23 %, C3 ≈ +27–28 %.
   - Bij 0,02 is het omgekeerd: er vallen meer winstgevende posities weg dan er bijkomen.
 - **De rest** (fees van mislukte instappen) is ≤ ±0,02 SOL/dag.
 

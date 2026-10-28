@@ -1,6 +1,7 @@
 """Breadth-probe harness on the runners mini store: the fixed 3-slot entry, the trail30 / stop exit with the delayed
 sell, the end-of-horizon fallback, the forced-cut (agent-free) exit, and runners.legs' mayhem opt-in."""
 import duckdb
+import pytest
 
 from backtest import venues as V
 from wallets import runners as R
@@ -166,6 +167,32 @@ def test_e73_triggers_k_distinct_wallets_and_cooldown():
     assert not any(k == "B" for _, k, _ in t)
 
 
+def test_e73_same_slot_buys_use_instruction_order_not_future_trades():
+    """Two selected traders in one slot are within 30 s; the earlier instruction cannot see the later one."""
+    import duckdb
+    from wallets.common import Clock
+    from wallets.probes import e73
+
+    con = duckdb.connect()
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("INSERT INTO meta VALUES (?)", ['{"ms_per_slot": {"1040": 250.0}}'])
+    lo = 1040 * 432_000
+    con.execute("CREATE TABLE gb (key VARCHAR, slot UBIGINT, ord UBIGINT, trader VARCHAR)")
+    con.executemany("INSERT INTO gb VALUES (?, ?, ?, ?)", [
+        ("same-slot", lo, lo * 1_000_000_000 + 100_000, "W1"),
+        ("same-slot", lo, lo * 1_000_000_000 + 200_000, "W2"),
+        ("same-wallet", lo, lo * 1_000_000_000 + 100_000, "W1"),
+        ("same-wallet", lo, lo * 1_000_000_000 + 200_000, "W1"),
+    ])
+    e73.triggers(con, Clock.from_store(con))
+    assert con.execute("SELECT key, slot, ord FROM cand_k2n30 ORDER BY key").fetchall() == [
+        ("same-slot", lo, lo * 1_000_000_000 + 200_000)
+    ]
+    assert con.execute("SELECT key, moment, t FROM trig_all WHERE moment = 'k2n30'").fetchall() == [
+        ("same-slot", "k2n30", lo)
+    ]
+
+
 def test_e73_good_set_threshold_is_5_sol_in_lamports(tmp_path):
     import duckdb
     import pyarrow as pa
@@ -249,3 +276,133 @@ def test_e73_good_buys_count_token_buys_on_both_pool_orientations():
     con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [(p, s, 1, 0, 0, w, k, tb) for p, s, k, tb, w in rows])
     got = sorted(con.execute(f"SELECT key, slot, trader FROM ({e73.good_buys_sql(lo, lo + 100)})").fetchall())
     assert got == [("Mn", lo + 1, "Wc"), ("Mn", lo + 10, "W1"), ("Pr", lo + 12, "W2")], got
+
+
+def test_probes_run_forward_flag_is_wired_through_the_harness(tmp_path, monkeypatch):
+    """LAB nit on #574: probes.run --forward sets the harness flag and prepare() goes through runners.window(forward=True):
+    a dev store with the flag is refused, a forward store (window inside, start at FORWARD_START) runs with the cap at the
+    store's end; without the flag the forward store is read under the dev guard (its slots are dev slots here)."""
+    import json
+    from wallets import common
+    from wallets.probes import e71, run as PR
+    rows, states = _mini(tmp_path)
+    for name in ("s.duckdb",):
+        w = duckdb.connect(str(tmp_path / name))
+        w.execute("ALTER TABLE mints ADD COLUMN quote_mint VARCHAR")
+        w.execute("ALTER TABLE mints ADD COLUMN symbol VARCHAR")
+        w.execute(f"UPDATE mints SET quote_mint = '{e71.SYS}', symbol = 'TST'")
+        w.close()
+    import shutil
+    shutil.copy(tmp_path / "s.duckdb", tmp_path / "f.duckdb")
+    w = duckdb.connect(str(tmp_path / "f.duckdb"))
+    w.execute("UPDATE meta SET json = ?", [json.dumps({"ms_per_slot": {str(LO // 432_000): 400.0}, "period": "forward", "slot_start": LO, "slot_end_exclusive": LO + 60_000})])
+    w.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    monkeypatch.setattr(common, "FORWARD_START", LO)
+    try:
+        with pytest.raises(ValueError):   # dev store + --forward
+            PR.main(["--probe", "e71", "--from-slot", str(LO), "--to-slot", str(LO + 5_000), "--out", str(tmp_path / "o1"), "--store", str(tmp_path / "s.duckdb"), "--memory", "500MB", "--threads", "1", "--forward"])
+        assert H.FORWARD is True
+        PR.main(["--probe", "e71", "--from-slot", str(LO), "--to-slot", str(LO + 5_000), "--out", str(tmp_path / "o2"), "--store", str(tmp_path / "f.duckdb"), "--memory", "500MB", "--threads", "1", "--forward"])
+        assert (tmp_path / "o2" / f"run-e71-{LO}.json").exists() and R.CAP == LO + 60_000
+        PR.main(["--probe", "e71", "--from-slot", str(LO), "--to-slot", str(LO + 5_000), "--out", str(tmp_path / "o3"), "--store", str(tmp_path / "s.duckdb"), "--memory", "500MB", "--threads", "1"])
+        assert H.FORWARD is False and R.CAP == common.HOLDOUT_START
+    finally:
+        H.FORWARD = False
+
+
+def test_e73_empty_window_writes_an_empty_result_instead_of_crashing(tmp_path, monkeypatch):
+    """E73 on the NAS (99zzzzz79) crashed in window 446256000: the good set's days (19 Sep on) lie after the window, so every
+    cell had 0 candidates and the untyped empty VALUES made trig_all.key an INTEGER -> BinderException in the harness's
+    m.mint IN (SELECT key FROM trig_all). An empty window must give an empty result file with rows 0 and typed triggers."""
+    import json
+    import duckdb
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    from wallets.probes import e73
+    rows, states = _mini(tmp_path)
+    w = duckdb.connect(str(tmp_path / "s.duckdb"))
+    w.execute("ALTER TABLE mints ADD COLUMN quote_mint VARCHAR")
+    w.execute(f"UPDATE mints SET quote_mint = '{e73.SYS}'")
+    w.close()
+    good = tmp_path / "good-days.parquet"   # a good set whose only day lies years after the fixture window: no good buy in it
+    pq.write_table(pa.table({"wallet": ["W0", "W1"], "day": ["2030-01-01", "2030-01-01"]}), good)
+    monkeypatch.setenv("LAB_E73_GOOD", str(good))
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    con, clock = H.open_store(str(tmp_path / "s.duckdb"), "500MB", 1)
+    out = tmp_path / "out"
+    path, info = e73.run(con, LO, LO + 5_000, clock, 0.5, TX, str(out))
+    assert info["rows"] == 0 and info["good_buys"] == 0 and info["good_wallet_days"] == 2
+    assert con.execute("SELECT count(*) FROM trig_all").fetchone()[0] == 0
+    assert [t[1] for t in con.execute("DESCRIBE trig_all").fetchall()] == ["VARCHAR", "VARCHAR", "UBIGINT"]
+    assert con.execute(f"SELECT count(*) FROM read_parquet('{path}')").fetchone()[0] == 0
+    assert json.load(open(out / f"run-e73-{LO}.json"))["rows"] == 0
+
+
+def test_e73_triggers_keep_their_types_when_some_cells_are_empty():
+    """One cell with a trigger, the others empty: the UNION ALL stays VARCHAR / VARCHAR / UBIGINT (no INTEGER key)."""
+    import duckdb
+    from wallets.common import Clock
+    from wallets.probes import e73
+    con = duckdb.connect()
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("INSERT INTO meta VALUES (?)", ['{"ms_per_slot": {"1040": 250.0}}'])
+    lo = 1040 * 432_000
+    con.execute("CREATE TABLE gb (key VARCHAR, slot UBIGINT, ord UBIGINT, trader VARCHAR)")
+    con.executemany("INSERT INTO gb VALUES (?, ?, ?, ?)", [("A", lo, lo * 1000, "W1"), ("A", lo + 400, (lo + 400) * 1000, "W2")])   # 100 s apart: only k2n120
+    e73.triggers(con, Clock.from_store(con))
+    assert con.execute("SELECT key, moment, t FROM trig_all").fetchall() == [("A", "k2n120", lo + 400)]
+    assert [t[1] for t in con.execute("DESCRIBE trig_all").fetchall()] == ["VARCHAR", "VARCHAR", "UBIGINT"]
+
+
+def _e73_report_input(tmp_path, days):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    n = len(days)
+    tbl = pa.table({"probe": ["e73"] * n, "size_sol": [0.5] * n, "moment": ["k2n30"] * n,
+                    "key": [f"K{i}" for i in range(n)], "pool": [None] * n,
+                    "t": [10 + 100 * i for i in range(n)], "entry_slot": [13 + 100 * i for i in range(n)],
+                    "exit_slot": [20 + 100 * i for i in range(n)], "day": pa.array(days, type=pa.string()),
+                    "reason": ["end"] * n, "cost": [500_000_000] * n, "exit_net": [600_000_000] * n})
+    pq.write_table(tbl, tmp_path / "e73-1-s0.5.parquet")
+
+
+def test_e73_report_uses_fixed_calendar_including_days_without_any_signal(tmp_path):
+    """Real report entry point: eleven absent dates must still be bootstrap units and zero daily-net rows."""
+    import datetime
+    import json
+    from wallets.probes import report as P
+    _e73_report_input(tmp_path, ["2026-09-19", "2026-10-01"])
+    P.main(["--probe", "e73", "--in", str(tmp_path), "--parts", str(tmp_path / "no-reference"), "--boot", "200"])
+    res = json.loads((tmp_path / "report-e73.json").read_text())
+    expected_days = [(datetime.date(2026, 9, 19) + datetime.timedelta(days=i)).isoformat() for i in range(13)]
+    assert res["days_with_signals"] == ["2026-09-19", "2026-10-01"]
+    assert res["bootstrap_calendar_days"] == expected_days
+    assert res["calendar_source"]["sha256"] == "7bbd1aa112bdad00bba8ff504749d6bb04cf1af99b4ee9fd3ae9d70b590490b1"
+    primary = res["cells"]["k2n30"]["10"]
+    assert primary["day_basis"] == primary["ci"]["days"] == 13
+    assert primary["days_with_trades"] == 2 and primary["trades_per_day"] == pytest.approx(2 / 13)
+    assert list(primary["daily_net_sol"]) == expected_days
+    assert primary["daily_net_sol"]["2026-09-20"] == 0
+    assert sum(primary["daily_net_sol"].values()) == pytest.approx(0.2)
+    assert res["verdict"] == "STOP"  # positive trades are not enough to satisfy the fixed trades/day rule
+    assert "13 dagen, inclusief dagen zonder signalen" in (tmp_path / "report-e73.md").read_text()
+
+
+@pytest.mark.parametrize("day", [None, "2026-09-18", "2026-10-02", "2026-10-20"])
+def test_e73_report_refuses_missing_or_out_of_contract_dates(tmp_path, day):
+    from wallets.probes import report as P
+    _e73_report_input(tmp_path, [day])
+    with pytest.raises(ValueError, match="preregistered"):
+        P.main(["--probe", "e73", "--in", str(tmp_path), "--parts", str(tmp_path / "no-reference"), "--boot", "20"])
+    assert not (tmp_path / "report-e73.json").exists()
+
+
+def test_e73_report_keeps_calendar_when_entire_selection_has_no_signals(tmp_path):
+    import json
+    from wallets.probes import report as P
+    _e73_report_input(tmp_path, [])
+    P.main(["--probe", "e73", "--in", str(tmp_path), "--parts", str(tmp_path / "no-reference"), "--boot", "20"])
+    res = json.loads((tmp_path / "report-e73.json").read_text())
+    assert len(res["bootstrap_calendar_days"]) == 13 and res["days_with_signals"] == []
+    assert res["verdict"] == "NO_PRIMARY_CELL"

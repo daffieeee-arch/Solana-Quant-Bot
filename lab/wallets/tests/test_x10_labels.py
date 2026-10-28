@@ -2,6 +2,10 @@
 delayed exits (the sell at the first mark >= trigger slot + d), the per-mint peak and early-buyer tables and the extra
 features, all recomputed in Python from the same engine states the runners test uses."""
 import duckdb
+import pyarrow as pa
+import pyarrow.parquet as pq
+import json
+import pytest
 
 from backtest import venues as V
 from wallets import runners
@@ -244,3 +248,110 @@ def test_ab_labels_is_fail_closed(tmp_path):
         res = json.load(open(tmp_path / "out" / f"ab-{name}.json"))
         assert rc == 1 and any(reason in r for r in res["red"]), (name, res["red"])
         assert open(tmp_path / "out" / f"ab-{name}.md").read().strip().splitlines()[-1].startswith("RED")
+
+
+def test_labels_forward_flag_is_wired_through_runners_window(tmp_path, monkeypatch):
+    """LAB nit on #574: the same wiring assert for x10.labels.run(forward=True) as for runners.run -- the window guard runs
+    (forward_guard: forward store only, window inside), the cap is the store's end and the run records forward/cap; without the
+    flag a forward store that would reach the hold-out is refused; a dev store with the flag is refused."""
+    import json
+    from wallets import common
+    trades = [(S, True, 2 * 10**9, True), (S + 300, True, 3 * 10**9, False), (S + 400, True, 10**9, True), (S + 900, True, 2 * 10**9, True)]
+    rows, states = _curve_rows(trades)
+    _store(tmp_path / "f.duckdb", rows, [])
+    w = duckdb.connect(str(tmp_path / "f.duckdb"))
+    w.execute("ALTER TABLE mints ADD COLUMN create_tx UBIGINT")
+    w.execute("UPDATE meta SET json = ?", [json.dumps({"ms_per_slot": {str(LO // 432_000): MS}, "period": "forward", "slot_start": LO, "slot_end_exclusive": LO + 60_000})])
+    w.close()
+    _store(tmp_path / "d.duckdb", rows, [])
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    with pytest.raises(ValueError):   # no flag: the dev guard refuses a window into the hold-out, forward store or not
+        X.run(LO, common.HOLDOUT_START + 1, str(tmp_path / "o0"), store=str(tmp_path / "f.duckdb"), cfg="/nonexistent.yaml")
+    with pytest.raises(ValueError):   # the flag on real slots: the store starts before epoch 1064
+        X.run(LO, LO + 5_000, str(tmp_path / "o1"), store=str(tmp_path / "f.duckdb"), cfg="/nonexistent.yaml", forward=True)
+    monkeypatch.setattr(common, "FORWARD_START", LO)
+    with pytest.raises(ValueError):   # a dev store with the flag
+        X.run(LO, LO + 5_000, str(tmp_path / "o2"), store=str(tmp_path / "d.duckdb"), cfg="/nonexistent.yaml", forward=True)
+    info = X.run(LO, LO + 5_000, str(tmp_path / "o3"), store=str(tmp_path / "f.duckdb"), cfg="/nonexistent.yaml", forward=True)
+    assert info["forward"] is True and info["cap"] == LO + 60_000 and info["hi_ext"] <= LO + 60_000 and info["entries"] >= 1
+    assert runners.CAP == LO + 60_000
+    runners.window(duckdb.connect(str(tmp_path / "d.duckdb")), LO, LO + 5_000)   # back to the dev cap for other tests
+    assert runners.CAP == common.HOLDOUT_START
+
+
+def test_labels_carry_the_peak_row_kind_and_mixed_tier_flag(tmp_path, monkeypatch):
+    """Since 2026-10-24 every labels row says which kind of state row made its peak and whether that row's slot holds trades of the
+    pool with more than one fee tier -- the only place where the pre-fix slot-ASOF tie could move a mark; ab_labels' tolerance
+    reads them. On the curve-only fixture the peak row is a curve trade (kind NULL: pl has no row) and the flag is false."""
+    trades = [(S, True, 2 * 10**9, True), (S + 300, True, 3 * 10**9, False), (S + 400, True, 10**9, True), (S + 900, True, 25 * 10**9, True),
+              (S + 1500, False, 5 * 10**12, True)]
+    rows, states = _curve_rows(trades)
+    _store(tmp_path / "s.duckdb", rows, [])
+    con = duckdb.connect(str(tmp_path / "s.duckdb"))
+    con.execute("ALTER TABLE mints ADD COLUMN create_tx UBIGINT")
+    con.close()
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path / "spill"))
+    out = tmp_path / "out"
+    X.run(LO, LO + 5_000, str(out), store=str(tmp_path / "s.duckdb"), cfg="/nonexistent.yaml")
+    r = duckdb.connect().execute(f"SELECT peak_kind_24, peak_mixed_24, peak_kind_72, peak_mixed_72 FROM '{out}/labels-{LO}.parquet' WHERE moment = 'e10'").fetchone()
+    assert r[0] is None and r[1] is False and r[2] is None and r[3] is False
+
+
+def test_ab_labels_tier_tie_tolerance(tmp_path):
+    """x10-hertelling-plan v0.5: with --allow-tier-tie-drops a peak_24 drop passes only when it is at most TIE_TOL relative AND the
+    new peak row is a boost / withdraw / deposit row in a mixed-tier slot; it is listed. A larger drop, or a drop on a trade-row
+    peak, stays RED; without the flag every drop is RED as before."""
+    from wallets.x10 import ab_labels as AB
+    base = {"tokens": [100, 100, 100, 100], "cost_sol": [0.5, 0.5, 0.5, 0.5], "hit_2_24": [True, False, False, False], "hit_5_24": [False] * 4, "hit_10_24": [False] * 4,
+            "hit_2_72": [True, False, False, False], "hit_5_72": [False] * 4, "hit_10_72": [False] * 4, "stop_first_24": [False, True, False, False], "stop_first_72": [False, True, False, False],
+            "x_tp2_24": [2.0, 0.3, 0.9, 0.9], "x_trail30_24": [1.5, 0.3, 0.9, 0.9], "x_tp5_24": [1.5, 0.3, 0.9, 0.9], "end_24": [1.0, 0.2, 0.8, 0.8], "depth_sol": [5.0] * 4}
+    keys = {"key": ["A", "B", "C", "D"], "moment": ["e10"] * 4, "t": [1, 2, 3, 4]}
+    old = dict(keys, **base, peak_24=[2.1, 0.4, 1.0, 1.0])
+    # A: unchanged; B: up (the cap); C: down 0.1 % on a boost peak in a mixed slot (allowed); D: down 0.1 % on a trade-row peak (RED)
+    new = dict(keys, **base, peak_24=[2.1, 0.9, 0.999, 0.999], peak_kind_24=[None, None, "boost", "buy"], peak_mixed_24=[False, False, True, False],
+               peak_kind_72=[None] * 4, peak_mixed_72=[False] * 4)
+    pq.write_table(pa.Table.from_pydict(old), str(tmp_path / "old.parquet"))
+    pq.write_table(pa.Table.from_pydict(new), str(tmp_path / "new.parquet"))
+    args = ["--old", str(tmp_path / "old.parquet"), "--new", str(tmp_path / "new.parquet"), "--out", str(tmp_path / "ab"), "--tag", "t"]
+    assert AB.main(args) == 1                                   # no flag: two drops -> RED
+    assert AB.main(args + ["--allow-tier-tie-drops"]) == 1     # D's drop is on a trade-row peak -> still RED
+    res = json.load(open(tmp_path / "ab" / "ab-t.json"))
+    assert [d["key"] for d in res["peak_24_drops_allowed"]] == ["C"] and [d["key"] for d in res["peak_24_drops_red"]] == ["D"]
+    new["peak_kind_24"][3] = "withdraw"; new["peak_mixed_24"][3] = True
+    pq.write_table(pa.Table.from_pydict(new), str(tmp_path / "new.parquet"))
+    assert AB.main(args + ["--allow-tier-tie-drops"]) == 0     # both drops explained and within tolerance -> GREEN, listed
+    md = open(tmp_path / "ab" / "ab-t.md").read()
+    assert "2 peak_24 drops within the tier-tie tolerance" in md and md.count("ALLOWED") == 2
+    new["peak_24"][2] = 0.99                                    # 1 % drop: beyond one tier step -> RED even on a boost peak
+    pq.write_table(pa.Table.from_pydict(new), str(tmp_path / "new.parquet"))
+    assert AB.main(args + ["--allow-tier-tie-drops"]) == 1
+
+
+@pytest.mark.parametrize("old_peak,new_peak", [
+    (-0.0005, -0.0010),  # a doubled loss used to pass because the relative drop was negative
+    (-0.001, -0.001001), (0.0, -0.001), (0.001, 0.0),
+    (float("inf"), 1.0), (1.0, float("-inf")), (float("nan"), 1.0),
+    (1.0, float("nan")), (float("inf"), float("inf")), (1.0, None), (None, 1.0),
+])
+def test_ab_labels_tier_exception_rejects_invalid_or_nonpositive_peaks(tmp_path, old_peak, new_peak):
+    """Exercise the actual Parquet/CLI gate, including NaNs that do not look like ordinary drops."""
+    from wallets.x10 import ab_labels as AB
+    base = {"key": ["A"], "moment": ["e10"], "t": [1], "tokens": [100], "cost_sol": [0.5], "hit_2_24": [False]}
+    for name, value in (("old", old_peak), ("new", new_peak)):
+        pq.write_table(pa.table(dict(base, peak_24=pa.array([value], type=pa.float64()),
+                                     peak_kind_24=["boost"], peak_mixed_24=[True])), tmp_path / f"{name}.parquet")
+    assert AB.main(["--old", str(tmp_path / "old.parquet"), "--new", str(tmp_path / "new.parquet"),
+                    "--out", str(tmp_path), "--allow-tier-tie-drops"]) == 1
+    res = json.loads((tmp_path / "ab-ab.json").read_text())
+    assert res["red"] and res["peak_24_drops_allowed"] == []
+    assert (tmp_path / "ab-ab.md").read_text().strip().splitlines()[-1].startswith("RED:")
+
+
+def test_ab_labels_unchanged_finite_negative_peak_needs_no_exception(tmp_path):
+    """A loss is valid model output; only a decrease needs a narrowly justified exception."""
+    from wallets.x10 import ab_labels as AB
+    row = {"key": ["A"], "moment": ["e10"], "t": [1], "tokens": [100], "cost_sol": [0.5],
+           "hit_2_24": [False], "peak_24": [-0.001]}
+    pq.write_table(pa.table(row), tmp_path / "same.parquet")
+    assert AB.main(["--old", str(tmp_path / "same.parquet"), "--new", str(tmp_path / "same.parquet"),
+                    "--out", str(tmp_path), "--allow-tier-tie-drops"]) == 0

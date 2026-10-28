@@ -216,6 +216,48 @@ def _live_names(keys, mints):
     return out
 
 
+def mint_pools(mint):
+    """The pools of one mint that the paper run knows beyond the development store, for the token page's paper trades:
+    the journal's learned pools (live creations, [class, orientation, pool, mint, ...]) and graduations (a learned
+    token's pool, info[6]), and the pools of the paper run's store (the farmer_seed `store`). Read-only."""
+    path = journal_path()
+    if not path:
+        return []
+    pools, store = set(), None
+    j = Journal(path)
+    try:
+        state = {r["k"]: r["v"] for r in j.rows("state", "k = 'farmer_seed'")}
+        try:
+            store = json.loads(state.get("farmer_seed") or "{}").get("store")
+        except (ValueError, AttributeError):
+            store = None
+        if "learned" in j.tables:
+            for kind, key, info in j.db.execute("""SELECT kind, key, info FROM learned
+                                                   WHERE (kind = 'pool' AND instr(info, ?) > 0) OR (kind = 'token' AND key = ?)""", (mint, mint)):
+                try:
+                    v = json.loads(info)
+                except (ValueError, TypeError):
+                    continue
+                if kind == "pool" and len(v) > 3 and v[3] == mint:
+                    pools.add(key)
+                elif kind == "token" and len(v) > 6 and isinstance(v[6], str):
+                    pools.add(v[6])
+    finally:
+        j.close()
+    if isinstance(store, str) and store.endswith(".duckdb") and os.path.isfile(store):
+        import duckdb
+        con = duckdb.connect(":memory:", config={"memory_limit": "256MB", "threads": 1})
+        try:
+            con.execute(f"ATTACH '{store}' AS s (READ_ONLY)")
+            pools.update(r[0] for r in con.execute("SELECT pool FROM s.pools WHERE mint = ?", [mint]).fetchall())
+        except duckdb.Error:
+            pass  # e.g. the store is being rebuilt: the journal's pools still count
+        finally:
+            con.close()
+    pools.discard(mint)
+    return sorted(pools)
+
+
 def _name_rows(con, keys, mint_of, out, files):
     """Names from parquet files with token_meta's columns (mint, name, symbol): pump.fun's CreateEvent, the
     extractor's or recorder's token_meta (Metaplex and Token-2022 creates), the RPC route's rows; first non-empty."""
@@ -367,7 +409,8 @@ def stop_rule(exits, orders, state, day, live_rows=False):
     st = stoprule.clock_state(clock, day, v)
     feed = stoprule.feed_of(state.get(stoprule.FEED_KEY), live_rows)
     scn = json.loads(state[stoprule.COSTS_KEY]) if state.get(stoprule.COSTS_KEY) else None
-    judged = stoprule.assessment(trades, mean, lo, hi, v, st, scn, stoprule.primary_group(state.get(stoprule.GROUPS_KEY)), feed)
+    judged = stoprule.assessment(trades, mean, lo, hi, v, st, scn, stoprule.primary_group(state.get(stoprule.GROUPS_KEY)), feed,
+                                 settle_rule=stoprule.settle_rule_of(state.get(stoprule.SETTLE_RULE_KEY)))  # as the daily report
     sol = lambda x: None if x is None else x / 1e9  # noqa: E731
     return {"trades": n, "entry_failed": len(trades) - n, "days": len(by_day), "min_trades": MIN_TRADES,
             "min_days_ci": MIN_DAYS_CI, "mean_sol_per_trade": sol(mean), "ci_lo": sol(lo), "ci_hi": sol(hi), "verdict": v,

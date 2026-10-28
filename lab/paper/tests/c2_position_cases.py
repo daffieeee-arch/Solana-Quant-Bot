@@ -62,7 +62,11 @@ class RecJournal(Journal):
 
     def put(self, table, **row):
         if table in FIVE:
-            self.ops.append(["put", table, {c: row.get(c) for c in self.cols[table]}])
+            # Keep the historical golden format and numbers. Validate the omitted metadata rather than silently
+            # projecting a current-rule result into the old rule-1 corpus.
+            if table == "exits":
+                assert row.get("settle_rule") == 1
+            self.ops.append(["put", table, {c: row.get(c) for c in self.cols[table] if c != "settle_rule"}])
         super().put(table, **row)
 
     def delete(self, table, **key):

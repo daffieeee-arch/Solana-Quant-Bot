@@ -2,16 +2,26 @@
 # E58 runner census, step 1 (research/spec-runner-census-2026-10-21.md, roadmap #167) on the NAS: the pool-hour series of every
 # PumpSwap pool with legs in the dev store (wallets.explore.runner_hours). Store v2 holds legs for the SOL markets only: 'other'
 # pools (USDC / PUMP / no quote mint) are in pools.parquet without hours; INFO, not RED. Dev only (1033-1046; common.guard refuses a
-# store that reaches the hold-out).
+# store that reaches the hold-out), or with FORWARD=1 a forward store from epoch 1064 on (common.forward_guard; owner, 2026-10-24).
 #
 #   bash lab/wallets/nas_runner_hours.sh            (short: one pass over the pool legs; ~15-30 min)
+#   FORWARD=1 LAB_STORE=$DATA/store/fwd1064-day-65865b3.duckdb OUT=$DATA/wallets/runners-hours-fwd1064-<sha7> bash lab/wallets/nas_runner_hours.sh
+#        (FORWARD=1 needs LAB_STORE and OUT: never the dev store or the dev output directory)
 #
 # Steps, logged in $OUT/log/nas_runner_hours.log; any failure RED (rc 1):
 #   1. the test: test_runner_hours.py;
 #   2. the aggregate -> $OUT/{hours.parquet, pools.parquet, hour_bounds.parquet, run-runner-hours.json}; RED when rows, pools or
 #      hours are 0 or the sol / reversed classes have no pools or no pool-hours; 'other' reported as INFO; the sha256 of every output.
-# Tunables (env): MEMORY (DuckDB limit, default 12GB), THREADS (6), BUCKETS (16), LAB_SPILL_DIR, LAB_SPILL_MAX, OUT.
+# Tunables (env): MEMORY (DuckDB limit, default 12GB), THREADS (6), BUCKETS (16), LAB_SPILL_DIR, LAB_SPILL_MAX, OUT, FORWARD.
 set -euo pipefail
+export LC_ALL=C
+FORWARD=${FORWARD:-0}
+if [ "$FORWARD" = 1 ]; then
+  [ -n "${LAB_STORE:-}" ] && [ -n "${OUT:-}" ] || { echo "FORWARD=1 needs LAB_STORE (a forward store) and OUT" >&2; exit 1; }
+  FWD_ARG=--forward
+else
+  FWD_ARG=
+fi
 
 REPO=$(cd "$(dirname "$0")/../.." && pwd)
 DATA=${LAB_DATA_ROOT:-/home/chupa/Solana-project/data-old-faithful-one/lab}
@@ -25,7 +35,7 @@ export PYTHONPATH=$REPO/lab PYTHONDONTWRITEBYTECODE=1 LAB_DATA=$DATA LAB_STORE=$
 mkdir -p "$OUT" "$LOG" "$LAB_SPILL_DIR"
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$LOG/nas_runner_hours.log"; }
 red() { log "RED: $*"; exit 1; }
-log "start commit=$COMMIT store=$LAB_STORE out=$OUT memory=$LAB_WALLETS_MEMORY threads=$LAB_WALLETS_THREADS buckets=$LAB_MARKOUT_BUCKETS"
+log "start commit=$COMMIT forward=$FORWARD store=$LAB_STORE out=$OUT memory=$LAB_WALLETS_MEMORY threads=$LAB_WALLETS_THREADS buckets=$LAB_MARKOUT_BUCKETS"
 cd "$REPO/lab"
 [ -f "$LAB_STORE" ] || red "no store at $LAB_STORE"
 
@@ -37,7 +47,8 @@ log "tests: $(tail -1 "$LOG/pytest.log")"
 
 # 2. the aggregate
 rc=0
-nice -n 10 "$PY" -u -m wallets.explore.runner_hours "$OUT" > "$LOG/runner_hours.log" 2>&1 || rc=$?
+# shellcheck disable=SC2086  # FWD_ARG is empty or one flag
+nice -n 10 "$PY" -u -m wallets.explore.runner_hours "$OUT" $FWD_ARG > "$LOG/runner_hours.log" 2>&1 || rc=$?
 [ "$rc" = 0 ] || { tail -5 "$LOG/runner_hours.log" | tee -a "$LOG/nas_runner_hours.log"; red "runner_hours failed (rc $rc)"; }
 log "aggregate: $(tail -1 "$LOG/runner_hours.log")"
 "$PY" - "$OUT/run-runner-hours.json" "$OUT/pools.parquet" "$OUT/hours.parquet" >> "$LOG/nas_runner_hours.log" 2>&1 <<'PYEOF' || red "empty aggregate or the sol / reversed classes missing"

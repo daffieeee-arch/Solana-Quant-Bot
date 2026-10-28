@@ -15,32 +15,33 @@ SOL = 10**9
 DAY_SLOTS = 216_000  # 400 ms per slot -> 86400 s
 
 
-def _store(path):
+def _store(path, s0=SLOT0, period=None):
     con = duckdb.connect(str(path))
     con.execute("CREATE TABLE meta (json VARCHAR)")
-    con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"slot_start": SLOT0, "slot_end_exclusive": SLOT0 + 432_000, "ms_per_slot": {str(SLOT0 // 432_000): 400.0}})])
+    con.execute("INSERT INTO meta VALUES (?)", [json.dumps({"slot_start": s0, "slot_end_exclusive": s0 + 3 * DAY_SLOTS, "ms_per_slot": {str(s0 // 432_000): 400.0},
+                                                      **({"period": period} if period else {})})])
     con.execute("CREATE TABLE blocks (slot BIGINT, block_time BIGINT)")
-    con.execute(f"INSERT INTO blocks SELECT {SLOT0} + i, floor(1789084800 + i * 0.4)::BIGINT FROM range(0, 3 * {DAY_SLOTS}) t(i)")  # 2026-09-11 00:00 UTC + 3 days
+    con.execute(f"INSERT INTO blocks SELECT {s0} + i, floor(1789084800 + i * 0.4)::BIGINT FROM range(0, 3 * {DAY_SLOTS}) t(i)")  # 2026-09-11 00:00 UTC + 3 days
     con.execute("CREATE TABLE mints (mint VARCHAR, create_slot BIGINT, creator VARCHAR, quote_mint VARCHAR)")
     con.execute("INSERT INTO mints VALUES ('T', ?, 'CR', 'So11111111111111111111111111111111111111112'), ('U', ?, 'CR2', 'So11111111111111111111111111111111111111112')",
-                [SLOT0 + 10, SLOT0 + 20])
+                [s0 + 10, s0 + 20])
     con.execute("CREATE TABLE pools (pool VARCHAR, quote_class VARCHAR, orientation VARCHAR, mint VARCHAR, create_slot BIGINT, b0 BIGINT, q0 BIGINT)")
-    con.execute("INSERT INTO pools VALUES ('P', 'sol', 'normal', 'T', ?, 10**12, 100 * 10**9), ('O', 'other', 'normal', 'U', ?, 10**12, 0)", [SLOT0 + 50, SLOT0 + 60])
+    con.execute("INSERT INTO pools VALUES ('P', 'sol', 'normal', 'T', ?, 10**12, 100 * 10**9), ('O', 'other', 'normal', 'U', ?, 10**12, 0)", [s0 + 50, s0 + 60])
     con.execute("CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot BIGINT, tx_index BIGINT, trader VARCHAR, fee_payer VARCHAR, token_buy BOOLEAN, "
                 "sol_amount BIGINT, token_amount BIGINT, farmer BOOLEAN, b BIGINT, e BIGINT, vault BIGINT, base BIGINT, e_delta BIGINT, lp_bps BIGINT, "
                 "tx_fee BIGINT, priority_fee BIGINT, jito_tip BIGINT, quote_user BIGINT, vq BIGINT, outer_ix BIGINT, inner_ix BIGINT)")
-    d1 = SLOT0 + DAY_SLOTS
+    d1 = s0 + DAY_SLOTS
     rows = [
         # day 1: W1 buys 1 SOL of T in pool P (pre b 1e12, e 100 SOL), two legs in one tx (fee counted once), pool fee 1 %
-        ("buy", "P", SLOT0 + 100, 7, "W1", None, True, 1 * SOL, 10**10, False, 10**12, 100 * SOL, 100 * SOL, 10**10, 990_000_000, 20, 5000, 1000, 0),
-        ("buy", "P", SLOT0 + 100, 7, "W1", None, True, 1 * SOL, 10**10, False, 99 * 10**10, 100990 * SOL // 1000, 100990 * SOL // 1000, 10**10, 990_000_000, 20, 5000, 1000, 0),
+        ("buy", "P", s0 + 100, 7, "W1", None, True, 1 * SOL, 10**10, False, 10**12, 100 * SOL, 100 * SOL, 10**10, 990_000_000, 20, 5000, 1000, 0),
+        ("buy", "P", s0 + 100, 7, "W1", None, True, 1 * SOL, 10**10, False, 99 * 10**10, 100990 * SOL // 1000, 100990 * SOL // 1000, 10**10, 990_000_000, 20, 5000, 1000, 0),
         # day 1: W2 (farmer-flagged, fee paid by X) buys 0.5 SOL and sells it all 10 slots later for 0.4 SOL
-        ("buy", "P", SLOT0 + 200, 1, "W2", "X", True, SOL // 2, 5 * 10**9, True, 98 * 10**10, 101980 * SOL // 1000, 101980 * SOL // 1000, 5 * 10**9, 495_000_000, 20, 5000, 0, 0),
-        ("sell", "P", SLOT0 + 210, 1, "W2", "X", False, 4 * SOL // 10, 5 * 10**9, True, 975 * 10**9, 102475 * SOL // 1000, 102475 * SOL // 1000, 5 * 10**9, -404_000_000, 20, 5000, 0, 0),
+        ("buy", "P", s0 + 200, 1, "W2", "X", True, SOL // 2, 5 * 10**9, True, 98 * 10**10, 101980 * SOL // 1000, 101980 * SOL // 1000, 5 * 10**9, 495_000_000, 20, 5000, 0, 0),
+        ("sell", "P", s0 + 210, 1, "W2", "X", False, 4 * SOL // 10, 5 * 10**9, True, 975 * 10**9, 102475 * SOL // 1000, 102475 * SOL // 1000, 5 * 10**9, -404_000_000, 20, 5000, 0, 0),
         # day 2: the price of T collapses: W3 dumps; W1 still holds 2e10 tokens
         ("sell", "P", d1 + 50, 1, "W3", None, False, 60 * SOL, 5 * 10**11, False, 98 * 10**10, 102071 * SOL // 1000, 102071 * SOL // 1000, 5 * 10**11, -60_600_000_000, 20, 5000, 0, 0),
         # pool with another quote: no SOL price, left out
-        ("buy", "O", SLOT0 + 300, 1, "W1", None, True, 0, 10**9, False, 10**12, 0, 0, 10**9, 0, 20, 5000, 0, 0),
+        ("buy", "O", s0 + 300, 1, "W1", None, True, 0, 10**9, False, 10**12, 0, 0, 10**9, 0, 20, 5000, 0, 0),
     ]
     con.executemany("INSERT INTO pool VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)", [r + (r[7], i) for i, r in enumerate(rows)])  # quote_user = sol_amount, vq 0, inner_ix = row order
     # day 3: the LP of P withdraws 20 SOL (proportional) after the last trade, from the day-2 post state (b 1.48e12, vault 41.471 SOL):
@@ -51,7 +52,7 @@ def _store(path):
                 "creator_fee BIGINT, vt BIGINT, vq BIGINT, rt BIGINT, rq BIGINT, tx_fee BIGINT, priority_fee BIGINT, jito_tip BIGINT, outer_ix BIGINT DEFAULT 0, inner_ix BIGINT DEFAULT 0)")
     # day 1: sniper S buys U on the curve 2 slots after the create (paid q + fees), day 2 sells half
     con.executemany("INSERT INTO curve (mint, slot, tx_index, trader, fee_payer, is_buy, t, q, fee, creator_fee, vt, vq, rt, rq, tx_fee, priority_fee, jito_tip) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-        ("U", SLOT0 + 22, 1, "S", None, True, 10**12, 2 * SOL, 20_000_000, 6_000_000, 10**15, 32 * SOL, 79 * 10**13, 2 * SOL, 5000, 0, 1000),
+        ("U", s0 + 22, 1, "S", None, True, 10**12, 2 * SOL, 20_000_000, 6_000_000, 10**15, 32 * SOL, 79 * 10**13, 2 * SOL, 5000, 0, 1000),
         ("U", d1 + 10, 1, "S", None, False, 5 * 10**11, 15 * SOL // 10, 15_000_000, 4_500_000, 10005 * 10**11, 305 * SOL // 10, 7905 * 10**11, SOL // 2, 5000, 0, 0)])
     con.close()
 
@@ -123,3 +124,49 @@ def test_marks_are_the_same_in_day_chunks(tmp_path):
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+FWD0 = 459_648_000  # epoch 1064's first slot (common.FORWARD_START)
+
+
+def test_forward_reads_forward_stores_from_1064_only(tmp_path, monkeypatch):
+    """--forward (owner, 2026-10-24: OF1 from 1064 on released): the mini store moved to epoch 1064 and built as a forward
+    store gives the same wallet-days; without --forward the dev guard still refuses it, and --forward refuses every other
+    store (dev, clean, hold-out, paper, a forward store from 1053) and a range outside the store, before writing anything."""
+    from wallets.common import FORWARD_START, HOLDOUT_START
+
+    assert FWD0 == FORWARD_START
+    _store(tmp_path / "dev.duckdb")
+    _store(tmp_path / "fwd.duckdb", s0=FWD0, period="forward")
+    dev = money.run(SLOT0, SLOT0 + 3 * DAY_SLOTS, str(tmp_path / "dev"), buckets=1, store=str(tmp_path / "dev.duckdb"))
+    fwd = money.run(FWD0, FWD0 + 3 * DAY_SLOTS, str(tmp_path / "fwd"), buckets=1, store=str(tmp_path / "fwd.duckdb"), forward=True)
+    assert (dev["forward"], fwd["forward"]) == (False, True) and fwd["slots"] == [FWD0, FWD0 + 3 * DAY_SLOTS]
+    con = duckdb.connect()
+    rows = lambda d: con.execute(f"SELECT * FROM '{tmp_path / d / 'wallet-day-0.parquet'}' ORDER BY ALL").fetchall()  # noqa: E731
+    assert len(rows("fwd")) == 8 and rows("fwd") == rows("dev")  # no absolute slot in a wallet-day
+    assert (fwd["wallets"], fwd["days"], fwd["marks"]) == (dev["wallets"], dev["days"], dev["marks"])
+
+    def refused(store, lo, hi, match, forward=True):
+        with pytest.raises(ValueError, match=match):
+            money.run(lo, hi, str(tmp_path / "refused"), buckets=1, store=str(store), forward=forward)
+        assert not (tmp_path / "refused").exists()
+
+    refused(tmp_path / "fwd.duckdb", FWD0, FWD0 + DAY_SLOTS, "reaches into the hold-out", forward=False)  # the dev guard stays
+    for name, s0, period in (("dev2", SLOT0, None), ("dev-period", SLOT0, "dev"), ("holdout", HOLDOUT_START - 432_000, "holdout"),
+                             ("clean", 455_760_000, "clean"), ("paper", FWD0, "paper")):
+        _store(tmp_path / f"{name}.duckdb", s0=s0, period=period)
+        refused(tmp_path / f"{name}.duckdb", s0, s0 + DAY_SLOTS, "forward stores only")
+    _store(tmp_path / "fwd1053.duckdb", s0=454_896_000, period="forward")  # a forward store of the illustration era (1053 on)
+    refused(tmp_path / "fwd1053.duckdb", 454_896_000, 454_896_000 + DAY_SLOTS, "before epoch 1064")
+    refused(tmp_path / "fwd.duckdb", FWD0 - 1, FWD0 + DAY_SLOTS, "outside the store")
+    refused(tmp_path / "fwd.duckdb", FWD0, FWD0 + 3 * DAY_SLOTS + 1, "outside the store")
+    # a meta without the window: the same kind of refusal (ValueError), never a KeyError (LAB nit on #571)
+    from wallets.common import forward_guard
+    for meta in ({"period": "forward"}, {"period": "forward", "slot_start": FWD0},
+                 {"period": "forward", "slot_start": None, "slot_end_exclusive": FWD0 + DAY_SLOTS}):
+        with pytest.raises(ValueError, match="slot_start and slot_end_exclusive"):
+            forward_guard(FWD0, FWD0 + 1, meta)
+    # the CLI: --forward never writes into the development money-v1 default
+    monkeypatch.setattr("sys.argv", ["money", "--from-slot", str(FWD0), "--to-slot", str(FWD0 + DAY_SLOTS), "--forward"])
+    with pytest.raises(SystemExit):
+        money.main()

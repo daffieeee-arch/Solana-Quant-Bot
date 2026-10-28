@@ -31,7 +31,7 @@ import duckdb
 
 from . import racing_cost as rc
 from .capital_ceiling import (DEV, SCENARIOS, Refused, boot_days, cell_rows, check_run, ci, fmt, limited, require_exit_day, slot_days,
-                              unlimited)
+                              unlimited, SETTLE_RULE_E63)
 from .costs import Scenario, settle_sql
 from .store import DEFAULTS, load_defaults
 
@@ -67,6 +67,16 @@ ALLOWED_DRIFT = {
         "#555 (737a932): a pool with a u64 amount outside BIGINT leaves the store; with no such pool the build's SQL text is "
         "unchanged. Proof: store-u64-proof-be47fc4 (VPS) and NAS 98-clean-0-u64-proof-be47fc4: dev 1043 built by 46a0236 "
         "and by be47fc4, every table equal, 0 pools excluded.")},
+    "costs.py": {"cdd7a52ae2f11bf139ffb664dbeb0039c24de04ae59d741a46f4b76cf61c7a5b": (
+        "B2 (Codex review #6, 24 Oct): settle and settle_sql take a rule, 2 by default (every landed failed exit "
+        "attempt pays). Rule 1, which this sweep and racing_cost pass (SETTLE_RULE_E63), is E70's settle_sql byte for "
+        "byte and its settle row for row: test_settle_sql.py::test_rule_1_is_e70s_settle. The engine files call no "
+        "settle (tournament imports settle_sql unused); the paper engine stays on rule 1 (ENGINE_SETTLE_RULE)."),
+        "98b01024e6d1bbe03d20a258f814f16d2322c461b5d74e89a84d34cc365d2f65": (
+        "25 Oct: only ENGINE_SETTLE_RULE and its deployment comment changed from B2's costs.py. New paper exits "
+        "store rule 2 per row, while archived rows retain rule 1. This sweep and racing_cost still explicitly use "
+        "SETTLE_RULE_E63=1; test_settle_sql.py::test_rule_1_is_e70s_settle proves the frozen settlement identity. "
+        "The tournament simulation does not call settle; its historical ENGINE_SHA256 pins remain unchanged.")},
 }
 LOOKS = len(TOLS) * len(LEADS) * len(SIZES) * len(SCENARIOS)  # 32 cells, 24 new (3 tols); 12 primary (base, with limits)
 
@@ -142,7 +152,7 @@ def grid(runs):
 
 def load(con, runs, c3_keys):
     cfg = load_defaults()
-    pnl = {s: settle_sql(Scenario.from_cfg(s, cfg))[0] for s in SCENARIOS}
+    pnl = {s: settle_sql(Scenario.from_cfg(s, cfg), SETTLE_RULE_E63)[0] for s in SCENARIOS}  # E63's rule (frozen)
     info = grid(runs)
     # E63's r columns plus tol and exit_attempts (capital_ceiling.cell_rows reads a table or view named r).
     con.execute("""CREATE TABLE rall (tol DOUBLE, src INTEGER, variant VARCHAR, size_sol DOUBLE, d INTEGER, t UBIGINT, day VARCHAR,

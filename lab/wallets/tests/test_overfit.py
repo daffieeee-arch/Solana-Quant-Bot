@@ -90,7 +90,8 @@ def test_day_matrix_and_render(tmp_path):
         for variant, win in (("good", i % 4 != 0), ("bad", i % 4 == 0)):
             for j in range(3):
                 rows.append({"family": "F7", "variant": variant, "size_sol": 0.5, "d": 2, "q": 0.5, "farm": "organic", "overlay": "none",
-                             "day": day, "skipped": False, "entry_failed": False, "exit_attempts": 1, "cost": sol // 2,
+                             "day": day, "skipped": False, "entry_failed": False, "exit_attempts": 1, "exit_slot": 1000 + i,
+                             "exit_reason": "time", "cost": sol // 2,
                              "proceeds": int(sol // 2 * (1.1 if win else 0.9))})
     rows.append({**rows[-1], "skipped": True})  # a skipped position is ignored
     pdir = tmp_path / "parts"

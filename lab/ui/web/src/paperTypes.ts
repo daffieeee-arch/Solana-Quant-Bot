@@ -72,6 +72,7 @@ export interface PaperAssessment {
   basis: {
     filled_trades: number; failed_entries: number; trading_days: number; clock_day: number | null; mean_sol: number | null;
     ci95_sol: [number, number] | null; draws: number; seed: number; costs_sol: Record<string, number> | null;
+    settle_rule?: 1 | 2 | "mixed"; settle_rules?: (1 | 2)[];
   };
   assumptions: PaperAssessmentItem[]; uncertainty: PaperAssessmentItem[]; not_permission: string;
 }

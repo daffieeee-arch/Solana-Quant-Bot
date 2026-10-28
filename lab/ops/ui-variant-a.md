@@ -78,7 +78,7 @@ bash lab/ops/ui-sandbox-run.sh /bin/sh -c "
   [ \$ok = 1 ] && echo 'ALL BLOCKED'"
 ```
 
-**3c. The devices that may act.** Under variant A the web app keeps its sessions and its actors file in `/var/lib/lab-ui` (the unit's `StateDirectory`, mode 0700, owned by `lab-ui`), not in `~/.config/solana-lab`. So the owner places `ui-actors.json` there with sudo: only the owner's phone and laptop, never the VPS node. Without the file every action is refused (403); the pages work as before.
+**3c. The devices that may act.** Actions exist only when the unit also sets `Environment=LAB_UI_ACTIONS=1` (off by default since the owner's pause of 2026-10-20: no Bediening tab, `/api/action/*` answers 404 and nothing is written). Under variant A the web app keeps its sessions and its actors file in `/var/lib/lab-ui` (the unit's `StateDirectory`, mode 0700, owned by `lab-ui`), not in `~/.config/solana-lab`. So the owner places `ui-actors.json` there with sudo: only the owner's phone and laptop, never the VPS node. Without the file every action is refused (403); the pages work as before.
 
 ```bash
 sudo install -d -o lab-ui -g lab-ui -m 700 /var/lib/lab-ui

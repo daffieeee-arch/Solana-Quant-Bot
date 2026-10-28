@@ -43,7 +43,8 @@ import duckdb
 import numpy as np
 
 from .capital_ceiling import (COOLDOWN_MS, DAILY_LOSS, DEV, MAX_OPEN, SCENARIOS, Refused, boot_days, capital_days,
-                              check_run, ci, exit_of, flag_share, fmt, limited, unlimited, slot_days, require_exit_day)
+                              check_run, ci, flag_share, fmt, limited, unlimited, slot_days, require_exit_day, SETTLE_RULE_E63)
+from .capital_ceiling import trades_of as capital_trades
 from .costs import Scenario, settle_sql
 from .store import load_defaults
 
@@ -150,7 +151,7 @@ def load(con, runs, c3_keys, store):
     """The rows table r (both scenarios settled, ms per slot per row), the C3 keys c3, the store's per-epoch ms per
     slot and E63's fee table (the sandwich flag)."""
     cfg = load_defaults()
-    pnl = {s: settle_sql(Scenario.from_cfg(s, cfg))[0] for s in SCENARIOS}
+    pnl = {s: settle_sql(Scenario.from_cfg(s, cfg), SETTLE_RULE_E63)[0] for s in SCENARIOS}  # E63's rule (frozen)
     con.execute("""CREATE TABLE r (src INTEGER, variant VARCHAR, size_sol DOUBLE, d INTEGER, q DOUBLE, t UBIGINT, day VARCHAR,
                    pool VARCHAR, farm VARCHAR, entry_failed BOOLEAN, cost BIGINT, proceeds BIGINT, exit_slot UBIGINT,
                    exit_decision_slot UBIGINT, d_ms DOUBLE, depth DOUBLE, pnl_base BIGINT, pnl_pessimistic BIGINT)""")
@@ -220,10 +221,8 @@ def cell_rows(con, variant, farm, arm, size, d, scenario):
 
 
 def trades_of(rows):
-    """limited()'s trades: the place freed at the exit or, unsold, at the rule's deadline (E63's primary)."""
-    t = [(r[0], exit_of((r[1], r[2], r[3]), "deadline"), r[4], r[5], r[6], r[7], r[8], r[9], r[10]) for r in rows]
-    t.sort(key=lambda x: (x[0], x[1] if x[1] is not None else -1))
-    return t
+    """E63's trigger-ordered trades, including the separate failed-entry attempt slot."""
+    return capital_trades(rows)
 
 
 def run_days(trades, days, capital, size, day_of):

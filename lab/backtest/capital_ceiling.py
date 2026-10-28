@@ -42,6 +42,11 @@ import numpy as np
 from .costs import Scenario, settle_sql
 from .store import load_defaults
 
+# E63, E65 and E70 are frozen experiments, settled under rule 1 (before Codex review #6): their tooling keeps that rule
+# so a rerun reproduces them and its gates (E65 G4, E70 T1) compare like with like; a new experiment changes it on
+# purpose (LAB review on #6).
+SETTLE_RULE_E63 = 1
+
 PLAN = "research/capital-ceiling-plan-2026-10-23.md"
 PLAN_SHA = "2a17f2d2ea9d6e8f46bee05eb69e1f6427ab38ca456c794671baf587b3110916"
 DEV = (446_256_000, 452_304_000)  # dev2's window: epochs 1033-1046
@@ -134,11 +139,14 @@ def capital_days(trades, start, max_positions, daily_loss, cooldown_ms, size=Non
     """analysis._capital_limited with its day series: the same simulation (one open position per pool, no entries on
     a UTC day once its realized P&L reaches -daily_loss, a pool cooldown after a total loss, max_positions, cash) and
     the same 12-tuple, plus a dict of the extras: day_pnl {day: lamports}, taken per day, the peak of open positions
-    and the ruin day. trades: (entry, exit, cost, pnl, failed, day, pool, proceeds, ms_per_slot), in lamports, sorted.
+    and the ruin day. trades: (decision, exit, cost, pnl, failed, day, pool, proceeds, ms_per_slot[, attempt_slot]),
+    in lamports, sorted by decision. The optional last field separates an entry attempt from its earlier decision;
+    old callers whose first field is already the attempt slot need no extra field.
 
     Two day books (Codex review #5, 2026-10-24). The daily loss limit counts a position's P&L on the UTC day it is
     realized, as paper books it: its exit slot's day (day_of(exit); an unsold one freed at its entry, or a failed entry:
-    that slot's day), checked on the trigger day of the new entry. day_pnl and the day columns of the 12-tuple stay the
+    the actual attempt slot's day), checked on the decision slot's day. Failed fees settle only when the attempt
+    happens, never when an earlier trigger is considered. day_pnl and the day columns of the 12-tuple stay the
     trigger-cohort series (each position's P&L on its trigger day: the reports' per-day series); exit_day_pnl is the
     limit's book. day_of (slot_days) is required with a finite daily_loss.
 
@@ -148,6 +156,7 @@ def capital_days(trades, start, max_positions, daily_loss, cooldown_ms, size=Non
     counts their fees, and ruin_day is the first trigger day an entry finds too little cash with nothing open (no
     exit can bring cash back: the account is done)."""
     cash, open_, locked, peak, mdd = start, [], 0, start, 0.0
+    failed_fees = []
     taken = skipped = skip_pool = skip_day = skip_cool = 0
     if daily_loss != float("inf") and trades and day_of is None:
         raise ValueError("capital_days: a daily loss limit needs day_of (the exit day's UTC day)")
@@ -160,7 +169,17 @@ def capital_days(trades, start, max_positions, daily_loss, cooldown_ms, size=Non
 
     def settle_until(slot):
         nonlocal cash, locked, peak, mdd
-        while open_ and open_[0][0] <= slot:
+        while (open_ and open_[0][0] <= slot) or (failed_fees and failed_fees[0][0] <= slot):
+            if failed_fees and (not open_ or failed_fees[0][0] <= open_[0][0]):
+                attempt, day, pnl = heapq.heappop(failed_fees)
+                cash += pnl
+                day_pnl[day] += pnl
+                if day_of is not None:
+                    exit_day_pnl[day_of(attempt)] += pnl
+                if size is not None:
+                    peak = max(peak, cash + locked)
+                    mdd = max(mdd, 1 - (cash + locked) / peak)
+                continue
             exit_slot, cost, back, pool, day, pnl, rug_until = heapq.heappop(open_)
             cash, locked = cash + back, locked - cost
             open_pools[pool] -= 1
@@ -173,11 +192,16 @@ def capital_days(trades, start, max_positions, daily_loss, cooldown_ms, size=Non
             mdd = max(mdd, 1 - (cash + locked) / peak)
 
     days = set()
-    for entry, exit_, cost, pnl, failed, day, pool, proceeds, mps in trades:
+    for trade in trades:
+        entry, exit_, cost, pnl, failed, day, pool, proceeds, mps = trade[:9]
+        attempt = trade[9] if len(trade) == 10 else entry
+        if len(trade) not in (9, 10) or attempt is None or attempt < entry:
+            raise ValueError("capital_days: invalid entry attempt slot")
         days.add(day)
         settle_until(entry)
         cost, pnl = cost or 0, pnl or 0
-        if exit_day_pnl.get(day, 0.0) <= -daily_loss:
+        decision_day = day_of(entry) if day_of is not None else day
+        if exit_day_pnl.get(decision_day, 0.0) <= -daily_loss:
             skip_day += 1
             continue
         if cool_until.get(pool, -1) > entry:
@@ -195,13 +219,8 @@ def capital_days(trades, start, max_positions, daily_loss, cooldown_ms, size=Non
         taken += 1
         day_taken[day] += 1
         if failed:
-            cash += pnl
-            day_pnl[day] += pnl
-            if day_of is not None:
-                exit_day_pnl[day_of(entry)] += pnl
-            if size is not None:
-                peak = max(peak, cash + locked)
-                mdd = max(mdd, 1 - (cash + locked) / peak)
+            heapq.heappush(failed_fees, (attempt, day, pnl))
+            settle_until(entry)
             continue
         x = exit_ or entry
         rug = (proceeds or 0) < 0.1 * cost
@@ -246,7 +265,7 @@ def check_run(run_dir):
 def load(con, runs, c3_keys, store=None):
     """The rows table r (settled under both scenarios) and the C3 keys table c3."""
     cfg = load_defaults()
-    pnl = {s: settle_sql(Scenario.from_cfg(s, cfg))[0] for s in SCENARIOS}
+    pnl = {s: settle_sql(Scenario.from_cfg(s, cfg), SETTLE_RULE_E63)[0] for s in SCENARIOS}
     variants = sorted({c[1] for c in CANDIDATES})
     vlist = ", ".join(f"'{v}'" for v in variants)
     con.execute("""CREATE TABLE r (src INTEGER, variant VARCHAR, size_sol DOUBLE, d INTEGER, t UBIGINT, day VARCHAR,
@@ -328,9 +347,20 @@ def unlimited(rows, days):
             "sol_day": mean, "lo": lo, "hi": hi}
 
 
-def limited(rows, days, capital, size, unsold, day_of):
-    trades = [(r[0], exit_of((r[1], r[2], r[3]), unsold), r[4], r[5], r[6], r[7], r[8], r[9], r[10]) for r in rows]
+def trades_of(rows, unsold="deadline"):
+    """Keep trigger order and cohort day, but carry t+d for a failed entry's actual fee time.
+
+    These loaders reject route-(ii) rows: their native entry rule is t+d, including d=0 in racing_cost.
+    A failed entry has no exit; the unsold-position convention must not set its realization time.
+    """
+    trades = [(r[0], exit_of((r[1], r[2], r[3]), unsold), r[4], r[5], r[6], r[7], r[8], r[9], r[10], r[0] + r[3])
+              for r in rows]
     trades.sort(key=lambda x: (x[0], x[1] if x[1] is not None else -1))
+    return trades
+
+
+def limited(rows, days, capital, size, unsold, day_of):
+    trades = trades_of(rows, unsold)
     out, extra = capital_days(trades, capital * 1e9, MAX_OPEN, DAILY_LOSS * capital * 1e9, COOLDOWN_MS, size=int(round(size * 1e9)),
                               day_of=day_of)
     vals = [extra["day_pnl"].get(x, 0.0) / 1e9 for x in days]  # the trigger cohort (the limit counts exit days)
@@ -542,7 +572,7 @@ def report_md(out):
 def parity(con, ref, days):
     """tp4_T600 without limits (base) at 0.5 / 1 / 2 SOL, d 2 / 3, against a reference run: rows and SOL/day."""
     cfg = load_defaults()
-    pnl = settle_sql(Scenario.from_cfg("base", cfg))[0]
+    pnl = settle_sql(Scenario.from_cfg("base", cfg), SETTLE_RULE_E63)[0]
     check_run(ref)
     src = f"read_parquet('{os.path.join(ref, 'parts', '*.parquet')}', union_by_name = true)"
     out = []
@@ -580,7 +610,8 @@ def main(argv=None):
         con.execute(f"SET temp_directory = '{tmp}'")
     info = load(con, a.parts, a.c3_keys, a.store)
     days, cells = compute(con, info["sandwich_flags"], slot_days(con))
-    out = {"plan": PLAN, "plan_sha256": PLAN_SHA, "daily_loss_book": "exit_day", "days": days, "c3_keys": info["c3_keys"], "provenance": info["provenance"],
+    out = {"plan": PLAN, "plan_sha256": PLAN_SHA, "daily_loss_book": "exit_day", "failed_entry_book": "attempt_slot",
+           "settle_rule": SETTLE_RULE_E63, "days": days, "c3_keys": info["c3_keys"], "provenance": info["provenance"],
            "primary": PRIMARY, "capitals": CAPITALS, "mappings": dict(MAPPINGS), "max_open": MAX_OPEN, "daily_loss_share": DAILY_LOSS,
            "cells": cells, "max_useful": {name: max_useful(cells, name) for name, *_ in CANDIDATES}, "w8b": W8B, "gap": GAP}
     if a.parity:
