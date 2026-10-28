@@ -41,11 +41,20 @@ def resolve_inputs(inputs_dir, live_triggers, probe_pools, recorder_counts=None)
     return paths
 
 
+HOLDOUT = (452_304_000, 454_464_000)   # epochs 1047-1051: read once, consumed (never again)
+CLEAN = (455_760_000, 459_216_000)     # epochs 1055-1062: the clean test of 24 Oct, consumed
+
+
 def check_window(meta, lo, hi):
     """[lo, hi) must be a non-empty window inside the store (meta slot_start / slot_end_exclusive when present). It may span
-    several epochs on a contiguous store. Returns the list of epochs it touches."""
+    several epochs on a contiguous store, but never overlaps the hold-out or the clean period (consumed data), whatever the
+    store's meta says: the old "epoch 1064 only" assert excluded that by construction, this check says it explicitly (LAB
+    review on #602). Returns the list of epochs it touches."""
     if not (0 < lo < hi):
         raise ValueError(f"empty or inverted window [{lo}, {hi})")
+    for name, (a, b) in (("hold-out 1047-1051", HOLDOUT), ("clean 1055-1062", CLEAN)):
+        if lo < b and hi > a:
+            raise ValueError(f"window [{lo}, {hi}) overlaps the {name} [{a}, {b}): consumed data, refused")
     s0, s1 = meta.get("slot_start"), meta.get("slot_end_exclusive")
     if s0 is not None and lo < int(s0):
         raise ValueError(f"window starts before the store ({lo} < {s0})")
