@@ -24,8 +24,12 @@ ROOT is the recorder's segments directory (the VPS's recorder/segments, or the N
   t0, kept for the schema). Both orientations, as in E67 (info.json counts them).
 - segments.parquet: every segment that overlaps the window or its history (seq, slots, written_unix, filter level and
   flags, complete, slots_closed, reconnects); coverage-hourly.parquet per UTC hour of the window's blocks: blocks,
-  first / last slot, segments, the share of block slots in level-0 segments (full filter coverage); the slot gaps
-  between consecutive segments are in info.json.
+  first / last slot, segments, the share of block slots in level-0 segments (full filter coverage); info.json has the
+  slot gaps between segments inside the window (slot_gaps) and in its 60,000 slots of history (history_gaps,
+  history_complete: E68 had the full history; a gap there is logged, not refused).
+Refused before anything is written: an existing DIR, DIR inside the segments, a --from-utc the segments do not cover
+(no block in the 60 s before it: the window would silently start later), segments that end before the window does, a
+segment whose _segment.json counts rows of a table read here but whose file is missing (an incomplete copy).
 - counts-hourly.parquet and recorder-counts.json (the window as check-chunk-recorder.json's 'day'): blocks, skipped
   blocks, pump creates (distinct mints), graduations (distinct pools of a CreatePoolEvent arriving on tx_new_pools),
   pump_amm buy + sell rows seen (a subset: only followed pools), first and last block time.
@@ -52,6 +56,8 @@ DEFAULT_KEY = "11111111111111111111111111111111"
 BOOST_BUY_DISC = "694406af000723a2"
 EXACT_OUT = ("66063d1201daebea", "b817ee6167c5d33d")
 HISTORY_SLOTS = 60_000  # E68: the rows before the window the trigger windows look back on
+START_TOLERANCE_S = 60  # --from-utc: a block within this many seconds before it, or the segments do not cover the start
+MIN_CLOCK_SLOTS = 1_000  # an epoch's measured slot time needs this span of blocks (LiveFeed's first 1,000 slots)
 PROBE_MIN_SOL = 120  # E67: a probe pool's first trade at >= 120 SOL on the pool's SOL side
 EPOCH_SLOTS = 432_000
 TRIG_COLS = ("venue", "mint", "t", "depth", "pool", "orientation", "trader", "trader_farmer", "flagged")
@@ -103,19 +109,27 @@ def segments(root):
                     "backfill": bool(f.get("backfill")), "new_reversed": bool(f.get("new_reversed")),
                     "pump_creates": bool(f.get("pump_creates")), "tx_pools": int(f.get("tx_pools") or 0),
                     "tx_probes": int(f.get("tx_probes") or 0), "new_vaults": int(f.get("new_vaults") or 0),
-                    "dropped": ",".join(str(x) for x in (f.get("dropped") or [])) or "-"})
+                    "dropped": ",".join(str(x) for x in (f.get("dropped") or [])) or "-",
+                    "rows": j.get("rows") or {}, "backfill_rows": j.get("backfill_rows") or {}})
     return sorted(out, key=lambda s: s["seq"]), open_
 
 
 def files(segs, table, sub="", first_part_only=False):
-    """The table's parquet files in these segments (sub = 'backfill/' for the backfill tables)."""
+    """The table's parquet files in these segments (sub = 'backfill/' for the backfill tables). A segment whose
+    _segment.json counts rows of the table (rows, or backfill_rows for the backfill) but has no file for it is refused:
+    an incomplete copy (rsync writes a directory's own files before its subdirectories) would give lower counts and
+    triggers without a trace."""
     out = []
     for s in segs:
         if first_part_only:  # E67 read part-00000 only
             p = os.path.join(s["dir"], sub, table, "part-00000.parquet")
-            out += [p] if os.path.exists(p) else []
+            got = [p] if os.path.exists(p) else []
         else:
-            out += sorted(glob.glob(os.path.join(s["dir"], sub, table, "*.parquet")))
+            got = sorted(glob.glob(os.path.join(s["dir"], sub, table, "*.parquet")))
+        n = (s.get("backfill_rows") if sub else s.get("rows") or {}) or {}
+        if not got and int(n.get(table) or 0) > 0:
+            raise Refused(f"segment {s['seq']}: _segment.json counts {n[table]} {sub}{table} rows but the file is missing")
+        out += got
     return out
 
 
@@ -126,24 +140,32 @@ def window_slots(con, segs, lo_utc, hi_utc):
     if not fs:
         raise Refused("no blocks in the segments written around the window")
     src = f"read_parquet({lit(fs)}, union_by_name = true)"
-    lo, hi, last = con.execute(f"""SELECT min(slot) FILTER (WHERE block_time >= {lo_utc}), min(slot) FILTER (WHERE block_time >= {hi_utc}),
-                                   max(block_time) FROM {src}""").fetchone()
+    lo, hi, last, before = con.execute(f"""SELECT min(slot) FILTER (WHERE block_time >= {lo_utc}), min(slot) FILTER (WHERE block_time >= {hi_utc}),
+                                   max(block_time), max(block_time) FILTER (WHERE block_time < {lo_utc}) FROM {src}""").fetchone()
     if lo is None:
         raise Refused(f"no block at or after {lo_utc}")
+    if before is None or before < lo_utc - START_TOLERANCE_S:
+        raise Refused(f"the segments do not cover the window's start: no block within {START_TOLERANCE_S} s before {lo_utc} "
+                      f"(last one before: {before}); the window would start later than asked")
     if hi is None:
         raise Refused(f"the segments end before the window does (last block time {last} < {hi_utc}): too early to run")
     return int(lo), int(hi)
 
 
 def clock_ms(con, segs, lo, hi, mode):
-    """{epoch: ms per slot} measured on the window's blocks: per epoch (store.py meta) or one value (E68)."""
+    """{epoch: ms per slot}: one value over the window's blocks (E68, --clock window), or per epoch over every block of
+    the segments read (store.py meta's formula), an epoch with less than MIN_CLOCK_SLOTS of blocks left out (the Clock
+    then carries the epoch before it: a piece of an epoch at a window edge gives no NaN or noisy value)."""
     src = f"read_parquet({lit(files(segs, 'blocks'))}, union_by_name = true)"
     if mode == "window":
         v = con.execute(f"""SELECT (max(block_time) - min(block_time)) * 1000.0 / (max(slot) - min(slot)) FROM {src}
                             WHERE slot BETWEEN {lo} AND {hi}""").fetchone()[0]
         return {lo // EPOCH_SLOTS: v}
-    return {int(e): v for e, v in con.execute(f"""SELECT slot // {EPOCH_SLOTS}, (max(block_time) - min(block_time)) * 1000.0 / (max(slot) - min(slot))
-                                                  FROM {src} WHERE slot >= {lo} AND slot < {hi} GROUP BY 1 ORDER BY 1""").fetchall()}
+    ms = {int(e): v for e, v in con.execute(f"""SELECT slot // {EPOCH_SLOTS}, (max(block_time) - min(block_time)) * 1000.0 / (max(slot) - min(slot))
+                                                FROM {src} GROUP BY 1 HAVING max(slot) - min(slot) >= {MIN_CLOCK_SLOTS} ORDER BY 1""").fetchall()}
+    if not ms or min(ms) > lo // EPOCH_SLOTS:
+        raise Refused(f"no epoch at or before the window's start has {MIN_CLOCK_SLOTS} slots of blocks to measure its slot time: {ms}")
+    return ms
 
 
 def build_store_tables(con, segs, lo, hi):
@@ -345,14 +367,19 @@ def run(a, log=print):
         raise Refused(f"no segment overlaps [{lo}, {hi})")
     if max(s["last_slot"] for s in segs_all) < hi - 1:
         raise Refused(f"the segments end at {max(s['last_slot'] for s in segs_all)}, before the window does ({hi}): too early to run")
-    ms = clock_ms(con, win, lo, hi, a.clock)
+    ms = clock_ms(con, hist, lo, hi, a.clock)  # every block read; window mode still measures [lo, hi] only
     log(f"window [{lo}, {hi}) {len(win)} segments (+{len(hist) - len(win)} history), clock {ms}")
+    if gaps(hist, lo - HISTORY_SLOTS, lo):
+        log(f"WARNING: the {HISTORY_SLOTS:,} slots of history before the window are not covered: {gaps(hist, lo - HISTORY_SLOTS, lo)} "
+            "(E68's route had them; triggers near the window's start and the creators of tokens made in the gap can differ)")
     info = {"label": a.label, "window_slots": [lo, hi], "window_utc": [a.from_utc, a.to_utc], "clock": a.clock,
             "ms_per_slot": {str(k): v for k, v in ms.items()}, "segments_root": root, "segments_in_window": len(win),
             "segments_history": len(hist) - len(win), "segments_still_open": open_,
             "segments_not_level0": sum(s["level"] != 0 for s in win), "segments_not_complete": sum(not s["complete"] for s in win),
-            "reconnects": sum(s["reconnects"] for s in win), "slot_gaps": gaps(win, lo, hi), "commit": git_commit(),
+            "reconnects": sum(s["reconnects"] for s in win), "slot_gaps": gaps(win, lo, hi),
+            "history_gaps": gaps(hist, lo - HISTORY_SLOTS, lo), "commit": git_commit(),
             "counts_only": "no P&L, no returns"}
+    info["history_complete"] = not info["history_gaps"]
     info["triggers"] = live_triggers(con, hist, lo, hi, ms)
     log(f"triggers {info['triggers']}")
     info["probe"] = probe_pools(con, win, lo, hi)

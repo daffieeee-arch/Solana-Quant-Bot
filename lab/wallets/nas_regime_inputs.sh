@@ -10,7 +10,8 @@
 #   LAB_PY=/lab/venv/bin/python bash lab/wallets/nas_regime_inputs.sh
 #
 # Optional: JOURNAL=<journal.sqlite> (the paper journal, mode=ro: its F7 signals and the (pool, t) comparison),
-# CLOCK=epoch|window (default epoch), MEMORY (DuckDB, default 8GB), THREADS (4), LAB_SPILL_DIR (default /lab/tmp/...).
+# CLOCK=epoch|window (default epoch), MEMORY (DuckDB, default 8GB), THREADS (4), LAB_SPILL_DIR (a spill ROOT under /lab/tmp
+# or $DATA/tmp, default /lab/tmp: the job makes its own new directory in it with mktemp and removes only that one).
 # Steps: guards (OUT new and never inside SEGMENTS; SEGMENTS exists) -> test_regime_inputs.py -> the run -> sha256sum -c
 # of OUT's SHA256SUMS. Logs in $DATA/wallets/regime-inputs-logs/<LABEL>-<commit7>-<utc>/ (job.log, pytest.log, run.log).
 # Any RED: rc 1.
@@ -24,20 +25,24 @@ COMMIT=$(git -C "$REPO" rev-parse HEAD 2>/dev/null || cat "$REPO/COMMIT")
 for v in SEGMENTS FROM_UTC TO_UTC LABEL OUT; do
   [ -n "${!v:-}" ] || { echo "RED: set $v" >&2; exit 1; }
 done
+case "$LABEL" in *[!A-Za-z0-9_-]*) echo "RED: LABEL: letters, digits, - and _ only" >&2; exit 1 ;; esac
 LOGD=$DATA/wallets/regime-inputs-logs/$LABEL-${COMMIT:0:7}-$(date -u +%Y%m%dT%H%M%SZ)  # one per invocation: a refused rerun never touches a run's logs
-SPILL=${LAB_SPILL_DIR:-/lab/tmp/regime-inputs-$LABEL-${COMMIT:0:7}}
+SPILL_ROOT=$(realpath -m "${LAB_SPILL_DIR:-/lab/tmp}")
+SPILL=  # set by mktemp below; only that directory is ever removed
 [ ! -e "$LOGD" ] || { echo "RED: $LOGD exists" >&2; exit 1; }
 mkdir -p "$LOGD"
 log() { echo "$(date -u +%FT%TZ) $*" | tee -a "$LOGD/job.log"; }
-clean_spill() { case "$SPILL" in /lab/tmp/?*|"$DATA"/tmp/?*) rm -rf -- "$SPILL" ;; esac; }
+clean_spill() { if [ -n "$SPILL" ] && [ -d "$SPILL" ]; then rm -rf -- "$SPILL"; fi; }
 red() { log "RED: $*"; clean_spill; exit 1; }
-log "start commit=$COMMIT command: SEGMENTS=$SEGMENTS FROM_UTC=$FROM_UTC TO_UTC=$TO_UTC LABEL=$LABEL OUT=$OUT JOURNAL=${JOURNAL:-} CLOCK=${CLOCK:-epoch} MEMORY=${MEMORY:-8GB} THREADS=${THREADS:-4} SPILL=$SPILL"
+log "start commit=$COMMIT command: SEGMENTS=$SEGMENTS FROM_UTC=$FROM_UTC TO_UTC=$TO_UTC LABEL=$LABEL OUT=$OUT JOURNAL=${JOURNAL:-} CLOCK=${CLOCK:-epoch} MEMORY=${MEMORY:-8GB} THREADS=${THREADS:-4} SPILL_ROOT=$SPILL_ROOT"
 [ -d "$SEGMENTS" ] || red "no segments directory $SEGMENTS"
 [ ! -e "$OUT" ] || red "$OUT exists: the inputs are written once (move it aside)"
 case "$(realpath -m "$OUT")/" in "$(realpath -m "$SEGMENTS")"/*) red "OUT may not be inside SEGMENTS" ;; esac
-case "$SPILL" in /lab/tmp/?*|"$DATA"/tmp/?*) ;; *) red "LAB_SPILL_DIR $SPILL is not under /lab/tmp/ or $DATA/tmp/" ;; esac
+case "$SPILL_ROOT/" in /lab/tmp/*|"$(realpath -m "$DATA/tmp")"/*) ;; *) red "LAB_SPILL_DIR $SPILL_ROOT is not /lab/tmp or $DATA/tmp or under them" ;; esac
 [ -z "${JOURNAL:-}" ] || [ -f "$JOURNAL" ] || red "no journal at $JOURNAL"
-mkdir -p "$SPILL"
+mkdir -p "$SPILL_ROOT"
+SPILL=$(mktemp -d "$SPILL_ROOT/regime-inputs-$LABEL-XXXXXX") || red "no spill directory in $SPILL_ROOT"
+log "spill $SPILL"
 
 rc=0
 (cd "$REPO/lab" && PYTHONPATH=$REPO/lab PYTHONDONTWRITEBYTECODE=1 LAB_STORE=/nonexistent/dev2.duckdb "$PY" -P -m pytest -q -p no:cacheprovider \

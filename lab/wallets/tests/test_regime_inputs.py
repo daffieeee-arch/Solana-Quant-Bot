@@ -97,6 +97,7 @@ def test_the_inputs_on_synthetic_segments(root, tmp_path):
     info = json.load(open(out / "info.json"))
     assert (info["segments_in_window"], info["segments_still_open"], info["segments_not_level0"]) == (3, 1, 1)
     assert info["slot_gaps"] == [[S0 + 20_000, S0 + 20_100]]
+    assert info["history_gaps"] == [[S0 - R.HISTORY_SLOTS, S0]] and info["history_complete"] is False  # nothing before S0
     # E68's store-shaped rows: reversed pools only, the boost buy out, the backfill copy dropped, its earlier row kept as history
     con = duckdb.connect()
     sums = dict(l.split("  ")[::-1] for l in open(out / "SHA256SUMS").read().splitlines())
@@ -160,13 +161,50 @@ def test_p0_is_the_first_leg_of_a_transaction_with_two(tmp_path):
     """Two qualifying legs in one transaction (slot, tx_index): p0 is the first leg's price, not either (E67 ordered by
     slot and tx_index only: 3 of the explore window's 1,282 probe pools got the other leg's price)."""
     r = str(tmp_path / "segments")
-    a = segment(r, 1, S0, S0 + 999)
+    a = segment(r, 1, S0, S0 + 1_499)  # >= MIN_CLOCK_SLOTS of blocks for the clock
     put(a, "arrivals", [{"slot": S0 + 10, "tx_index": 4, "signature": "tx", "stream": "tx_probes"}])
     legs = [dict(trade("buy", "P", S0 + 10, 4, "U", 1 * SOL, 10**9, b * SOL, 10**15, "tx"), outer_ix=o) for o, b in ((14, 160), (8, 150))]
     put(a, "pump_amm/BuyEvent", legs)
     put(a, "pump_amm/SellEvent", [trade("sell", "P", S0 + 20, 1, "U", 1 * SOL, 10**9, 149 * SOL, 10**15, "s")])
     put(a, "pump_amm/CreatePoolEvent", [{"pool": "P", "slot": S0 + 1, "tx_index": 0, "base_mint": W, "quote_mint": "TOK", "coin_creator": "CC",
                                          "is_mayhem_mode": False, "signature": "cp"}])
-    assert R.main(args(r, tmp_path / "o", slots=(S0, S0 + 1_000))) == 0
+    assert R.main(args(r, tmp_path / "o", slots=(S0, S0 + 1_500))) == 0
     ((pool, t0, p0, first),) = duckdb.connect().execute(f"SELECT * FROM '{tmp_path / 'o' / 'probe-pools-test.parquet'}'").fetchall()
     assert (pool, t0, first) == ("P", S0 + 10, S0 + 10) and p0 == pytest.approx(150 * SOL / 10**15)  # outer_ix 8 before 14
+
+
+def test_a_segment_missing_a_table_its_meta_counts_is_refused(root, tmp_path, capsys):
+    """An incomplete copy: segment 3's _segment.json counts a BuyEvent row, its file is gone (rsync writes a directory's
+    own files first). Refused, not counted low."""
+    seg3 = os.path.join(root, "000000003")
+    meta = json.load(open(os.path.join(seg3, "_segment.json")))
+    meta["rows"] = {"pump_amm/BuyEvent": 1, "blocks": 9_900}
+    json.dump(meta, open(os.path.join(seg3, "_segment.json"), "w"))
+    assert R.main(args(root, tmp_path / "ok")) == 0  # the file is there: counted as before
+    for f in os.listdir(os.path.join(seg3, "pump_amm", "BuyEvent")):
+        os.remove(os.path.join(seg3, "pump_amm", "BuyEvent", f))
+    assert R.main(args(root, tmp_path / "o")) == 2
+    assert "segment 3: _segment.json counts 1 pump_amm/BuyEvent rows but the file is missing" in capsys.readouterr().err
+    assert not (tmp_path / "o").exists()
+
+
+def test_a_start_the_segments_do_not_cover_is_refused(root, tmp_path, capsys):
+    iso = lambda t: datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")  # noqa: E731
+    assert R.main(args(root, tmp_path / "o", utc=(iso(BT0 - 3_600), iso(BT0 + 8_000)))) == 2  # an hour before the first block
+    assert "do not cover the window's start" in capsys.readouterr().err and not (tmp_path / "o").exists()
+
+
+def test_an_epoch_piece_at_the_window_edge_does_not_set_the_clock(tmp_path):
+    """Per-epoch clock: an epoch with fewer than MIN_CLOCK_SLOTS slots of blocks (here 3 at the window's end) is left out,
+    so the Clock carries the epoch before it (no NaN, no 0, no noisy value)."""
+    E = (S0 // R.EPOCH_SLOTS + 1) * R.EPOCH_SLOTS
+    r = str(tmp_path / "segments")
+    a = segment(r, 1, E - 3_000, E - 1)
+    segment(r, 2, E, E + 2)
+    put(a, "pump_amm/CreatePoolEvent", [{"pool": "P", "slot": E - 2_900, "tx_index": 0, "base_mint": W, "quote_mint": "TOK", "coin_creator": "CC",
+                                         "is_mayhem_mode": False, "signature": "cp"}])
+    put(a, "arrivals", [{"slot": E - 2_800, "tx_index": 1, "signature": "t", "stream": "tx_probes"}])
+    put(a, "pump_amm/BuyEvent", [trade("buy", "P", E - 2_800, 1, "U", 1 * SOL, 10**9, 130 * SOL, 10**15, "t")])
+    put(a, "pump_amm/SellEvent", [trade("sell", "P", E - 2_700, 1, "U", 1 * SOL, 10**9, 129 * SOL, 10**15, "s")])
+    assert R.main(args(r, tmp_path / "o", slots=(E - 2_000, E + 3))) == 0
+    assert list(json.load(open(tmp_path / "o" / "info.json"))["ms_per_slot"]) == [str(E // R.EPOCH_SLOTS - 1)]
