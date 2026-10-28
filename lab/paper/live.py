@@ -35,7 +35,7 @@ from collections import defaultdict, deque
 import duckdb
 import pyarrow as pa
 
-from backtest import pda, streams
+from backtest import data, pda, streams
 from backtest.strategies import Clock
 from backtest.store import (DAY_MS, FARMER_MIN_TRADES, FARMER_RATIO, POOL_SCHEMA, Chunk, _curve_trades, _pool_other,
                             _pool_trades)
@@ -55,6 +55,18 @@ CURVE_DONE_SLOTS = 1_000
 # they are this many days old without a graduation: F7 needs a token's creator only for its pool.
 TOKEN_KEEP_DAYS = 3
 log = logging.getLogger("paper.live")
+# u64 guard (deploy-u64guard-2026-10-24; the store's rule since #555): PumpSwap amounts are u64 and pool_select casts
+# them to BIGINT, so one row outside its range (a token with a raw supply above 2^63 - 1: E20's base reserves of
+# 9,991,111,111,970,383,772 in epoch 1061) raised there, and lab-paper would exit on the same segment at every restart.
+# A pool with such a row is left out from that segment on, inside the table scan (before any cast): its rows give no
+# event and no history, it is counted (int64_pools; int64_pool_rows: all its rows a chunk leaves out) and logged. Not
+# kept across a restart: the 36 h replay finds the pool again only while the row is inside it. Also as #555's store:
+# virtual quote reserves of 2^63 or more (which _pool_trades' TRY_CAST turned into 0, the pool trading on) leave the pool
+# out, and so does a boost whose quote amount exceeds the reserves after it (the vault's UBIGINT subtraction would
+# raise). The curve tables need no guard: _curve_trades casts to HUGEINT (a pump token's supply is fixed at 1e15).
+I64_MAX = 2 ** 63 - 1
+POOL_TABLES = ("pump_amm/BuyEvent", "pump_amm/SellEvent", "pump_amm/BoostBuyAndBurnEvent", "pump_amm/WithdrawEvent",
+               "pump_amm/DepositEvent")
 
 
 def segment_dirs(root):
@@ -80,8 +92,72 @@ _RAW_TYPED = ", ".join(f"NULL::{t} AS {n}" for n, t in (c.strip().split(None, 1)
                        if n not in _DERIVED)
 
 
-def pool_select(c, pools_table):
-    """store.build's pool rows for one chunk or segment, before the farmer flag (SOL markets only)."""
+def _fits(*exprs):
+    """SQL: every expression (NULL passes) fits a BIGINT, checked in HUGEINT (so the check itself cannot overflow)."""
+    return " AND ".join(f"COALESCE(({e})::HUGEINT, 0) BETWEEN {-I64_MAX - 1} AND {I64_MAX}" for e in exprs)
+
+
+def _sql_list(pools):
+    return ", ".join("'" + p.replace("'", "''") + "'" for p in sorted(pools))
+
+
+def int64_select(c):
+    """(kind, pool) of the chunk's pool rows with an amount pool_select casts to BIGINT outside its range, without a
+    cast that can raise: the rows and expressions of store._pool_trades / _pool_other (b, vault, vq, e = vault + vq,
+    base, e_delta, quote_user; boost and withdraw/deposit their own), as #555's _pool_trades(dropped=True)."""
+    parts = []
+    exact_out = ",".join(f"'{d}'" for d in data.POOL_EXACT_OUT)
+    for kind, t, base, e_delta, quote_user, where in (
+            ("buy", "pump_amm/BuyEvent", "base_amount_out", "quote_amount_in_with_lp_fee",
+             f"CASE WHEN parent_ix_disc IN ({exact_out}) THEN user_quote_amount_in ELSE quote_amount_in END",
+             f"parent_ix_disc IS DISTINCT FROM '{data.BOOST_BUY_DISC}' AND "),
+            ("sell", "pump_amm/SellEvent", "base_amount_in", "quote_amount_out_without_lp_fee", "user_quote_amount_out", "")):
+        src = c.src(t)
+        if src:
+            g = _fits("pool_base_token_reserves", "pool_quote_token_reserves", c.col(t, "virtual_quote_reserves", "HUGEINT"),
+                      f"pool_quote_token_reserves::HUGEINT + COALESCE({c.col(t, 'virtual_quote_reserves', 'BIGINT')}, 0)",
+                      base, e_delta, quote_user)
+            parts.append(f"SELECT '{kind}' AS kind, pool FROM {src} WHERE {where}NOT ({g})")
+    boost = c.src("pump_amm/BoostBuyAndBurnEvent")
+    if boost:
+        g = _fits("base_reserves_after::HUGEINT + base_amount_burned", "real_quote_reserves_after::HUGEINT - quote_amount_in_used",
+                  "TRY_CAST(virtual_quote_reserves AS HUGEINT)",
+                  "(real_quote_reserves_after::HUGEINT - quote_amount_in_used) + COALESCE(TRY_CAST(virtual_quote_reserves AS BIGINT), 0)",
+                  "base_amount_burned", "quote_amount_in_used", "boost_vault_remaining")
+        # the vault is a UBIGINT difference: below 0 it raises before any cast
+        g += " AND COALESCE(real_quote_reserves_after >= quote_amount_in_used, true)"
+        parts.append(f"SELECT 'boost' AS kind, pool FROM {boost} WHERE NOT ({g})")
+    for kind, t, base, quote, lp in (("withdraw", "pump_amm/WithdrawEvent", "base_amount_out", "quote_amount_out", "lp_token_amount_in"),
+                                     ("deposit", "pump_amm/DepositEvent", "base_amount_in", "quote_amount_in", "lp_token_amount_out")):
+        src = c.src(t)
+        if src:
+            g = _fits("pool_base_token_reserves", "pool_quote_token_reserves", base, quote, lp, "lp_mint_supply")
+            parts.append(f"SELECT '{kind}' AS kind, pool FROM {src} WHERE NOT ({g})")
+    return " UNION ALL ".join(parts) if parts else None
+
+
+class _Without:
+    """A chunk whose PumpSwap pool tables leave the given pools out inside the scan, so no cast sees their rows."""
+
+    def __init__(self, c, pools):
+        self.c, self.pools = c, _sql_list(pools)
+
+    def src(self, table):
+        s = self.c.src(table)
+        return f"(SELECT * FROM {s} WHERE pool NOT IN ({self.pools}))" if s and table in POOL_TABLES else s
+
+    def col(self, *a):
+        return self.c.col(*a)
+
+    def arg(self, *a, **kw):
+        return self.c.arg(*a, **kw)
+
+
+def pool_select(c, pools_table, exclude=()):
+    """store.build's pool rows for one chunk or segment, before the farmer flag (SOL markets only), without the
+    pools in exclude (the u64 guard; none: the unchanged SQL)."""
+    if exclude:
+        c = _Without(c, exclude)
     trades, other = _pool_trades(c), _pool_other(c)
     parts = [x for x in (trades, other) if x]
     if not parts:
@@ -313,10 +389,11 @@ class LiveFeed(Feed):
                       "unknown_mints": 0, "unknown_mint_rows": 0, "backfill_rows": 0,
                       "backfill_duplicates": 0, "duplicate_rows": 0, "seeded_pools": 0, "tokens_dropped": 0,
                       "farmer_flags_fixed": 0, "pools_seen_without_creation": 0, "late_probes": 0,
-                      "creation_detection_off_segments": 0, "probes_off_segments": 0}
+                      "creation_detection_off_segments": 0, "probes_off_segments": 0, "int64_pools": 0, "int64_pool_rows": 0}
         # Pools only a pool_creations / pool_accounts row named (no CreatePoolEvent): not learned (creation-filters
         # spec v0.2 M1), counted once each (capped as the unknown sets)
         self.no_creation_seen = set()
+        self.int64_pools = set()  # the u64 guard's pools (int64_select), left out from their first such row on
         self.unknown_seen = set()  # pools whose rows were dropped (not in the snapshot, creation not received)
         self.unknown_mints_seen = set()  # mints whose curve rows were dropped (the same, for tokens)
         self.seen_keys, self.seen_order, self.seen_hi = {}, deque(), 0  # key -> "rec" | "hist" (SEEN_KEEP_SLOTS)
@@ -613,13 +690,39 @@ class LiveFeed(Feed):
                     self._learn("late_probe", pool, meta.get("first_slot"), {})
         return [dict(r, seq=seq) for r in rows]
 
+    def _int64_scan(self, c, seq, what):
+        """The u64 guard: pools of this chunk with a row int64_select finds join int64_pools (logged once each)."""
+        sql = int64_select(c)
+        if not sql:
+            return
+        for pool, n, kinds in self.con.execute(f"""SELECT pool, count(*), string_agg(DISTINCT kind, ',' ORDER BY kind)
+                                                   FROM ({sql}) GROUP BY pool ORDER BY pool""").fetchall():
+            if pool not in self.int64_pools:
+                self.int64_pools.add(pool)
+                self.stats["int64_pools"] += 1
+                log.warning("segment %s (%s): pool %s (%s) has %d row(s) with an amount outside BIGINT (%s): "
+                            "left out from here on (%d such pools)", seq, what, pool,
+                            self.pool_class.get(pool, ("not known",))[0], n, kinds, self.stats["int64_pools"])
+
+    def _int64_rows(self, c):
+        """All rows of the guard's pools this chunk leaves out, in range or not (every pool table, the boost crank's
+        inner buys aside)."""
+        n = 0
+        for t in POOL_TABLES if self.int64_pools else ():
+            src = c.src(t)
+            if src:
+                skip = f" AND parent_ix_disc IS DISTINCT FROM '{data.BOOST_BUY_DISC}'" if t == "pump_amm/BuyEvent" else ""
+                n += self.con.execute(f"SELECT count(*) FROM {src} WHERE pool IN ({_sql_list(self.int64_pools)}){skip}").fetchone()[0]
+        self.stats["int64_pool_rows"] += n
+
     def _unknown_pools(self, c, seq):
         """Count (and log the new) pools whose rows pool_select drops: not in the snapshot and their creation not
         received (a store that ends long before the recorder started, or a creation the recorder missed). Their buys and
         sells are unknown_pool_rows, their withdraw, deposit and boost rows unknown_pool_other_rows (M3-09a's note v0.3:
-        2 such withdraws were the last of job 91's 11,717)."""
+        2 such withdraws were the last of job 91's 11,717). The u64 guard's pools aside (their rows are int64_pool_rows)."""
         new = 0
-        for sql, stat in ((_pool_trades(c), "unknown_pool_rows"), (_pool_other(c), "unknown_pool_other_rows")):
+        cc = _Without(c, self.int64_pools) if self.int64_pools else c
+        for sql, stat in ((_pool_trades(cc), "unknown_pool_rows"), (_pool_other(cc), "unknown_pool_other_rows")):
             if not sql:
                 continue
             for pool, n in self.con.execute(f"SELECT pool, count(*) FROM ({sql}) x ANTI JOIN live_pools USING (pool) GROUP BY pool").fetchall():
@@ -673,10 +776,12 @@ class LiveFeed(Feed):
         if done and os.path.isdir(bdir):
             c = Chunk((min(b["from_slot"] for b in done), max(b["to_slot"] for b in done) + 1, bdir))
             self._new_tokens_and_pools(c)
-            sql = pool_select(c, "live_pools")
+            self._int64_scan(c, self.seq, "backfill")
+            sql = pool_select(c, "live_pools", self.int64_pools)
             if sql:
                 cols = streams.POOL_COLS.replace(", farmer", "")
                 rows = rows + [tuple(r) for r in self.con.execute(f"SELECT pool, token_buy, token_amount, {cols} FROM ({sql})").fetchall()]
+        rows = [r for r in rows if r[0] not in self.int64_pools]  # pending rows of a pool the guard found since
         return sorted(rows, key=lambda r: (r[4], r[5], r[6], r[7]))
 
     def _history(self, pool, token_buy, token_amount, row):
@@ -732,6 +837,7 @@ class LiveFeed(Feed):
             self.bound_checked = True
         self.seq = seq
         self._new_tokens_and_pools(c)
+        self._int64_scan(c, seq, "segment")
         # Backfill rows before the segment are history now; those inside it are merged into its
         # rows in chain order (no events); those after it wait for the next segment.
         back = self._backfill_rows(seg, meta)
@@ -775,7 +881,8 @@ class LiveFeed(Feed):
                 leg = streams.curve_leg(r[1:])
                 self.curve_hist[r[0]].append(leg)
                 out.append(Event(r[1], r[2], r[3], r[4], bt.get(r[1]), "curve", r[0], leg, arrival(r[1], r[2])))
-        sql = pool_select(c, "live_pools")
+        self._int64_rows(c)
+        sql = pool_select(c, "live_pools", self.int64_pools)
         if sql:
             cols = streams.POOL_COLS.replace(", farmer", "")
             rows = [tuple(r) + (True,) for r in self.con.execute(f"""SELECT pool, token_buy, token_amount, {cols} FROM ({sql})
