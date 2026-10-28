@@ -43,7 +43,8 @@ import duckdb
 import numpy as np
 
 from .capital_ceiling import (COOLDOWN_MS, DAILY_LOSS, DEV, MAX_OPEN, SCENARIOS, Refused, boot_days, capital_days,
-                              check_run, ci, exit_of, flag_share, fmt, limited, unlimited, slot_days, require_exit_day, SETTLE_RULE_E63)
+                              check_run, ci, flag_share, fmt, limited, unlimited, slot_days, require_exit_day, SETTLE_RULE_E63)
+from .capital_ceiling import trades_of as capital_trades
 from .costs import Scenario, settle_sql
 from .store import load_defaults
 
@@ -220,10 +221,8 @@ def cell_rows(con, variant, farm, arm, size, d, scenario):
 
 
 def trades_of(rows):
-    """limited()'s trades: the place freed at the exit or, unsold, at the rule's deadline (E63's primary)."""
-    t = [(r[0], exit_of((r[1], r[2], r[3]), "deadline"), r[4], r[5], r[6], r[7], r[8], r[9], r[10]) for r in rows]
-    t.sort(key=lambda x: (x[0], x[1] if x[1] is not None else -1))
-    return t
+    """E63's trigger-ordered trades, including the separate failed-entry attempt slot."""
+    return capital_trades(rows)
 
 
 def run_days(trades, days, capital, size, day_of):

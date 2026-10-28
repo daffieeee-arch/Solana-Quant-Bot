@@ -38,7 +38,7 @@ TABLES = {
               "reverted_direct INTEGER, reverted_router INTEGER, sells_dropped INTEGER, sells_scaled INTEGER, "
               # The highest mark since the entry (gross, as proceeds) and its first slot (the tournament's
               # peak_mark / peak_slot); the exit rule's windows in slots: the flow window and the time cap.
-              "peak_mark INTEGER, peak_slot INTEGER, n_flow_slots INTEGER, cap_slots INTEGER",
+              "peak_mark INTEGER, peak_slot INTEGER, n_flow_slots INTEGER, cap_slots INTEGER, settle_rule INTEGER",
               "family, variant, key, t"),
     "heartbeat": ("minute INTEGER, day TEXT, last_slot INTEGER, last_event TEXT, events INTEGER, open_positions INTEGER, "
                   "gap_slots INTEGER, note TEXT", "minute, note"),

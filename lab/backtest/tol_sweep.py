@@ -71,7 +71,12 @@ ALLOWED_DRIFT = {
         "B2 (Codex review #6, 24 Oct): settle and settle_sql take a rule, 2 by default (every landed failed exit "
         "attempt pays). Rule 1, which this sweep and racing_cost pass (SETTLE_RULE_E63), is E70's settle_sql byte for "
         "byte and its settle row for row: test_settle_sql.py::test_rule_1_is_e70s_settle. The engine files call no "
-        "settle (tournament imports settle_sql unused); the paper engine stays on rule 1 (ENGINE_SETTLE_RULE).")},
+        "settle (tournament imports settle_sql unused); the paper engine stays on rule 1 (ENGINE_SETTLE_RULE)."),
+        "98b01024e6d1bbe03d20a258f814f16d2322c461b5d74e89a84d34cc365d2f65": (
+        "25 Oct: only ENGINE_SETTLE_RULE and its deployment comment changed from B2's costs.py. New paper exits "
+        "store rule 2 per row, while archived rows retain rule 1. This sweep and racing_cost still explicitly use "
+        "SETTLE_RULE_E63=1; test_settle_sql.py::test_rule_1_is_e70s_settle proves the frozen settlement identity. "
+        "The tournament simulation does not call settle; its historical ENGINE_SHA256 pins remain unchanged.")},
 }
 LOOKS = len(TOLS) * len(LEADS) * len(SIZES) * len(SCENARIOS)  # 32 cells, 24 new (3 tols); 12 primary (base, with limits)
 

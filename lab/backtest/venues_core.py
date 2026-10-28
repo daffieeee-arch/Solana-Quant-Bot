@@ -12,7 +12,11 @@ from dataclasses import replace
 
 import labcore as _c
 
-from .venues import Curve, Fill, Pool  # noqa: F401 (the dataclasses stay venues.py's)
+from .venues import Curve, Fill, Pool, POOL_EXACT_IN_RULE  # noqa: F401 (the dataclasses stay venues.py's)
+
+# An old installed extension must not silently run rule 1 behind rule-2 Python code.
+if getattr(_c, "POOL_EXACT_IN_RULE", None) != POOL_EXACT_IN_RULE:
+    raise RuntimeError("labcore exact-in rule mismatch: rebuild the extension with this lab source")
 
 __all__ = ["fee", "net_for_budget", "curve_buy_exact_in", "curve_buy_exact_out", "curve_sell", "pool_buy_exact_in",
            "pool_buy_exact_out", "pool_sell", "pool_sell_capped", "pool_withdraw", "pool_deposit", "rev_buy_token",

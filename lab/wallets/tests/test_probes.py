@@ -167,6 +167,32 @@ def test_e73_triggers_k_distinct_wallets_and_cooldown():
     assert not any(k == "B" for _, k, _ in t)
 
 
+def test_e73_same_slot_buys_use_instruction_order_not_future_trades():
+    """Two selected traders in one slot are within 30 s; the earlier instruction cannot see the later one."""
+    import duckdb
+    from wallets.common import Clock
+    from wallets.probes import e73
+
+    con = duckdb.connect()
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("INSERT INTO meta VALUES (?)", ['{"ms_per_slot": {"1040": 250.0}}'])
+    lo = 1040 * 432_000
+    con.execute("CREATE TABLE gb (key VARCHAR, slot UBIGINT, ord UBIGINT, trader VARCHAR)")
+    con.executemany("INSERT INTO gb VALUES (?, ?, ?, ?)", [
+        ("same-slot", lo, lo * 1_000_000_000 + 100_000, "W1"),
+        ("same-slot", lo, lo * 1_000_000_000 + 200_000, "W2"),
+        ("same-wallet", lo, lo * 1_000_000_000 + 100_000, "W1"),
+        ("same-wallet", lo, lo * 1_000_000_000 + 200_000, "W1"),
+    ])
+    e73.triggers(con, Clock.from_store(con))
+    assert con.execute("SELECT key, slot, ord FROM cand_k2n30 ORDER BY key").fetchall() == [
+        ("same-slot", lo, lo * 1_000_000_000 + 200_000)
+    ]
+    assert con.execute("SELECT key, moment, t FROM trig_all WHERE moment = 'k2n30'").fetchall() == [
+        ("same-slot", "k2n30", lo)
+    ]
+
+
 def test_e73_good_set_threshold_is_5_sol_in_lamports(tmp_path):
     import duckdb
     import pyarrow as pa
@@ -327,3 +353,56 @@ def test_e73_triggers_keep_their_types_when_some_cells_are_empty():
     e73.triggers(con, Clock.from_store(con))
     assert con.execute("SELECT key, moment, t FROM trig_all").fetchall() == [("A", "k2n120", lo + 400)]
     assert [t[1] for t in con.execute("DESCRIBE trig_all").fetchall()] == ["VARCHAR", "VARCHAR", "UBIGINT"]
+
+
+def _e73_report_input(tmp_path, days):
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    n = len(days)
+    tbl = pa.table({"probe": ["e73"] * n, "size_sol": [0.5] * n, "moment": ["k2n30"] * n,
+                    "key": [f"K{i}" for i in range(n)], "pool": [None] * n,
+                    "t": [10 + 100 * i for i in range(n)], "entry_slot": [13 + 100 * i for i in range(n)],
+                    "exit_slot": [20 + 100 * i for i in range(n)], "day": pa.array(days, type=pa.string()),
+                    "reason": ["end"] * n, "cost": [500_000_000] * n, "exit_net": [600_000_000] * n})
+    pq.write_table(tbl, tmp_path / "e73-1-s0.5.parquet")
+
+
+def test_e73_report_uses_fixed_calendar_including_days_without_any_signal(tmp_path):
+    """Real report entry point: eleven absent dates must still be bootstrap units and zero daily-net rows."""
+    import datetime
+    import json
+    from wallets.probes import report as P
+    _e73_report_input(tmp_path, ["2026-09-19", "2026-10-01"])
+    P.main(["--probe", "e73", "--in", str(tmp_path), "--parts", str(tmp_path / "no-reference"), "--boot", "200"])
+    res = json.loads((tmp_path / "report-e73.json").read_text())
+    expected_days = [(datetime.date(2026, 9, 19) + datetime.timedelta(days=i)).isoformat() for i in range(13)]
+    assert res["days_with_signals"] == ["2026-09-19", "2026-10-01"]
+    assert res["bootstrap_calendar_days"] == expected_days
+    assert res["calendar_source"]["sha256"] == "7bbd1aa112bdad00bba8ff504749d6bb04cf1af99b4ee9fd3ae9d70b590490b1"
+    primary = res["cells"]["k2n30"]["10"]
+    assert primary["day_basis"] == primary["ci"]["days"] == 13
+    assert primary["days_with_trades"] == 2 and primary["trades_per_day"] == pytest.approx(2 / 13)
+    assert list(primary["daily_net_sol"]) == expected_days
+    assert primary["daily_net_sol"]["2026-09-20"] == 0
+    assert sum(primary["daily_net_sol"].values()) == pytest.approx(0.2)
+    assert res["verdict"] == "STOP"  # positive trades are not enough to satisfy the fixed trades/day rule
+    assert "13 dagen, inclusief dagen zonder signalen" in (tmp_path / "report-e73.md").read_text()
+
+
+@pytest.mark.parametrize("day", [None, "2026-09-18", "2026-10-02", "2026-10-20"])
+def test_e73_report_refuses_missing_or_out_of_contract_dates(tmp_path, day):
+    from wallets.probes import report as P
+    _e73_report_input(tmp_path, [day])
+    with pytest.raises(ValueError, match="preregistered"):
+        P.main(["--probe", "e73", "--in", str(tmp_path), "--parts", str(tmp_path / "no-reference"), "--boot", "20"])
+    assert not (tmp_path / "report-e73.json").exists()
+
+
+def test_e73_report_keeps_calendar_when_entire_selection_has_no_signals(tmp_path):
+    import json
+    from wallets.probes import report as P
+    _e73_report_input(tmp_path, [])
+    P.main(["--probe", "e73", "--in", str(tmp_path), "--parts", str(tmp_path / "no-reference"), "--boot", "20"])
+    res = json.loads((tmp_path / "report-e73.json").read_text())
+    assert len(res["bootstrap_calendar_days"]) == 13 and res["days_with_signals"] == []
+    assert res["verdict"] == "NO_PRIMARY_CELL"
