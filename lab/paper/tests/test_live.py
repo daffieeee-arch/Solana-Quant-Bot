@@ -265,6 +265,24 @@ def test_live_feed_never_returns_unfinished_segments(tmp_path):
     assert segment_dirs(str(tmp_path)) == []
 
 
+def test_a_segment_deleted_between_the_glob_and_the_open_is_skipped(tmp_path, monkeypatch):
+    # The retention removes an old segment while segment_dirs is listing (lab-paper exited on this, 23 Oct).
+    for seq in (1, 2):
+        d = tmp_path / "segments" / f"{seq:09d}"
+        d.mkdir(parents=True)
+        (d / "_segment.json").write_text(json.dumps({"seq": seq, "first_slot": seq * 10, "last_slot": seq * 10 + 9, "complete": True}))
+    listed = glob.glob(os.path.join(str(tmp_path), "segments", "*", "_segment.json"))
+    gone = tmp_path / "segments" / "000000001"
+    for f in gone.iterdir():
+        f.unlink()
+    gone.rmdir()
+    monkeypatch.setattr("paper.live.glob.glob", lambda pattern: listed)  # the glob ran before the deletion
+    assert [s for s, _, _ in segment_dirs(str(tmp_path))] == [2]
+    (tmp_path / "segments" / "000000002" / "_segment.json").write_text("{not json")
+    with pytest.raises(ValueError):  # an unreadable meta is a fault (the recorder writes it atomically), not skipped
+        segment_dirs(str(tmp_path))
+
+
 def test_event_type_is_shared():
     assert Event.__module__ == "paper.feed"
 
