@@ -23,7 +23,7 @@ def test_check_window_allows_several_epochs_inside_the_store_and_refuses_outside
     assert C.check_window(meta, 460_512_000 + 4_000, 461_000_000) == [1066, 1067]
     assert C.check_window(meta, 459_671_698, 460_080_000) == [1064]
     with pytest.raises(ValueError, match="before the store"):
-        C.check_window(meta, 459_600_000, 460_000_000)   # after the clean period, before this store
+        C.check_window({"slot_start": 460_080_000, "slot_end_exclusive": 461_808_000}, 459_648_000, 460_000_000)   # released data, but before this store
     with pytest.raises(ValueError, match="after the store"):
         C.check_window(meta, 461_000_000, 461_808_001)
     with pytest.raises(ValueError, match="empty"):
@@ -36,10 +36,12 @@ def test_check_window_refuses_any_overlap_with_the_holdout_and_the_clean_period(
     itself, independent of the store's meta."""
     wide = {"slot_start": 446_256_000, "slot_end_exclusive": 461_808_000}   # a store that would allow everything
     for lo, hi in ((452_000_000, 452_304_001), (452_304_000, 452_400_000), (454_463_999, 454_500_000), (452_000_000, 455_000_000),   # hold-out
-                   (455_700_000, 455_760_001), (456_000_000, 457_000_000), (459_215_999, 459_300_000), (451_000_000, 460_000_000)):   # clean
+                   (455_700_000, 455_760_001), (456_000_000, 457_000_000), (459_216_000, 459_300_000), (459_600_000, 460_000_000),   # clean, incl. epoch 1063
+                   (459_647_999, 459_700_000), (451_000_000, 460_000_000)):
         with pytest.raises(ValueError, match="consumed data"):
             C.check_window(wide, lo, hi)
+    assert C.HOLDOUT == (452_304_000, 454_464_000) and C.CLEAN == (455_760_000, 459_648_000), "bounds come from common / backtest.store"
     assert C.check_window(wide, 452_000_000, 452_304_000) == [1046], "ending exactly at the hold-out start is allowed"
     assert C.check_window(wide, 454_464_000, 455_760_000) == [1052, 1053, 1054], "the gap between hold-out and clean is allowed"
-    assert C.check_window(wide, 459_216_000, 460_000_000) == [1063, 1064], "starting exactly at the clean end is allowed"
+    assert C.check_window(wide, 459_648_000, 460_000_000) == [1064], "starting exactly at the release start 1064 is allowed"
     assert C.check_window({}, 459_648_000, 461_808_000) == [1064, 1065, 1066, 1067, 1068]
