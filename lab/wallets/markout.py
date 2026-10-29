@@ -42,7 +42,8 @@ Writes markout-<run>.parquet (one row per signal x d x horizon) and run-markout-
 row: depth_entry / fee_bps (the entry state, E49), creator_prior_pools (E41 class), paid_buyers_60s / paid_max_60s (the paid
 token buys in the 60 s before a pool signal, C3 / E54; paid_buyers()).
 Slots stay before the hold-out (common.guard); the one exception is E20's finished clean run under its clean.lock
-(--clean-lock, clean_lock(): that run's parts, store and engine snapshot only; the F7 mechanism pre-registration). Heavy on a full run (ASOF join against the pool
+(--clean-lock, clean_lock(): that run's parts, store and engine snapshot only; the F7 mechanism pre-registration); the other is a
+forward store from epoch 1064 on (--forward, common.forward_guard: period 'forward', the signal window inside the store; E84). Heavy on a full run (ASOF join against the pool
 and curve tables): NAS; one day on the VPS as a smoke test.
 """
 
@@ -59,7 +60,7 @@ import time
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .common import EPOCH_SLOTS as EPOCH, OUT_ROOT, REF_MS, SOL, Clock, connect, git_commit, guard, regime_label
+from .common import EPOCH_SLOTS as EPOCH, OUT_ROOT, REF_MS, SOL, Clock, connect, forward_guard, git_commit, guard, regime_label
 
 
 
@@ -815,7 +816,8 @@ def clean_lock(path, parts_dir, lo=None, hi=None):
     return store, engine_dir, lock
 
 
-def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=None, cfg_path=DEFAULTS, tx_delays=False, clean=None, delay_ms=None):
+def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=None, cfg_path=DEFAULTS, tx_delays=False, clean=None, delay_ms=None,
+        forward=False):
     import yaml
     t0 = time.time()
     _T0[0] = t0
@@ -828,7 +830,9 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
     clock = Clock.from_store(con)
     meta = json.loads(con.execute("SELECT json FROM meta").fetchone()[0])
     end_slot = int(meta["slot_end_exclusive"])
-    if lock is None:  # the clean.lock run is the one admitted past the hold-out (clean_lock above)
+    if lock is None and forward:  # a released forward store (owner 2026-10-24): period 'forward', slots from 1064 on (E84)
+        forward_guard(lo if lo is not None else int(meta["slot_start"]), hi if hi is not None else end_slot, meta)
+    elif lock is None:  # the clean.lock run is the one admitted past the hold-out (clean_lock above)
         guard(hi if hi is not None else end_slot)
     with open(cfg_path) as f:
         cfg = yaml.safe_load(f)
@@ -866,7 +870,8 @@ def run(parts_dir, run_name, out_dir, families=None, lo=None, hi=None, store=Non
             "curve_states": n_curve, "states": "at target slots only", "buckets": buckets(), "targets": n_targets, "rows": n_rows, "size_sol": SIZE / SOL,
             "per_order_lamports": per_order, "delays": list(delays(tx_delays)) + (list(TX_DELAYS) if tx_delays else []),
             "tx_delays": {d: delay_label(d) for d in TX_DELAYS} if tx_delays else None, "tx_stats": tx_stats(con) if tx_delays else None,
-            "horizons": dict(HORIZONS_MS), "commit": git_commit(), "clean_lock": {k: lock.get(k) for k in CLEAN_LOCK_KEYS} | {"path": os.path.abspath(clean)} if lock else None, "store": store or os.environ.get("LAB_STORE"),
+            "horizons": dict(HORIZONS_MS), "commit": git_commit(), "clean_lock": {k: lock.get(k) for k in CLEAN_LOCK_KEYS} | {"path": os.path.abspath(clean)} if lock else None, "forward": bool(forward),
+            "store": store or os.environ.get("LAB_STORE"),
             "seconds": round(time.time() - t0, 1), "phases_seconds": dict(PHASES)}
     with open(os.path.join(out_dir, f"run-markout-{run_name}.json"), "w") as f:
         json.dump(info, f, indent=1)
@@ -885,9 +890,10 @@ def main():
     ap.add_argument("--tx-delays", action="store_true", help="add the transaction-level entries (TX_DELAYS codes in d; spec M-a)")
     ap.add_argument("--clean-lock", help="E20's clean.lock: the one run admitted past the hold-out (clean_lock); the store and engine come from it")
     ap.add_argument("--delay-ms", type=int, help="add the slot delay of this many ms per epoch through the store's Clock (E20's d_ms 600) beside DELAYS")
+    ap.add_argument("--forward", action="store_true", help="a forward store from epoch 1064 on (common.forward_guard) instead of the dev guard (E84)")
     a = ap.parse_args()
     info = run(a.parts, a.run, a.out, a.families.split(",") if a.families else None, a.from_slot, a.to_slot, cfg_path=a.cfg, tx_delays=a.tx_delays,
-               clean=a.clean_lock, delay_ms=a.delay_ms)
+               clean=a.clean_lock, delay_ms=a.delay_ms, forward=a.forward)
     print(json.dumps(info), file=sys.stderr)
 
 

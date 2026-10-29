@@ -413,3 +413,37 @@ def test_delay_ms_adds_the_clock_delay(tmp_path, monkeypatch):
     # d 3 rows: the entry at t + 3, one per signal and horizon, same count as d 2
     n2, n3 = con.execute(f"SELECT count(*) FILTER (WHERE d = 2), count(*) FILTER (WHERE d = 3) FROM read_parquet('{tmp_path}/out/markout-dm.parquet')").fetchone()
     assert n2 == n3 > 0
+
+
+FWD_SHIFT = 459_648_000 - SLOT0  # 31 epochs: the mini store then starts at epoch 1064's first slot (common.FORWARD_START)
+
+
+def _forward_store(path, period="forward", shift=FWD_SHIFT):
+    _store(path, shift)
+    con = duckdb.connect(str(path))
+    meta = json.loads(con.execute("SELECT json FROM meta").fetchone()[0])
+    if period:
+        meta["period"] = period
+    con.execute("UPDATE meta SET json = ?", [json.dumps(meta)])
+    con.close()
+
+
+def test_forward_route_admits_a_forward_store_only(tmp_path):
+    """E84: --forward replaces the dev guard by common.forward_guard: a store with period 'forward' from 1064 on and the signal
+    window inside it; without the flag the slots past the hold-out are refused as always; a store without the period is refused."""
+    cfg = _cfg(tmp_path)
+    _forward_store(tmp_path / "f.duckdb")
+    _parts(str(tmp_path / "parts"), FWD_SHIFT)
+    with pytest.raises(ValueError):  # the dev guard: slots past the hold-out
+        markout.run(str(tmp_path / "parts"), "f", str(tmp_path / "out0"), store=str(tmp_path / "f.duckdb"), cfg_path=cfg)
+    info = markout.run(str(tmp_path / "parts"), "f", str(tmp_path / "out"), store=str(tmp_path / "f.duckdb"), cfg_path=cfg, forward=True)
+    assert info["forward"] is True and info["signals"] == 5 and info["clean_lock"] is None
+    assert json.load(open(tmp_path / "out" / "run-markout-f.json"))["forward"] is True
+    with pytest.raises(ValueError):  # a window outside the store
+        markout.run(str(tmp_path / "parts"), "f", str(tmp_path / "out2"), lo=SLOT0 + FWD_SHIFT - 1, store=str(tmp_path / "f.duckdb"), cfg_path=cfg, forward=True)
+    _forward_store(tmp_path / "d.duckdb", period=None)  # no period: not a forward store
+    with pytest.raises(ValueError):
+        markout.run(str(tmp_path / "parts"), "d", str(tmp_path / "out3"), store=str(tmp_path / "d.duckdb"), cfg_path=cfg, forward=True)
+    _forward_store(tmp_path / "c.duckdb", period="clean", shift=455_760_000 - SLOT0)  # a clean store is never a forward store
+    with pytest.raises(ValueError):
+        markout.run(str(tmp_path / "parts"), "c", str(tmp_path / "out4"), store=str(tmp_path / "c.duckdb"), cfg_path=cfg, forward=True)
