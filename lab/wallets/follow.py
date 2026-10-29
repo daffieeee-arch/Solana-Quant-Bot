@@ -42,7 +42,7 @@ sys.path.insert(0, os.environ.get("LAB_ENGINE", os.path.dirname(os.path.dirname(
 from backtest import replay, streams  # noqa: E402
 from backtest.replay import Tau  # noqa: E402
 
-from .common import OUT_ROOT, SOL, Clock, git_commit, guard  # noqa: E402
+from .common import OUT_ROOT, SOL, Clock, forward_guard, git_commit, guard, store_meta  # noqa: E402
 from .episodes import EPISODE_MS  # noqa: E402
 
 MAX_HOLD_MS = EPISODE_MS
@@ -90,15 +90,21 @@ class LeaderPath:
 
 
 class FollowExit:
-    """Sell when the leader's holdings fall to <= exit_share x their holdings at the end of slot t0."""
+    """Sell when the leader's holdings fall to <= exit_share x their holdings at the end of slot t0.
 
-    def __init__(self, path, t0, exit_share, max_slots):
+    start (E82 pre-reg §3): the exit observation u begins after our fill, at slots > start (start = t0 + d); whole
+    slots <= u only, as LeaderPath holds them. None: observe from the first slot the replay asks about (K1 behaviour)."""
+
+    def __init__(self, path, t0, exit_share, max_slots, start=None):
         self.path, self.ref, self.exit_share, self.max_slots = path, path.holdings(t0), exit_share, max_slots
+        self.start = start
 
     def deadline(self, entry_slot):
         return entry_slot + self.max_slots
 
     def __call__(self, ctx):
+        if self.start is not None and ctx["slot"] <= self.start:
+            return None
         if self.ref > 0 and self.path.holdings(ctx["slot"]) <= self.exit_share * self.ref:
             return "leader_sold"
         if ctx["slots_held"] >= self.max_slots:
@@ -128,30 +134,53 @@ RESULT_FIELDS = ["entry_failed", "skipped", "tokens", "cost", "proceeds", "exit_
 
 
 def read_wallets(path):
-    """{wallet: control} from a CSV with columns wallet,control (header optional)."""
+    """{wallet: control} from a wallet list: the first comma-, tab- or space-separated field of every non-empty line is
+    the wallet (a header line 'wallet[,control]' is skipped). control is read only from a two-column 'wallet,control'
+    file (1/true/t/yes); any other column layout — E82's tab-separated e81_passlist.txt (wallet, days, K, re, re_net) —
+    gives control False, so a number in the second column is never read as a control flag (LAB must-fix on #609)."""
     out = {}
     with open(path) as f:
         for line in f:
-            w, _, c = line.strip().partition(",")
-            if w and w != "wallet":
-                out[w] = c.strip().lower() in ("1", "true", "t", "yes")
+            fields = line.replace(",", " ").split()
+            if not fields or fields[0] == "wallet":
+                continue
+            out[fields[0]] = len(fields) == 2 and fields[1].lower() in ("1", "true", "t", "yes")
     return out
 
 
+def range_guard(lo, hi_ext, forward, meta=None):
+    """The dev guard, or with forward (E82) common.forward_guard on the store's meta: [lo, hi_ext) inside a forward
+    store from epoch 1064 on. hi_ext includes the hold cap and the delays (the legs the replay reads)."""
+    if forward:
+        forward_guard(lo, hi_ext, meta)
+    else:
+        guard(hi_ext)
+
+
 def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, wallets_file=None, max_per_wallet=0,
-        workers=1):
-    guard(hi)
+        workers=1, forward=False, venues=None, cancel_t1=False):
+    """forward: forward store route (range_guard). venues: replay only episodes of these venues (E82: ('curve',)).
+    cancel_t1 (E82 pre-reg §3): the entry decision uses the state at the end of t0 + 1 — the curve complete by then, or
+    the leader already at <= exit_share x his t0 holdings — and cancels (no transaction, no cost); the fill stays t0 + d."""
+    if not forward:
+        guard(hi)
     con = streams.open_store(store, threads=2, memory=MAIN_MEM)
     con.execute("SET enable_progress_bar = false")
     clock = Clock.from_store(con)
     max_slots = clock.slots(MAX_HOLD_MS, lo)
-    guard(hi + max_slots + 2 * max(delays) + 2)
+    range_guard(lo, hi + max_slots + 2 * max(delays) + 2, forward, store_meta(con) if forward else None)
     files = sorted(glob.glob(os.path.join(ep_dir, "episodes-*.parquet")))
     eps = [e for f in files for e in pq.read_table(f).to_pylist() if lo <= e["t0"] < hi]
     # Candidates come from a wallet list (chosen over a whole period, so a run can be split into
     # slices) or from the episodes of this range.
     cands = read_wallets(wallets_file) if wallets_file else candidates(eps, min_n, n_control, lo)
+    if wallets_file and not cands:
+        raise ValueError(f"--wallets {wallets_file}: no wallet read from the list")
     eps = [e for e in eps if e["wallet"] in cands]
+    if wallets_file and not eps:  # a silent empty run would look like a result (LAB must-fix on #609)
+        raise ValueError(f"--wallets {wallets_file}: none of the {len(cands)} listed wallets has an episode in [{lo}, {hi})")
+    if venues:
+        eps = [e for e in eps if e["venue"] in venues]
     if max_per_wallet:  # a deterministic random subset of each wallet's episodes in this range
         eps.sort(key=lambda e: _seed("cap", e["wallet"], e["key"], e["t0"]))
         seen, capped = {}, []
@@ -183,7 +212,7 @@ def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, w
     batches += [("curve", curve_keys[i:i + 200], 0) for i in range(0, len(curve_keys), 200)]
     batches.sort(key=lambda b: -b[2])  # heaviest first (LPT); curve batches last
     jobs = [(i, venue, {k: by_key[(venue, k)] for k in ks}, tail, cands, sizes, delays, max_slots,
-             os.path.join(out_dir, f"follow-{lo}-part{i:05d}.parquet")) for i, (venue, ks, _) in enumerate(batches)]
+             os.path.join(out_dir, f"follow-{lo}-part{i:05d}.parquet"), cancel_t1) for i, (venue, ks, _) in enumerate(batches)]
     con.close()
     n_done = n_busy = n_rows = 0
     if workers > 1:
@@ -207,7 +236,9 @@ def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, w
         json.dump({"from_slot": lo, "to_slot": hi, "commit": git_commit(), "engine": os.path.dirname(replay.__file__),
                    "sizes": sizes, "delays": delays, "variants": VARIANTS, "min_n": min_n, "control": n_control,
                    "wallets_file": wallets_file, "max_per_wallet": max_per_wallet, "workers": workers, "parts": len(jobs),
-                   "candidates": len(cands), "episodes": len(eps), "episodes_busy_pool": n_busy, "positions": n_rows,
+                   "forward": forward, "venues": list(venues) if venues else None, "cancel_t1": cancel_t1,
+                   "candidates": len(cands), "wallets_with_episodes": len({e["wallet"] for e in eps}), "episodes": len(eps),
+                   "episodes_busy_pool": n_busy, "positions": n_rows,
                    "max_hold_ms": MAX_HOLD_MS, "max_legs": MAX_LEGS, "pool_batch_legs": POOL_BATCH_LEGS, "q": Q_FRAC, "tol": TOL,
                    "seconds": round(time.time() - t_start)}, f, indent=1)
     print(f"{lo}-{hi}: {len(cands)} wallets, {len(eps)} episodes ({n_busy} in busy pools, skipped), {n_rows} positions, "
@@ -257,7 +288,7 @@ def _init_worker(store):
 
 def replay_batch(job):
     """Replay one batch of tokens and write its part: (episodes, episodes in busy pools, positions)."""
-    i, venue, groups, tail, cands, sizes, delays, max_slots, path = job
+    i, venue, groups, tail, cands, sizes, delays, max_slots, path, cancel_t1 = job
     if os.path.exists(path):  # resumable
         t = pq.read_metadata(path)
         return sum(len(g) for g in groups.values()), 0, t.num_rows
@@ -271,7 +302,7 @@ def replay_batch(job):
         if st is None:
             continue
         before = len(rows)
-        run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows)
+        run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows, cancel_t1)
         n_busy += (len(rows) > before and rows[-1]["exit_reason"] == "busy_pool") * len(group)
     if rows:  # an empty part is not written (a parquet file without columns cannot be read back)
         tmp = path + ".tmp"
@@ -280,7 +311,19 @@ def replay_batch(job):
     return sum(len(g) for g in groups.values()), n_busy, len(rows)
 
 
-def run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows):
+def cancel_at_t1(st, path, t0, share):
+    """E82 pre-reg §3: the reason not to send the buy, from the state at the end of slot t0 + 1 only: the curve is
+    complete by then, or the leader already holds <= share x his holdings at the end of t0. None: send (fill at t0 + d;
+    whatever happens in t0 + 2 .. t0 + d is the fill's business, never a cancellation)."""
+    if st.complete_slot is not None and st.complete_slot <= t0 + 1:
+        return "cancelled_t1_complete"
+    ref = path.holdings(t0)
+    if ref > 0 and path.holdings(t0 + 1) <= share * ref:
+        return "cancelled_t1_leader_sold"
+    return None
+
+
+def run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows, cancel_t1=False):
     """Replay every (size, d, variant) position of the episodes of one token stream."""
     busy = len(st.pool_legs) + len(st.curve) > MAX_LEGS
     paths = {}
@@ -289,11 +332,13 @@ def run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows)
         for size in sizes:
             for d in delays:
                 for variant, share in VARIANTS.items():
-                    if busy:
+                    cancel = cancel_at_t1(st, path, e["t0"], share) if (cancel_t1 and not busy) else None
+                    if busy or cancel:
                         r = replay.Result(e["key"], e["t0"], size=int(size * SOL), venue=venue, skipped=True,
-                                          exit_reason="busy_pool")
+                                          exit_reason=cancel or "busy_pool")
                     else:
-                        r = sim(st, e["t0"], int(size * SOL), d, Q_FRAC, FollowExit(path, e["t0"], share, max_slots),
+                        r = sim(st, e["t0"], int(size * SOL), d, Q_FRAC,
+                                FollowExit(path, e["t0"], share, max_slots, start=e["t0"] + d if cancel_t1 else None),
                                 TOL, tau, max_slots=max_slots)
                     rows.append({"wallet": e["wallet"], "key": e["key"], "venue": venue, "orientation": e["orientation"],
                                  "t0": e["t0"], "day": e["day"], "control": cands[e["wallet"]], "size_sol": size, "d": d,
@@ -301,6 +346,23 @@ def run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows)
                                  "leader_ret_marked": e["leader_ret_marked"], "leader_hold_slots": e["hold_slots"],
                                  "leader_closed": e["closed"], "create_slot": e["create_slot"],
                                  **{f: getattr(r, f) for f in RESULT_FIELDS}})
+
+
+def one_position_per_key(rows):
+    """E82 pre-reg §3, the reading step: within each (size_sol, d, variant) cell at most one open follower position per
+    key — the earliest t0 opens; a later signal whose t0 is at or before that position's exit slot is marked
+    overlap_skipped (an open position without exit_slot blocks everything after it). Rows without a position (skipped or
+    entry_failed) never block. Returns the rows with the overlap_skipped field, in the input order."""
+    order = sorted(range(len(rows)), key=lambda i: (rows[i]["key"], rows[i]["t0"], rows[i]["wallet"]))
+    last = {}  # (cell, key) -> exit_slot of the blocking position (None = open)
+    for i in order:
+        r = rows[i]
+        cell = (r["size_sol"], r["d"], r["variant"], r["key"])
+        blocked = cell in last and (last[cell] is None or r["t0"] <= last[cell])
+        r["overlap_skipped"] = blocked
+        if not blocked and not r.get("skipped") and not r.get("entry_failed"):
+            last[cell] = r.get("exit_slot")
+    return rows
 
 
 def main():
@@ -318,12 +380,16 @@ def main():
     ap.add_argument("--max-per-wallet", type=int, default=0, help="replay at most this many episodes per wallet in the range (0: all)")
     ap.add_argument("--workers", type=int, default=1, help="worker processes (each ~1.3 GB RSS); parts are identical for any N")
     ap.add_argument("--variants", default=",".join(VARIANTS), help="exit variants to replay (W_half,W_full)")
+    ap.add_argument("--forward", action="store_true", help="a forward store from epoch 1064 on (common.forward_guard) instead of the dev guard")
+    ap.add_argument("--venues", help="replay only these venues, comma-separated (E82: curve)")
+    ap.add_argument("--cancel-t1", action="store_true", help="E82: cancel the entry on the state at the end of t0 + 1 (curve complete, leader already out)")
     a = ap.parse_args()
     for v in list(VARIANTS):
         if v not in a.variants.split(","):
             del VARIANTS[v]
     run(a.episodes, a.from_slot, a.to_slot, a.out, [float(s) for s in a.sizes.split(",")],
-        [int(d) for d in a.delays.split(",")], a.min_n, a.control, a.store, a.wallets, a.max_per_wallet, a.workers)
+        [int(d) for d in a.delays.split(",")], a.min_n, a.control, a.store, a.wallets, a.max_per_wallet, a.workers,
+        a.forward, tuple(a.venues.split(",")) if a.venues else None, a.cancel_t1)
 
 
 if __name__ == "__main__":
