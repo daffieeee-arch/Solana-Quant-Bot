@@ -115,3 +115,64 @@ def test_legs_sql_trigger_size_and_min_offset():
     assert triggers() == [("curve", 100, False), ("curve", 103, False), ("curve", 104, False), ("curve", 110, True), ("pool", 120, True), ("pool", 130, True)]
     assert triggers(trigger_sol=SOL // 2) == [("curve", 100, True), ("curve", 103, True), ("curve", 104, True), ("curve", 110, True), ("pool", 120, True), ("pool", 130, True)]
     assert triggers(trigger_sol=SOL // 2, min_offset=4) == [("curve", 100, False), ("curve", 103, False), ("curve", 104, True), ("curve", 110, True), ("pool", 120, True), ("pool", 130, False)]
+
+
+def _mark_store(path, n_keys=40):
+    """A file store with n_keys tokens: a 2 SOL trigger by wallet w<i> at slot 100 + i (1000 tokens), a 0.05 SOL trade by
+    another wallet at 110 + i, a closing sell by w<i> at 120 + i for even i, a 0.5 SOL trade at 150 + i (250 x the average
+    buy price: capped) and a dust trade at 160 + i (below MARK_MIN_SOL: never a mark). Blocks: one hour per slot."""
+    import duckdb
+
+    con = duckdb.connect(path)
+    con.execute("CREATE TABLE meta (json VARCHAR)")
+    con.execute("""INSERT INTO meta VALUES ('{"ms_per_slot": {"0": 200.0}}')""")
+    con.execute("CREATE TABLE blocks (slot BIGINT, block_time BIGINT)")
+    con.execute("INSERT INTO blocks SELECT range, 1700000000 + range * 3600 FROM range(0, 1000)")
+    con.execute("CREATE TABLE mints (mint VARCHAR, mayhem BOOLEAN, quote_mint VARCHAR, create_slot BIGINT, pool VARCHAR)")
+    con.execute("CREATE TABLE pools (pool VARCHAR, mint VARCHAR, orientation VARCHAR, quote_class VARCHAR, mayhem BOOLEAN)")
+    con.execute("CREATE TABLE curve (mint VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, is_buy BOOLEAN, "
+                "t HUGEINT, q HUGEINT, trader VARCHAR)")
+    con.execute("CREATE TABLE pool (kind VARCHAR, pool VARCHAR, slot BIGINT, tx_index BIGINT, outer_ix BIGINT, inner_ix BIGINT, "
+                "trader VARCHAR, orientation VARCHAR, token_buy BOOLEAN, sol_amount BIGINT, token_amount BIGINT, farmer BOOLEAN)")
+    for i in range(n_keys):
+        k, w = f"M{i:02d}", f"w{i:02d}"
+        con.execute("INSERT INTO mints VALUES (?, false, 'So11111111111111111111111111111111111111112', 50, NULL)", [k])
+        rows = [(k, 100 + i, 1, 0, 0, True, 1000, 2 * SOL, w),
+                (k, 110 + i, 1, 0, 0, True, 10, SOL // 20, "x"),
+                (k, 150 + i, 1, 0, 0, True, 1, SOL // 2, "x"),
+                (k, 160 + i, 1, 0, 0, True, 100, SOL // 200, "y")]
+        if i % 2 == 0:
+            rows.append((k, 120 + i, 1, 0, 0, False, 950, 3 * SOL, w))
+        con.executemany("INSERT INTO curve VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+    con.close()
+
+
+def test_run_marks_per_key_bucket_identically(tmp_path, monkeypatch):
+    """The mark per key hash bucket (MARK_BUCKETS) gives the same episodes as one bucket: the mark is the last trade
+    >= MARK_MIN_SOL at or before the episode end, capped at MARK_MAX_MULT x the average buy price; the day is t0's."""
+    import pyarrow.parquet as pq
+
+    from wallets import episodes as E
+
+    monkeypatch.setenv("LAB_SPILL_DIR", str(tmp_path))
+    store = str(tmp_path / "s.duckdb")
+    _mark_store(store)
+    E.run(100, 400, str(tmp_path / "b16"), store=store)
+    out = pq.read_table(tmp_path / "b16" / "episodes-100.parquet").to_pylist()
+    assert len(out) == 40 and [e["key"] for e in out] == [f"M{i:02d}" for i in range(40)]  # sorted by t0
+    closed, open_ = out[0], out[1]
+    assert closed["closed"] and closed["end_slot"] == 120 and closed["remaining_tokens"] == 50
+    assert abs(closed["mark_price"] - 3 * SOL / 950) < 1e-6 and not closed["mark_capped"]  # the closing sell is the last trade
+    assert abs(closed["leader_ret_realized"] - 0.5) < 1e-12
+    assert abs(closed["leader_ret_marked"] - ((3 * SOL + 50 * 3 * SOL / 950) / (2 * SOL) - 1)) < 1e-9
+    assert not open_["closed"] and open_["end_slot"] == 101 + 72_000 and open_["remaining_tokens"] == 1000
+    assert open_["mark_capped"] and abs(open_["mark_price"] - E.MARK_MAX_MULT * 2 * SOL / 1000) < 1e-6  # 0.5 SOL for 1 token: capped
+    assert abs(open_["leader_ret_marked"] - (1000 * E.MARK_MAX_MULT * 2 * SOL / 1000 / (2 * SOL) - 1)) < 1e-9
+    from datetime import datetime, timezone
+
+    day = lambda slot: datetime.fromtimestamp(1700000000 + slot * 3600, timezone.utc).strftime("%Y-%m-%d")  # noqa: E731
+    assert [e["day"] for e in out] == [day(100 + i) for i in range(40)] and closed["day"] == "2023-11-19"  # t0's block, UTC
+    assert all(e["mark_price"] is not None for e in out)
+    monkeypatch.setattr(E, "MARK_BUCKETS", 1)
+    E.run(100, 400, str(tmp_path / "b1"), store=store)
+    assert pq.read_table(tmp_path / "b1" / "episodes-100.parquet").to_pylist() == out
