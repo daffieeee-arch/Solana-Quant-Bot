@@ -134,13 +134,17 @@ RESULT_FIELDS = ["entry_failed", "skipped", "tokens", "cost", "proceeds", "exit_
 
 
 def read_wallets(path):
-    """{wallet: control} from a CSV with columns wallet,control (header optional)."""
+    """{wallet: control} from a wallet list: the first comma-, tab- or space-separated field of every non-empty line is
+    the wallet (a header line 'wallet[,control]' is skipped). control is read only from a two-column 'wallet,control'
+    file (1/true/t/yes); any other column layout — E82's tab-separated e81_passlist.txt (wallet, days, K, re, re_net) —
+    gives control False, so a number in the second column is never read as a control flag (LAB must-fix on #609)."""
     out = {}
     with open(path) as f:
         for line in f:
-            w, _, c = line.strip().partition(",")
-            if w and w != "wallet":
-                out[w] = c.strip().lower() in ("1", "true", "t", "yes")
+            fields = line.replace(",", " ").split()
+            if not fields or fields[0] == "wallet":
+                continue
+            out[fields[0]] = len(fields) == 2 and fields[1].lower() in ("1", "true", "t", "yes")
     return out
 
 
@@ -170,7 +174,11 @@ def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, w
     # Candidates come from a wallet list (chosen over a whole period, so a run can be split into
     # slices) or from the episodes of this range.
     cands = read_wallets(wallets_file) if wallets_file else candidates(eps, min_n, n_control, lo)
+    if wallets_file and not cands:
+        raise ValueError(f"--wallets {wallets_file}: no wallet read from the list")
     eps = [e for e in eps if e["wallet"] in cands]
+    if wallets_file and not eps:  # a silent empty run would look like a result (LAB must-fix on #609)
+        raise ValueError(f"--wallets {wallets_file}: none of the {len(cands)} listed wallets has an episode in [{lo}, {hi})")
     if venues:
         eps = [e for e in eps if e["venue"] in venues]
     if max_per_wallet:  # a deterministic random subset of each wallet's episodes in this range
@@ -229,7 +237,8 @@ def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, w
                    "sizes": sizes, "delays": delays, "variants": VARIANTS, "min_n": min_n, "control": n_control,
                    "wallets_file": wallets_file, "max_per_wallet": max_per_wallet, "workers": workers, "parts": len(jobs),
                    "forward": forward, "venues": list(venues) if venues else None, "cancel_t1": cancel_t1,
-                   "candidates": len(cands), "episodes": len(eps), "episodes_busy_pool": n_busy, "positions": n_rows,
+                   "candidates": len(cands), "wallets_with_episodes": len({e["wallet"] for e in eps}), "episodes": len(eps),
+                   "episodes_busy_pool": n_busy, "positions": n_rows,
                    "max_hold_ms": MAX_HOLD_MS, "max_legs": MAX_LEGS, "pool_batch_legs": POOL_BATCH_LEGS, "q": Q_FRAC, "tol": TOL,
                    "seconds": round(time.time() - t_start)}, f, indent=1)
     print(f"{lo}-{hi}: {len(cands)} wallets, {len(eps)} episodes ({n_busy} in busy pools, skipped), {n_rows} positions, "

@@ -59,6 +59,54 @@ def test_read_wallets(tmp_path):
     assert follow.read_wallets(str(p)) == {"A": False, "B": True, "C": False}
 
 
+def test_read_wallets_takes_the_first_field_of_a_tab_separated_pass_list(tmp_path):
+    """E82: e81_passlist.txt is tab-separated (wallet, days, K, re, re_net); the wallet is the first field and a number in
+    the second column is never a control flag (LAB must-fix on #609: the comma split gave 36 unusable keys)."""
+    p = tmp_path / "e81_passlist.txt"
+    rows = [f"{'W%02d' % i}xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\t{3 + i % 4}\t23.651\t38.374\t38.36" for i in range(36)]
+    rows[5] = rows[5].replace("\t3\t", "\t1\t")  # days = 1 in the second column: still not a control
+    p.write_text("\n".join(rows) + "\n")
+    w = follow.read_wallets(str(p))
+    assert len(w) == 36 and all(k.startswith("W") and "\t" not in k for k in w) and not any(w.values())
+
+
+def test_run_refuses_an_empty_or_unmatched_wallet_list(tmp_path, monkeypatch):
+    """A list that reads to nothing, or whose wallets have no episode in the range, is a refusal, not an empty run."""
+    import json as _json
+
+    import pyarrow as _pa
+    import pyarrow.parquet as _pq
+
+    ep_dir = tmp_path / "eps"
+    ep_dir.mkdir()
+    _pq.write_table(_pa.Table.from_pylist([{"wallet": "A", "key": "M", "venue": "curve", "orientation": "curve", "t0": 100, "pool": None,
+                                           "day": "d", "leader_ret_realized": 0.0, "leader_ret_marked": 0.0, "hold_slots": None,
+                                           "closed": False, "create_slot": False}]), ep_dir / "episodes-0.parquet")
+    empty, other = tmp_path / "empty.txt", tmp_path / "other.txt"
+    empty.write_text("wallet,control\n")
+    other.write_text("B\t3\t1.0\t1.0\t1.0\n")
+
+    class Con:
+        def execute(self, *a):
+            return self
+
+        def fetchone(self):
+            return (_json.dumps({"period": "dev"}),)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(follow.streams, "open_store", lambda *a, **k: Con())
+    monkeypatch.setattr(follow.Clock, "from_store", classmethod(lambda cls, con: type("C", (), {"slots": staticmethod(lambda ms, lo: 10)})()))
+    monkeypatch.setattr(follow, "guard", lambda hi: None)
+    import pytest as _pt
+
+    with _pt.raises(ValueError, match="no wallet read"):
+        follow.run(str(ep_dir), 0, 1000, str(tmp_path / "o1"), [0.5], [3], 5, 0, store="s", wallets_file=str(empty))
+    with _pt.raises(ValueError, match="none of the 1 listed wallets"):
+        follow.run(str(ep_dir), 0, 1000, str(tmp_path / "o2"), [0.5], [3], 5, 0, store="s", wallets_file=str(other))
+
+
 def test_candidates_min_n_and_deterministic_control():
     eps = [{"wallet": w} for w in "aaaaa" + "bbb" + "cc" + "d"]
     c = follow.candidates(eps, min_n=3, n_control=1, lo=1)
