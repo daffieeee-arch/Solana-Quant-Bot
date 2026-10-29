@@ -31,8 +31,12 @@ Refused before anything is written: an existing DIR, DIR inside the segments, a 
 (no block in the 60 s before it: the window would silently start later), segments that end before the window does, a
 segment whose _segment.json counts rows of a table read here but whose file is missing (an incomplete copy).
 - counts-hourly.parquet and recorder-counts.json (the window as check-chunk-recorder.json's 'day'): blocks, skipped
-  blocks, pump creates (distinct mints), graduations (distinct pools of a CreatePoolEvent arriving on tx_new_pools),
-  pump_amm buy + sell rows seen (a subset: only followed pools), first and last block time.
+  blocks, pump creates (distinct mints, every quote), graduations (distinct pools of a pump/CompletePumpAmmMigrationEvent
+  = the store's mints.migrate_slot definition), pool_creations_on_tx_new_pools (distinct pools of a CreatePoolEvent whose
+  arrival row is on stream tx_new_pools), pump_amm buy + sell rows seen (a subset: only followed pools), first and last
+  block time. Until 2026-10-29 graduations_pools held the tx_new_pools count: an undercount, because arrivals carry one
+  stream per transaction and a migration that also matches tx_new_reversed is filed there (E80: 1,273 of 2,716 on the
+  full-coverage window 24-27 Oct; E67 erratum). Inputs made before that date carry the old meaning.
 - with --journal: journal-f7-<L>.parquet (the paper journal's F7 signals in the window, read with mode=ro) and the
   (pool, t) comparison against the live triggers on reversed pools in info.json.
 - info.json (the window, clock, inputs, counts), SHA256SUMS.
@@ -285,25 +289,30 @@ def coverage_and_counts(con, segs, lo, hi):
                    FROM hr LEFT JOIN seg ON hr.slot BETWEEN seg.first_slot AND seg.last_slot GROUP BY 1 ORDER BY 1""")
     q = lambda sql: con.execute(sql).fetchall()  # noqa: E731
     cr, cp, ar, buy, sell = src("pump/CreateEvent"), src("pump_amm/CreatePoolEvent"), src("arrivals"), src("pump_amm/BuyEvent"), src("pump_amm/SellEvent")
+    mg = src("pump/CompletePumpAmmMigrationEvent")
     w = f"slot >= {lo} AND slot < {hi}"
     cw = f"cp.slot >= {lo} AND cp.slot < {hi}"
     con.execute(f"CREATE TABLE c_cr AS SELECT h, count(DISTINCT mint) AS creates_mints FROM {cr} JOIN hr USING (slot) WHERE {w} GROUP BY 1" if cr
                 else "CREATE TABLE c_cr (h TIMESTAMPTZ, creates_mints BIGINT)")
-    con.execute(f"""CREATE TABLE c_gr AS SELECT h, count(DISTINCT cp.pool) AS graduations_pools FROM {cp} cp JOIN {ar} a
+    con.execute(f"CREATE TABLE c_gr AS SELECT h, count(DISTINCT pool) AS graduations_pools FROM {mg} JOIN hr USING (slot) WHERE {w} GROUP BY 1" if mg
+                else "CREATE TABLE c_gr (h TIMESTAMPTZ, graduations_pools BIGINT)")
+    con.execute(f"""CREATE TABLE c_np AS SELECT h, count(DISTINCT cp.pool) AS pool_creations_on_tx_new_pools FROM {cp} cp JOIN {ar} a
                     ON a.slot = cp.slot AND a.tx_index = cp.tx_index AND a.signature = cp.signature JOIN hr ON hr.slot = cp.slot
-                    WHERE a.stream = 'tx_new_pools' AND {cw} GROUP BY 1""" if cp and ar else "CREATE TABLE c_gr (h TIMESTAMPTZ, graduations_pools BIGINT)")
+                    WHERE a.stream = 'tx_new_pools' AND {cw} GROUP BY 1""" if cp and ar else "CREATE TABLE c_np (h TIMESTAMPTZ, pool_creations_on_tx_new_pools BIGINT)")
     parts = [f"SELECT slot FROM {x} WHERE {w}" for x in (buy, sell) if x]
     con.execute(f"CREATE TABLE c_tr AS SELECT h, count(*) AS pump_amm_buy_sell_rows_seen FROM ({' UNION ALL '.join(parts)}) JOIN hr USING (slot) GROUP BY 1"
                 if parts else "CREATE TABLE c_tr (h TIMESTAMPTZ, pump_amm_buy_sell_rows_seen BIGINT)")
     con.execute("""CREATE TABLE counts AS SELECT b.h, b.blocks, b.blocks_skipped, COALESCE(c_cr.creates_mints, 0) AS creates_mints,
-                   COALESCE(c_gr.graduations_pools, 0) AS graduations_pools, COALESCE(c_tr.pump_amm_buy_sell_rows_seen, 0) AS pump_amm_buy_sell_rows_seen,
+                   COALESCE(c_gr.graduations_pools, 0) AS graduations_pools, COALESCE(c_np.pool_creations_on_tx_new_pools, 0) AS pool_creations_on_tx_new_pools,
+                   COALESCE(c_tr.pump_amm_buy_sell_rows_seen, 0) AS pump_amm_buy_sell_rows_seen,
                    b.first_block_time, b.last_block_time
                    FROM (SELECT date_trunc('hour', to_timestamp(block_time)) AS h, count(*) AS blocks, sum(skipped::INT) AS blocks_skipped,
                                 min(block_time) AS first_block_time, max(block_time) AS last_block_time FROM blk GROUP BY 1) b
-                   LEFT JOIN c_cr USING (h) LEFT JOIN c_gr USING (h) LEFT JOIN c_tr USING (h) ORDER BY 1""")
+                   LEFT JOIN c_cr USING (h) LEFT JOIN c_gr USING (h) LEFT JOIN c_np USING (h) LEFT JOIN c_tr USING (h) ORDER BY 1""")
     tot = {"slots": [lo, hi], "blocks": q("SELECT count(*) FROM blk")[0][0], "blocks_skipped": q("SELECT sum(skipped::INT) FROM blk")[0][0],
            "creates_mints": q(f"SELECT count(DISTINCT mint) FROM {cr} WHERE {w}")[0][0] if cr else 0,
-           "graduations_pools": q(f"""SELECT count(DISTINCT cp.pool) FROM {cp} cp JOIN {ar} a ON a.slot = cp.slot AND a.tx_index = cp.tx_index
+           "graduations_pools": q(f"SELECT count(DISTINCT pool) FROM {mg} WHERE {w}")[0][0] if mg else 0,
+           "pool_creations_on_tx_new_pools": q(f"""SELECT count(DISTINCT cp.pool) FROM {cp} cp JOIN {ar} a ON a.slot = cp.slot AND a.tx_index = cp.tx_index
                                      AND a.signature = cp.signature WHERE a.stream = 'tx_new_pools' AND {cw}""")[0][0] if cp and ar else 0,
            "pump_amm_buy_sell_rows_seen": q(f"SELECT count(*) FROM ({' UNION ALL '.join(parts)})")[0][0] if parts else 0,
            "block_time_first_last": list(q("SELECT min(block_time), max(block_time) FROM blk")[0])}

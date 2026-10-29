@@ -60,8 +60,14 @@ def root(tmp_path):
     c = segment(r, 3, S0 + 20_100, S0 + 29_999)
     os.makedirs(os.path.join(r, "000000004"))  # still open: no _segment.json
     put(a, "pump_amm/CreatePoolEvent", [{"pool": "P", "slot": S0 + 5, "tx_index": 0, "base_mint": W, "quote_mint": "TOK", "coin_creator": "CC",
-                                         "is_mayhem_mode": False, "signature": "cp1"}])
+                                         "is_mayhem_mode": False, "signature": "cp1"},
+                                        # a second migration whose transaction also matched tx_new_reversed: filed there (E80)
+                                        {"pool": "M", "slot": S0 + 7, "tx_index": 0, "base_mint": "TOKM", "quote_mint": W, "coin_creator": "CC",
+                                         "is_mayhem_mode": False, "signature": "cp2"}])
+    put(a, "pump/CompletePumpAmmMigrationEvent", [{"mint": "TOK", "pool": "P", "slot": S0 + 5, "tx_index": 0, "signature": "cp1"},
+                                                  {"mint": "TOKM", "pool": "M", "slot": S0 + 7, "tx_index": 0, "signature": "cp2"}])
     put(a, "arrivals", [{"slot": S0 + 5, "tx_index": 0, "signature": "cp1", "stream": "tx_new_pools"},
+                        {"slot": S0 + 7, "tx_index": 0, "signature": "cp2", "stream": "tx_new_reversed"},
                         {"slot": S0 + 10, "tx_index": 1, "signature": "t1", "stream": "tx_probes"},
                         {"slot": S0 + 20, "tx_index": 1, "signature": "t2", "stream": "tx_probes"}])
     put(a, "pump/CreateEvent", [{"mint": "TOK", "slot": S0 + 1, "tx_index": 0, "user": "CR", "is_mayhem_mode": False, "quote_mint": None},
@@ -113,11 +119,12 @@ def test_the_inputs_on_synthetic_segments(root, tmp_path):
     assert p0[0][2] == pytest.approx(130 * SOL / 10**15)
     assert [f.name for f in pq.read_schema(out / "probe-pools-test.parquet")] == ["pool", "t0", "p0", "first_seen"]
     assert str(pq.read_schema(out / "probe-pools-test.parquet").field("t0").type) == "uint64"
-    # recorder counts: blocks, creates, graduations on tx_new_pools, buy + sell rows seen (every pool)
+    # recorder counts: blocks, creates, graduations (CompletePumpAmmMigrationEvent: both migrations, whichever stream filed the
+    # transaction), pool creations filed on tx_new_pools (only cp1: cp2 sits on tx_new_reversed), buy + sell rows seen (every pool)
     rc = json.load(open(out / "recorder-counts.json"))["window"]
-    assert (rc["blocks"], rc["creates_mints"], rc["graduations_pools"], rc["pump_amm_buy_sell_rows_seen"]) == (29_900, 2, 1, 8)
-    hourly = con.execute(f"SELECT sum(blocks), sum(creates_mints), sum(graduations_pools), sum(pump_amm_buy_sell_rows_seen) FROM '{out / 'counts-hourly.parquet'}'").fetchone()
-    assert hourly == (29_900, 2, 1, 8)
+    assert (rc["blocks"], rc["creates_mints"], rc["graduations_pools"], rc["pool_creations_on_tx_new_pools"], rc["pump_amm_buy_sell_rows_seen"]) == (29_900, 2, 2, 1, 8)
+    hourly = con.execute(f"SELECT sum(blocks), sum(creates_mints), sum(graduations_pools), sum(pool_creations_on_tx_new_pools), sum(pump_amm_buy_sell_rows_seen) FROM '{out / 'counts-hourly.parquet'}'").fetchone()
+    assert hourly == (29_900, 2, 2, 1, 8)
     cov = con.execute(f"SELECT sum(blocks), min(level0_share), max(level0_share) FROM '{out / 'coverage-hourly.parquet'}'").fetchone()
     assert cov[0] == 29_900 and 0 < cov[1] < 1 and cov[2] == 1.0  # the level-1 segment lowers its hours' share
 
