@@ -12,7 +12,8 @@ mint together, for at most EPISODE_MS:
   hold     slots from the trigger to the first sell after which H <= EXIT_SHARE x max H; NULL when
            the episode is still open at its end (censored at EPISODE_MS or at the data end)
   mark     price of the token's last trade (any wallet) at or before the episode end, for the
-           remaining tokens
+           remaining tokens (computed per key hash bucket: one bucket of the window's trades at a
+           time, see MARK_BUCKETS)
 
   leader_ret_realized = proceeds / cost - 1              (remaining tokens worth 0)
   leader_ret_marked   = (proceeds + H_end x mark) / cost - 1
@@ -42,6 +43,10 @@ TRIGGER_SOL = 1 * SOL
 EPISODE_MS = 4 * 3_600_000
 EXIT_SHARE = 0.10
 BUCKETS = 16  # wallet hash buckets per query: bounds the sorted working set (~0.8 GB peak RSS)
+# Key hash buckets for the mark query: the last-trade window and the ASOF join hold one bucket of the window's trades,
+# prefiltered to keys with an episode (both exact: the window partitions by key and the join matches on key). One query
+# over the whole window held > 7.4 GB on 1064-1068 (NAS, E82 §6 r2, 2026-10-29) and would not fit the forward window.
+MARK_BUCKETS = 16
 MEMORY = os.environ.get("LAB_EPISODES_MEMORY", os.environ.get("LAB_WALLETS_MEMORY", "640MB"))  # DuckDB limit; VPS default
 POS = 1 << 20
 MARK_MIN_SOL = SOL // 100  # a trade this small does not set the mark price
@@ -143,9 +148,58 @@ def walk(rows, lo, hi, episode_slots, first_buy_only=False):
     return out
 
 
+SCHEMA = pa.schema([
+    ("wallet", pa.string()), ("key", pa.string()), ("venue", pa.string()), ("orientation", pa.string()),
+    ("t0", pa.int64()), ("t0_pos", pa.int64()), ("trigger_sol", pa.int64()), ("cost_sol", pa.int64()),
+    ("proceeds_sol", pa.int64()), ("remaining_tokens", pa.int64()), ("max_tokens", pa.int64()),
+    ("hold_slots", pa.int64()), ("end_slot", pa.int64()), ("n_buys", pa.int64()), ("n_sells", pa.int64()),
+    ("create_slot", pa.bool_()), ("closed", pa.bool_()), ("pool", pa.string())])
+ORDER = [("t0", "ascending"), ("wallet", "ascending"), ("key", "ascending"), ("t0_pos", "ascending")]
+
+
+def mark_sql(lo, hi, hi_ext, bucket):
+    """Mark and day stamp for the episodes (registered as `ep`) of one key hash bucket.
+
+    The remaining tokens are marked at the token's last trade of >= MARK_MIN_SOL at or before the episode end, capped at
+    MARK_MAX_MULT x the episode's average buy price; the UTC day is that of t0's block. Trades are read in [lo, hi_ext)
+    (hi_ext = hi + EPISODE_MS), the days in [lo, hi). The bucket filter is exact: the last-trade window partitions by
+    key and the ASOF join matches on key, so a key's trades and episodes always meet in the same bucket."""
+    return f"""
+      WITH eb AS (SELECT * FROM ep WHERE hash(key) % {MARK_BUCKETS} = {bucket}),
+      px AS (
+        SELECT key, slot, sol::DOUBLE / tokens AS price FROM (
+          SELECT * FROM (
+            SELECT c.mint AS key, c.slot::BIGINT AS slot, c.tx_index, c.outer_ix, c.inner_ix, c.q AS sol, c.t AS tokens FROM curve c
+            WHERE c.slot >= {lo} AND c.slot < {hi_ext} AND c.t > 0 AND c.q >= {MARK_MIN_SOL}
+            UNION ALL
+            SELECT {POOL_KEY}, e.slot::BIGINT, e.tx_index, e.outer_ix, e.inner_ix, e.sol_amount, e.token_amount
+            FROM pool e JOIN pools p USING (pool) LEFT JOIN mints m ON m.mint = p.mint
+            WHERE e.slot >= {lo} AND e.slot < {hi_ext} AND e.kind IN ('buy', 'sell') AND e.token_amount > 0
+              AND e.sol_amount >= {MARK_MIN_SOL})
+          WHERE hash(key) % {MARK_BUCKETS} = {bucket} AND key IN (SELECT key FROM eb))
+        -- the last trade of the slot: a total order (tx, then instruction position) keeps the mark reproducible
+        QUALIFY row_number() OVER (PARTITION BY key, slot ORDER BY tx_index DESC, outer_ix DESC, inner_ix DESC, sol DESC) = 1),
+      d AS (SELECT slot, strftime(make_timestamp(block_time * 1000000), '%Y-%m-%d') AS day FROM blocks
+            WHERE slot >= {lo} AND slot < {hi}),
+      m AS (SELECT eb.*, px.price AS last_price, eb.cost_sol::DOUBLE / eb.max_tokens AS avg_buy_price, d.day
+            FROM eb ASOF LEFT JOIN px ON px.key = eb.key AND px.slot <= eb.end_slot
+            ASOF LEFT JOIN d ON d.slot <= eb.t0)
+      SELECT * EXCLUDE (last_price, avg_buy_price),
+             LEAST(last_price, {MARK_MAX_MULT} * avg_buy_price) AS mark_price,
+             last_price > {MARK_MAX_MULT} * avg_buy_price AS mark_capped,
+             proceeds_sol::DOUBLE / cost_sol - 1 AS leader_ret_realized,
+             (proceeds_sol + COALESCE(remaining_tokens * LEAST(last_price, {MARK_MAX_MULT} * avg_buy_price), 0)) / cost_sol - 1
+               AS leader_ret_marked
+      FROM m"""
+
+
 def run(lo, hi, out_dir, store=None, forward=False, trigger_sol=TRIGGER_SOL, min_offset=0, first_buy_only=False):
     """forward (E82): a forward store from epoch 1064 on (common.forward_guard) instead of the dev guard; the legs read
-    EPISODE_MS before lo and after hi must lie inside the store."""
+    EPISODE_MS before lo and after hi must lie inside the store.
+
+    Memory: the legs are walked per wallet hash bucket and each bucket's episodes become an Arrow table at once (the
+    Python dicts of one bucket at a time, not the whole window's); the mark runs per key hash bucket (mark_sql). The
+    output is the same for any number of buckets, sorted by (t0, wallet, key, t0_pos)."""
     if not forward:
         guard(hi)
     con = connect(store, memory=MEMORY) if store else connect(memory=MEMORY)
@@ -157,10 +211,10 @@ def run(lo, hi, out_dir, store=None, forward=False, trigger_sol=TRIGGER_SOL, min
         guard(hi + n_ep)
     os.makedirs(out_dir, exist_ok=True)
     t_start = time.time()
-    eps = []
+    parts, n_eps = [], 0
     for b in range(BUCKETS):
         res = con.execute(legs_sql(lo - n_ep, hi + n_ep, b, trigger_sol, min_offset))
-        group, cur = [], None
+        eps, group, cur = [], [], None
         while True:
             batch = res.fetchmany(100_000)
             for r in batch:
@@ -174,40 +228,16 @@ def run(lo, hi, out_dir, store=None, forward=False, trigger_sol=TRIGGER_SOL, min
                 break
         if group:
             eps += walk(group, lo, hi, n_ep, first_buy_only)
-        print(f"bucket {b}: {len(eps)} episodes so far, {time.time() - t_start:.0f}s", file=sys.stderr, flush=True)
-    tbl = pa.Table.from_pylist(eps, schema=pa.schema([
-        ("wallet", pa.string()), ("key", pa.string()), ("venue", pa.string()), ("orientation", pa.string()),
-        ("t0", pa.int64()), ("t0_pos", pa.int64()), ("trigger_sol", pa.int64()), ("cost_sol", pa.int64()),
-        ("proceeds_sol", pa.int64()), ("remaining_tokens", pa.int64()), ("max_tokens", pa.int64()),
-        ("hold_slots", pa.int64()), ("end_slot", pa.int64()), ("n_buys", pa.int64()), ("n_sells", pa.int64()),
-        ("create_slot", pa.bool_()), ("closed", pa.bool_()), ("pool", pa.string())]))
-    con.register("ep", tbl)
-    # Mark the remaining tokens at the token's last trade of >= MARK_MIN_SOL at or before the
-    # episode end, capped at MARK_MAX_MULT x the episode's average buy price; stamp the UTC day.
-    out = con.execute(f"""
-      WITH px AS (
-        SELECT key, slot, sol::DOUBLE / tokens AS price FROM (
-          SELECT c.mint AS key, c.slot::BIGINT AS slot, c.tx_index, c.outer_ix, c.inner_ix, c.q AS sol, c.t AS tokens FROM curve c
-          WHERE c.slot >= {lo} AND c.slot < {hi + n_ep} AND c.t > 0 AND c.q >= {MARK_MIN_SOL}
-          UNION ALL
-          SELECT {POOL_KEY}, e.slot::BIGINT, e.tx_index, e.outer_ix, e.inner_ix, e.sol_amount, e.token_amount
-          FROM pool e JOIN pools p USING (pool) LEFT JOIN mints m ON m.mint = p.mint
-          WHERE e.slot >= {lo} AND e.slot < {hi + n_ep} AND e.kind IN ('buy', 'sell') AND e.token_amount > 0
-            AND e.sol_amount >= {MARK_MIN_SOL})
-        -- the last trade of the slot: a total order (tx, then instruction position) keeps the mark reproducible
-        QUALIFY row_number() OVER (PARTITION BY key, slot ORDER BY tx_index DESC, outer_ix DESC, inner_ix DESC, sol DESC) = 1),
-      d AS (SELECT slot, strftime(make_timestamp(block_time * 1000000), '%Y-%m-%d') AS day FROM blocks
-            WHERE slot >= {lo} AND slot < {hi}),
-      m AS (SELECT ep.*, px.price AS last_price, ep.cost_sol::DOUBLE / ep.max_tokens AS avg_buy_price, d.day
-            FROM ep ASOF LEFT JOIN px ON px.key = ep.key AND px.slot <= ep.end_slot
-            ASOF LEFT JOIN d ON d.slot <= ep.t0)
-      SELECT * EXCLUDE (last_price, avg_buy_price),
-             LEAST(last_price, {MARK_MAX_MULT} * avg_buy_price) AS mark_price,
-             last_price > {MARK_MAX_MULT} * avg_buy_price AS mark_capped,
-             proceeds_sol::DOUBLE / cost_sol - 1 AS leader_ret_realized,
-             (proceeds_sol + COALESCE(remaining_tokens * LEAST(last_price, {MARK_MAX_MULT} * avg_buy_price), 0)) / cost_sol - 1
-               AS leader_ret_marked
-      FROM m ORDER BY t0, wallet""").to_arrow_table()
+        parts.append(pa.Table.from_pylist(eps, schema=SCHEMA))
+        n_eps += len(eps)
+        print(f"bucket {b}: {n_eps} episodes so far, {time.time() - t_start:.0f}s", file=sys.stderr, flush=True)
+    con.register("ep", pa.concat_tables(parts))
+    marked = []
+    for b in range(MARK_BUCKETS):
+        marked.append(con.execute(mark_sql(lo, hi, hi + n_ep, b)).to_arrow_table())
+        print(f"mark bucket {b}: {sum(t.num_rows for t in marked)} episodes marked, {time.time() - t_start:.0f}s",
+              file=sys.stderr, flush=True)
+    out = pa.concat_tables(marked).sort_by(ORDER)
     pq.write_table(out, os.path.join(out_dir, f"episodes-{lo}.parquet"))
     with open(os.path.join(out_dir, f"run-episodes-{lo}-{hi}.json"), "w") as f:
         json.dump({"from_slot": lo, "to_slot": hi, "commit": git_commit(), "trigger_sol": trigger_sol, "min_offset": min_offset,
