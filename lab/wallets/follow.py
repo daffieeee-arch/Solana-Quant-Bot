@@ -16,11 +16,17 @@ delays from the command line (gate: 0.5 SOL, d = 1 and 2). Candidates: wallets w
 episodes in the range, plus --control random other wallets with >= 2 episodes (the N2-wallet
 control: following random active wallets), drawn deterministically.
 
+--q is our intra-slot position for the entry and the exit fill (E65's rule G1, E88): d >= 1 only at
+q 0.5 (the week2 default: halfway the slot), d 0 only at q 1.0 (the fill on the end state of slot
+t0 = first in t0 + 1; a d 0 fill at q < 1 lands before the leader's own transaction in the slot: a
+look-ahead) and never mixed in one run. --cancel-t1 decides on the end of t0 + 1, so it is refused
+at d < 2 (the fill would precede the decision).
+
 The engine is `backtest` from LAB_ENGINE (a directory holding backtest/), default this repo's lab/.
 Store v2 needs the store-v2 engine (the tournament run's engine/ snapshot records its commit).
 
   python -m wallets.follow --episodes DIR --from-slot A --to-slot B [--out DIR] [--sizes 0.5]
-                           [--delays 1,2] [--min-n 5] [--control 300] [--wallets wallets.csv] [--workers N]
+                           [--delays 1,2] [--q 0.5] [--min-n 5] [--control 300] [--wallets wallets.csv] [--workers N]
 
 Output: follow-<A>-partNNNNN.parquet per batch of tokens (resumable; identical for any worker
 count) and run-follow-<A>-<B>.json.
@@ -157,11 +163,27 @@ def range_guard(lo, hi_ext, forward, meta=None):
         guard(hi_ext)
 
 
+def check_q(delays, q, cancel_t1=False):
+    """E65 rule G1 (E88): d 0 only at q 1.0 and alone, d >= 1 only at q 0.5; --cancel-t1 only at d >= 2. ValueError otherwise."""
+    if any(d < 0 for d in delays):
+        raise ValueError(f"delays {delays}: d must be >= 0")
+    if 0 in delays and (q != 1.0 or len(set(delays)) > 1):
+        raise ValueError(f"delays {delays} at q {q}: d 0 runs alone at q 1.0 (the fill on the end state of slot t0 = first in "
+                         "t0 + 1); a d 0 fill at q < 1 lands before the leader's own transaction (a look-ahead)")
+    if 0 not in delays and q != Q_FRAC:
+        raise ValueError(f"delays {delays} at q {q}: d >= 1 runs at q {Q_FRAC} only (E65 G1; r4/E82 comparability)")
+    if cancel_t1 and min(delays) < 2:
+        raise ValueError(f"--cancel-t1 with delays {delays}: the cancellation decides on the end of t0 + 1, a fill at t0 + d "
+                         "with d < 2 precedes it (a look-ahead); run d 0 / d 1 without --cancel-t1")
+
+
 def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, wallets_file=None, max_per_wallet=0,
-        workers=1, forward=False, venues=None, cancel_t1=False):
+        workers=1, forward=False, venues=None, cancel_t1=False, q=Q_FRAC):
     """forward: forward store route (range_guard). venues: replay only episodes of these venues (E82: ('curve',)).
     cancel_t1 (E82 pre-reg §3): the entry decision uses the state at the end of t0 + 1 — the curve complete by then, or
-    the leader already at <= exit_share x his t0 holdings — and cancels (no transaction, no cost); the fill stays t0 + d."""
+    the leader already at <= exit_share x his t0 holdings — and cancels (no transaction, no cost); the fill stays t0 + d.
+    q (E88): our intra-slot position, checked by check_q before anything is opened."""
+    check_q(delays, q, cancel_t1)
     if not forward:
         guard(hi)
     con = streams.open_store(store, threads=2, memory=MAIN_MEM)
@@ -212,7 +234,7 @@ def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, w
     batches += [("curve", curve_keys[i:i + 200], 0) for i in range(0, len(curve_keys), 200)]
     batches.sort(key=lambda b: -b[2])  # heaviest first (LPT); curve batches last
     jobs = [(i, venue, {k: by_key[(venue, k)] for k in ks}, tail, cands, sizes, delays, max_slots,
-             os.path.join(out_dir, f"follow-{lo}-part{i:05d}.parquet"), cancel_t1) for i, (venue, ks, _) in enumerate(batches)]
+             os.path.join(out_dir, f"follow-{lo}-part{i:05d}.parquet"), cancel_t1, q) for i, (venue, ks, _) in enumerate(batches)]
     con.close()
     n_done = n_busy = n_rows = 0
     if workers > 1:
@@ -239,7 +261,7 @@ def run(ep_dir, lo, hi, out_dir, sizes, delays, min_n, n_control, store=STORE, w
                    "forward": forward, "venues": list(venues) if venues else None, "cancel_t1": cancel_t1,
                    "candidates": len(cands), "wallets_with_episodes": len({e["wallet"] for e in eps}), "episodes": len(eps),
                    "episodes_busy_pool": n_busy, "positions": n_rows,
-                   "max_hold_ms": MAX_HOLD_MS, "max_legs": MAX_LEGS, "pool_batch_legs": POOL_BATCH_LEGS, "q": Q_FRAC, "tol": TOL,
+                   "max_hold_ms": MAX_HOLD_MS, "max_legs": MAX_LEGS, "pool_batch_legs": POOL_BATCH_LEGS, "q": q, "tol": TOL,
                    "seconds": round(time.time() - t_start)}, f, indent=1)
     print(f"{lo}-{hi}: {len(cands)} wallets, {len(eps)} episodes ({n_busy} in busy pools, skipped), {n_rows} positions, "
           f"{len(jobs)} parts, {time.time() - t_start:.0f}s", file=sys.stderr)
@@ -288,7 +310,7 @@ def _init_worker(store):
 
 def replay_batch(job):
     """Replay one batch of tokens and write its part: (episodes, episodes in busy pools, positions)."""
-    i, venue, groups, tail, cands, sizes, delays, max_slots, path, cancel_t1 = job
+    i, venue, groups, tail, cands, sizes, delays, max_slots, path, cancel_t1, q = job
     if os.path.exists(path):  # resumable
         t = pq.read_metadata(path)
         return sum(len(g) for g in groups.values()), 0, t.num_rows
@@ -302,7 +324,7 @@ def replay_batch(job):
         if st is None:
             continue
         before = len(rows)
-        run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows, cancel_t1)
+        run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows, cancel_t1, q)
         n_busy += (len(rows) > before and rows[-1]["exit_reason"] == "busy_pool") * len(group)
     if rows:  # an empty part is not written (a parquet file without columns cannot be read back)
         tmp = path + ".tmp"
@@ -323,8 +345,8 @@ def cancel_at_t1(st, path, t0, share):
     return None
 
 
-def run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows, cancel_t1=False):
-    """Replay every (size, d, variant) position of the episodes of one token stream."""
+def run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows, cancel_t1=False, q=Q_FRAC):
+    """Replay every (size, d, variant) position of the episodes of one token stream at intra-slot position q."""
     busy = len(st.pool_legs) + len(st.curve) > MAX_LEGS
     paths = {}
     for e in group:
@@ -337,7 +359,7 @@ def run_group(st, group, venue, sim, cands, sizes, delays, max_slots, tau, rows,
                         r = replay.Result(e["key"], e["t0"], size=int(size * SOL), venue=venue, skipped=True,
                                           exit_reason=cancel or "busy_pool")
                     else:
-                        r = sim(st, e["t0"], int(size * SOL), d, Q_FRAC,
+                        r = sim(st, e["t0"], int(size * SOL), d, q,
                                 FollowExit(path, e["t0"], share, max_slots, start=e["t0"] + d if cancel_t1 else None),
                                 TOL, tau, max_slots=max_slots)
                     rows.append({"wallet": e["wallet"], "key": e["key"], "venue": venue, "orientation": e["orientation"],
@@ -373,6 +395,7 @@ def main():
     ap.add_argument("--out", default=os.path.join(OUT_ROOT, "follow-v1"))
     ap.add_argument("--sizes", default="0.5")
     ap.add_argument("--delays", default="1,2")
+    ap.add_argument("--q", type=float, default=Q_FRAC, help="intra-slot position of our fills: 0.5 for d >= 1, 1.0 for d 0 (check_q)")
     ap.add_argument("--min-n", type=int, default=5)
     ap.add_argument("--control", type=int, default=300)
     ap.add_argument("--store", default=STORE)
@@ -389,7 +412,7 @@ def main():
             del VARIANTS[v]
     run(a.episodes, a.from_slot, a.to_slot, a.out, [float(s) for s in a.sizes.split(",")],
         [int(d) for d in a.delays.split(",")], a.min_n, a.control, a.store, a.wallets, a.max_per_wallet, a.workers,
-        a.forward, tuple(a.venues.split(",")) if a.venues else None, a.cancel_t1)
+        a.forward, tuple(a.venues.split(",")) if a.venues else None, a.cancel_t1, a.q)
 
 
 if __name__ == "__main__":

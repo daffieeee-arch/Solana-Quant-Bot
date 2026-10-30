@@ -168,6 +168,37 @@ def test_run_group_cancel_t1_skips_the_replay_and_records_the_reason():
     assert calls and all(start == t0 + 3 for t0, start in calls)  # the exit rule observes only after the fill
 
 
+def test_check_q_rule_g1_and_cancel_t1_lookahead():
+    """E88: d 0 only alone at q 1.0, d >= 1 only at q 0.5, --cancel-t1 only at d >= 2."""
+    follow.check_q([0], 1.0)
+    follow.check_q([1, 2, 3], 0.5)
+    follow.check_q([2, 3], 0.5, cancel_t1=True)
+    for delays, q, cancel in [([0], 0.5, False), ([0, 1], 1.0, False), ([1], 1.0, False), ([1, 2], 0.75, False),
+                              ([1], 0.5, True), ([0], 1.0, True), ([-1], 0.5, False)]:
+        with pytest.raises(ValueError):
+            follow.check_q(delays, q, cancel)
+    with pytest.raises(ValueError, match="look-ahead"):  # run() checks before it opens anything
+        follow.run("no-such-dir", 0, 1000, "no-out", [0.5], [0], 5, 0, store="no-store")
+    with pytest.raises(ValueError, match="look-ahead"):
+        follow.run("no-such-dir", 0, 1000, "no-out", [0.5], [1], 5, 0, store="no-store", cancel_t1=True)
+
+
+def test_run_group_passes_q_to_the_replay():
+    st = Stream("M", 0, "c", [cleg(10, "w", True, 100), cleg(40, "w", True, 100)], [])
+    ep = {"wallet": "w", "key": "M", "venue": "curve", "orientation": "curve", "t0": 10, "day": "d", "leader_ret_realized": 0.0,
+          "leader_ret_marked": 0.0, "hold_slots": None, "closed": False, "create_slot": False, "pool": None}
+    seen = []
+
+    def fake_sim(st, t0, size, d, q, rule, tol, tau, max_slots):
+        seen.append((d, q))
+        from backtest.replay import Result
+        return Result("M", t0, size=size, venue="curve", entry_slot=t0 + d, exit_slot=t0 + d + 5, exit_reason="time")
+
+    follow.run_group(st, [ep], "curve", fake_sim, {"w": False}, [0.5], [0], 1000, None, [], q=1.0)
+    follow.run_group(st, [ep], "curve", fake_sim, {"w": False}, [0.5], [3], 1000, None, [])
+    assert sorted(set(seen)) == [(0, 1.0), (3, follow.Q_FRAC)]
+
+
 def test_one_position_per_key_keeps_the_earliest_and_skips_overlaps():
     def row(key, t0, wallet, exit_slot, skipped=False, failed=False, variant="W_half"):
         return {"key": key, "t0": t0, "wallet": wallet, "size_sol": 0.5, "d": 3, "variant": variant, "exit_slot": exit_slot,
